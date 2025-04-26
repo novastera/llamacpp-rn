@@ -35,7 +35,10 @@
     "example": "yarn --cwd example",
     "bootstrap": "yarn example && yarn install && yarn example pods",
     "setup-llama-cpp": "bash scripts/setupLlamaCpp.sh",
-    "postinstall": "yarn setup-llama-cpp"
+    "postinstall": "yarn setup-llama-cpp",
+    "llama-status": "bash scripts/llama_cpp_version.sh status",
+    "llama-init": "bash scripts/llama_cpp_version.sh init",
+    "llama-tags": "bash scripts/llama_cpp_version.sh list-tags"
   },
   "keywords": [
     "react-native",

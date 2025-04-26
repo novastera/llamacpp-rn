@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22.x]
+      fail-fast: false
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: false  # We'll handle submodules manually with specific version
+      
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'yarn'
+      
+      - name: Install Dependencies
+        run: yarn install --frozen-lockfile
+      
+      - name: Setup llama.cpp with specific version
+        run: |
+          chmod +x scripts/llama_cpp_version.sh
+          scripts/llama_cpp_version.sh init
+          scripts/llama_cpp_version.sh status
+      
+      - name: TypeScript Check
+        run: yarn typescript
+      
+      - name: Lint
+        run: yarn lint
+      
+      - name: Build
+        run: yarn prepare
+      
+      - name: Run Tests
+        run: yarn test 

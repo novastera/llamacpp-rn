@@ -1,0 +1,53 @@
+name: Publish Package to NPM
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 1.0.0)'
+        required: true
+
+jobs:
+  build-and-publish:
+    # Temporarily disable this workflow until implementation is complete
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: false  # We'll handle submodules manually with specific version
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'  # Using Node.js 22 LTS
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'yarn'  # Enables caching for yarn dependencies
+      
+      - name: Install Dependencies
+        run: yarn install --frozen-lockfile
+      
+      - name: Setup llama.cpp with specific version
+        run: |
+          chmod +x scripts/llama_cpp_version.sh
+          scripts/llama_cpp_version.sh init
+          scripts/llama_cpp_version.sh status
+      
+      - name: Build
+        run: yarn prepare
+      
+      - name: Publish to NPM
+        if: ${{ github.event_name == 'release' || github.event.inputs.version != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            npm publish
+          else
+            # Set version from workflow dispatch input
+            npm version ${{ github.event.inputs.version }} --no-git-tag-version
+            npm publish
+          fi 

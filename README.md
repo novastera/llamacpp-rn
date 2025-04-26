@@ -1,5 +1,7 @@
 # llamacpp-rn
 
+> ⚠️ **WORK IN PROGRESS**: This package is currently under active development and not ready for production use. The implementation is incomplete and the package is not yet published to NPM.
+
 A high-performance React Native Turbo Module implementation of [llama.rn](https://github.com/mybigday/llama.rn) that itself depend on [llama.cpp](https://github.com/ggml-org/llama.cpp), which provides llama.cpp integration for React Native applications.
 
 ⚠️ **Note**: This library requires the React Native New Architecture and will not work with the legacy architecture.
@@ -166,3 +168,36 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 MIT
+
+## Llama.cpp Version
+
+This package uses a specific, tested version of llama.cpp to ensure stability and compatibility. We pin to official release tags from the [llama.cpp releases page](https://github.com/ggml-org/llama.cpp/releases).
+
+To check the current llama.cpp version:
+
+```bash
+yarn llama-status
+```
+
+To update the llama.cpp submodule to the correct version:
+
+```bash
+yarn llama-init
+```
+
+To list available llama.cpp release tags:
+
+```bash
+yarn llama-tags
+```
+
+If you want to use a different version of llama.cpp, modify the `LLAMA_CPP_VERSION` variable in `scripts/llama_cpp_version.sh`. For example, to use release b5191:
+
+```bash
+# Change this line in scripts/llama_cpp_version.sh
+LLAMA_CPP_VERSION="b5191"
+```
+
+Then run `yarn llama-init` to update the submodule to the specified version.
+
+Note that using a different version than the one specified may lead to compatibility issues or unexpected behavior.
