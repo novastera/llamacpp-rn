@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "outDir": "lib"
+  },
+  "exclude": [
+    "example/**/*",
+    "**/__tests__/**/*",
+    "**/__mocks__/**/*",
+    "lib/**/*"
+  ]
+} 
