@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <jsi/jsi.h>
 #include "llama.h"
+#include <atomic>
 
 namespace facebook::react {
 
@@ -49,6 +50,12 @@ private:
   
   // Cache for loaded model info to improve performance on repeated calls
   std::unordered_map<std::string, jsi::Object> modelInfoCache_;
+  
+  // Flag to indicate if GPU is enabled
+  bool m_gpuEnabled = false;
+  
+  // Flag to indicate if an ongoing completion should be stopped
+  std::atomic<bool> m_shouldStopCompletion{false};
 
   Value setThreadCount(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
   Value loadModel(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
@@ -90,7 +97,6 @@ private:
   GpuInfo getGpuCapabilities();
   
   int m_threadCount;
-  bool m_gpuEnabled;
   GpuInfo m_gpuInfo;
 };
 
