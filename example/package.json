@@ -9,7 +9,10 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "test": "jest --watchAll",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "postprebuild": "node ./scripts/copy-models.js",
+    "copy-models": "node ./scripts/copy-models.js",
+    "setup-model": "node ./scripts/setup-model.js"
   },
   "jest": {
     "preset": "jest-expo"

@@ -1,109 +1,72 @@
 #pragma once
 
+#include <jsi/jsi.h>
 #include <ReactCommon/TurboModule.h>
 #include <memory>
 #include <string>
-#include <vector>
-#include <mutex>
 #include <unordered_map>
-#include <jsi/jsi.h>
-#include "llama.h"
 #include <atomic>
-#include <react/renderer/core/ReactPrimitives.h>
+#include <mutex>
 
-// Forward declaration of needed llama.cpp types
-struct llama_context;
+// Forward declarations for C++ only
 struct llama_model;
+struct llama_context;
+struct llama_vocabulary;
+
+using namespace facebook;
 
 namespace facebook::react {
 
-/**
- * C++ implementation of the LlamaCppRn Turbo Module interface.
- * Optimized for performance with the new architecture.
- */
 class LlamaCppRn : public TurboModule {
 public:
   static constexpr auto kModuleName = "LlamaCppRn";
 
-  // Constructor calls parent constructor with name
   LlamaCppRn(std::shared_ptr<CallInvoker> jsInvoker);
+  virtual ~LlamaCppRn() = default;
 
-  // Factory method to create the Turbo Module
+  // Required for TurboModule system
   static std::shared_ptr<TurboModule> create(
       std::shared_ptr<CallInvoker> jsInvoker);
 
-  // Initialize a Llama context with the given model parameters
-  jsi::Value initLlama(
-      jsi::Runtime &runtime,
-      jsi::Object params);
-
-  // Load model info without creating a full context
-  jsi::Value loadLlamaModelInfo(
-      jsi::Runtime &runtime,
-      jsi::String modelPath);
-
-  // Convert JSON schema to GBNF grammar
-  jsi::Value jsonSchemaToGbnf(
-      jsi::Runtime &runtime,
-      jsi::Object schema);
-
-  void install(jsi::Runtime& jsiRuntime);
+  // JavaScript accessible methods
+  jsi::Value initLlama(jsi::Runtime &runtime, jsi::Object params);
+  jsi::Value loadLlamaModelInfo(jsi::Runtime &runtime, jsi::String modelPath);
+  jsi::Value jsonSchemaToGbnf(jsi::Runtime &runtime, jsi::Object schema);
+  jsi::Value getGPUInfo(jsi::Runtime &runtime);
+  jsi::Value getAbsolutePath(jsi::Runtime &runtime, jsi::String relativePath);
 
 private:
-  // Mutex for thread-safe operations
-  std::mutex mutex_;
-  
-  // Cache for loaded model info to improve performance on repeated calls
-  // Using shared_ptr to avoid JSI object copy constructor issues
-  std::unordered_map<std::string, std::shared_ptr<jsi::Object>> modelInfoCache_;
-  
-  // Flag to indicate if GPU is enabled
-  bool m_gpuEnabled = false;
-  
-  // Flag to indicate if an ongoing completion should be stopped
-  std::atomic<bool> m_shouldStopCompletion{false};
+  struct SimpleJSON {
+    std::unordered_map<std::string, std::string> stringValues;
+    void set(const std::string& key, const std::string& value) {
+      stringValues[key] = value;
+    }
+  };
 
-  jsi::Value setThreadCount(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value loadModel(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value getSystemInfo(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value tokenize(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value getTokens(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value evaluate(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value embeddings(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value isModelLoaded(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value freeModel(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value getContextLength(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value getVocabSize(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value encode(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value decode(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value getGpuInfo(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value enableGpuAcceleration(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  jsi::Value isGpuAvailable(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  
-  // Helper methods
-  std::vector<int32_t> jsiArrayToVector(jsi::Runtime& runtime, const jsi::Object& array);
-  jsi::Object vectorToJsiArray(jsi::Runtime& runtime, const std::vector<int32_t>& vector);
-  jsi::Object vectorToJsiFloat32Array(jsi::Runtime& runtime, const std::vector<float>& vector);
-  llama_model_params createModelParams(jsi::Runtime& runtime, const jsi::Value* args, size_t count);
-  llama_context_params createContextParams(jsi::Runtime& runtime, const jsi::Value* args, size_t count);
-  jsi::Object createModelObject(jsi::Runtime& runtime, llama_model* model, llama_context* ctx);
-  
-  // OpenCL support
-  bool detectGpuCapabilities();
-  bool enableGpu(bool enable);
-  bool isGpuEnabled();
   struct GpuInfo {
     bool available;
     std::string deviceName;
     std::string deviceVendor;
     std::string deviceVersion;
-    int deviceComputeUnits;
-    uint64_t deviceMemSize;
+    size_t deviceComputeUnits;
+    size_t deviceMemSize;
   };
+
+  // Helper methods
+  jsi::Object createModelObject(jsi::Runtime& runtime, llama_model* model, llama_context* ctx);
   GpuInfo getGpuCapabilities();
-  
-  int m_threadCount;
-  GpuInfo m_gpuInfo;
+  bool detectGpuCapabilities();
+  bool enableGpu(bool enable);
+  bool isGpuEnabled();
+  jsi::Value getVocabSize(jsi::Runtime& runtime, const jsi::Value& thisValue, 
+                            const jsi::Value* args, size_t count);
+
+private:
+  // Module state
+  bool m_gpuEnabled = false;
+  std::atomic<bool> m_shouldStopCompletion{false};
+  std::mutex mutex_;
+  std::unordered_map<std::string, std::shared_ptr<jsi::Object>> modelInfoCache_;
 };
 
 } // namespace facebook::react 
