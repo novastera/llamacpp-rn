@@ -9,8 +9,11 @@
 #include <android/log.h>
 #include <dlfcn.h>
 
-#include "../../../../cpp/LlamaCppRnModule.h"
+#include <stdexcept>
+#include <unistd.h>
 #include "llama.h"
+
+#include "../../../../cpp/LlamaCppRnModule.h"
 
 #define LLAMACPPRN_TAG "LlamaCppRn"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LLAMACPPRN_TAG, __VA_ARGS__)

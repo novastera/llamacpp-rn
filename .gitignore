@@ -68,7 +68,9 @@ coverage/
 *.bin
 *.gguf
 *.ggml
-
+example/**/*.gguf
+example/ios
+example/android
 # Example app
 example/node_modules/
 example/ios/Pods/
@@ -77,3 +79,5 @@ example/android/app/build/
 # Project specific
 CURSOR_RULES.md
 .cursor/ 
+
+.llamacpp-temp

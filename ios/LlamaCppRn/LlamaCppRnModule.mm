@@ -17,4 +17,11 @@ RCT_EXPORT_MODULE()
   return std::make_shared<facebook::react::LlamaCppRn>(params.jsInvoker);
 }
 
-@end 
+// Static method to create the Turbo Module
++ (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:(const std::string &)name
+                                                      jsInvoker:(std::shared_ptr<facebook::react::CallInvoker>)jsInvoker
+{
+  return std::make_shared<facebook::react::LlamaCppRn>(jsInvoker);
+}
+
+@end

@@ -13,104 +13,87 @@ add_definitions(-DRCT_NEW_ARCH_ENABLED=1)
 # Option to enable OpenCL support
 option(LLAMACPPRN_OPENCL "Enable OpenCL GPU acceleration for compatible devices" ON)
 
-# Get the rnllamaBuildFromSource property from gradle.properties
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../../../gradle.properties")
-    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../../../gradle.properties" gradle_properties)
-    foreach(property ${gradle_properties})
-        if(property MATCHES "^rnllamaBuildFromSource=(.*)$")
-            set(rnllamaBuildFromSource ${CMAKE_MATCH_1})
-        endif()
-    endforeach()
-endif()
-
-# Set default value if not found
-if(NOT DEFINED rnllamaBuildFromSource)
-    set(rnllamaBuildFromSource "true")
-endif()
+# We always build from source for Android now
+set(rnllamaBuildFromSource "true")
 
 set(LLAMA_CPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/llama.cpp")
 
 # Build llama.cpp from source
-if(${rnllamaBuildFromSource} STREQUAL "true")
-    message(STATUS "Building llama.cpp from source")
+message(STATUS "Building llama.cpp from source for Android")
+
+# Set LLAMA_CPP options
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "llama.cpp: build examples" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "llama.cpp: build server" FORCE)
+set(BUILD_SHARED_LIBS ON CACHE BOOL "llama.cpp: build shared libs" FORCE)
+set(LLAMA_NATIVE OFF CACHE BOOL "llama.cpp: optimize for native CPU" FORCE)
+
+# Try to find device OpenCL library first
+if(LLAMACPPRN_OPENCL AND ${ANDROID_ABI} STREQUAL "arm64-v8a")
+    # Check for OpenCL on the device first - most Android devices with Adreno, Mali, or PowerVR GPUs
+    # have their own vendor-specific OpenCL implementations
     
-    # Set LLAMA_CPP options
-    set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "llama.cpp: build examples" FORCE)
-    set(LLAMA_BUILD_SERVER OFF CACHE BOOL "llama.cpp: build server" FORCE)
-    set(BUILD_SHARED_LIBS ON CACHE BOOL "llama.cpp: build shared libs" FORCE)
-    set(LLAMA_NATIVE OFF CACHE BOOL "llama.cpp: optimize for native CPU" FORCE)
+    message(STATUS "Looking for device OpenCL libraries...")
     
-    # Try to find device OpenCL library first
-    if(LLAMACPPRN_OPENCL AND ${ANDROID_ABI} STREQUAL "arm64-v8a")
-        # Check for OpenCL on the device first - most Android devices with Adreno, Mali, or PowerVR GPUs
-        # have their own vendor-specific OpenCL implementations
-        
-        message(STATUS "Looking for device OpenCL libraries...")
-        
-        # Common locations for vendor OpenCL libraries on Android devices
-        set(DEVICE_OPENCL_LIB_PATHS
-            "/system/vendor/lib64/libOpenCL.so"
-            "/system/lib64/libOpenCL.so"
-            "/vendor/lib64/libOpenCL.so"
-            "/vendor/lib64/egl/libGLES_mali.so"  # Mali GPUs sometimes expose OpenCL here
-            "/vendor/lib64/libPVROCL.so"         # PowerVR
-            "/vendor/lib64/libq3dtools_adreno.so" # Qualcomm Adreno
-        )
-        
-        # Cache the preferred OpenCL library path (if found)
-        foreach(DEVICE_OPENCL_PATH ${DEVICE_OPENCL_LIB_PATHS})
-            if(EXISTS "${DEVICE_OPENCL_PATH}")
-                set(DEVICE_OPENCL_FOUND TRUE)
-                set(DEVICE_OPENCL_LIB_PATH "${DEVICE_OPENCL_PATH}")
-                message(STATUS "Found device OpenCL library: ${DEVICE_OPENCL_LIB_PATH}")
-                break()
-            endif()
-        endforeach()
-        
-        # We'll set up for an implementation that will dynamically load OpenCL
-        # This means we don't need to find the actual library at build time,
-        # but will load it at runtime based on what's available on the device
-        
-        # Set up OpenCL header paths - we'll use the ones provided by llama.cpp
+    # Common locations for vendor OpenCL libraries on Android devices
+    set(DEVICE_OPENCL_LIB_PATHS
+        "/system/vendor/lib64/libOpenCL.so"
+        "/system/lib64/libOpenCL.so"
+        "/vendor/lib64/libOpenCL.so"
+        "/vendor/lib64/egl/libGLES_mali.so"  # Mali GPUs sometimes expose OpenCL here
+        "/vendor/lib64/libPVROCL.so"         # PowerVR
+        "/vendor/lib64/libq3dtools_adreno.so" # Qualcomm Adreno
+    )
+    
+    # Cache the preferred OpenCL library path (if found)
+    foreach(DEVICE_OPENCL_PATH ${DEVICE_OPENCL_LIB_PATHS})
+        if(EXISTS "${DEVICE_OPENCL_PATH}")
+            set(DEVICE_OPENCL_FOUND TRUE)
+            set(DEVICE_OPENCL_LIB_PATH "${DEVICE_OPENCL_PATH}")
+            message(STATUS "Found device OpenCL library: ${DEVICE_OPENCL_LIB_PATH}")
+            break()
+        endif()
+    endforeach()
+    
+    # We'll set up for an implementation that will dynamically load OpenCL
+    # This means we don't need to find the actual library at build time,
+    # but will load it at runtime based on what's available on the device
+    
+    # Set up OpenCL header paths - check both locations
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/opencl")
+        # CI/CD environment might have copied headers here
+        set(OPENCL_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/opencl")
+        message(STATUS "Using local OpenCL headers for CI/CD build")
+    else
+        # Development environment - use headers from llama.cpp
         set(OPENCL_INCLUDE_DIRS "${LLAMA_CPP_DIR}/extra/OpenCL-Headers")
-        
-        # Enable CLBlast for llama.cpp
-        set(LLAMA_CLBLAST ON CACHE BOOL "llama.cpp: use CLBlast" FORCE)
-        
-        # Tell llama.cpp to dynamically load OpenCL libraries at runtime
-        set(LLAMA_CLBLAST_DLOAD ON CACHE BOOL "llama.cpp: dynamically load CLBlast" FORCE)
-        
-        message(STATUS "Configured for dynamic OpenCL loading - will detect at runtime")
-    else()
-        message(STATUS "OpenCL disabled or unsupported architecture, using CPU-only")
-        set(LLAMA_CLBLAST OFF CACHE BOOL "llama.cpp: use CLBlast" FORCE)
+        message(STATUS "Using llama.cpp OpenCL headers")
     endif()
     
-    # Optimizations for ARM64
-    if(${ANDROID_ABI} STREQUAL "arm64-v8a")
-        # Enable ARM-specific optimizations
-        set(LLAMA_BLAS ON CACHE BOOL "llama.cpp: use BLAS" FORCE)
-        set(LLAMA_BLAS_VENDOR "OpenBLAS" CACHE STRING "llama.cpp: BLAS vendor" FORCE)
-        
-        # Enable ARM NEON intrinsics for better performance
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv8-a+simd")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8-a+simd")
-    endif()
+    # Enable CLBlast for llama.cpp
+    set(LLAMA_CLBLAST ON CACHE BOOL "llama.cpp: use CLBlast" FORCE)
     
-    # Include llama.cpp as a subdirectory
-    add_subdirectory(${LLAMA_CPP_DIR} llama.cpp)
+    # Tell llama.cpp to dynamically load OpenCL libraries at runtime
+    set(LLAMA_CLBLAST_DLOAD ON CACHE BOOL "llama.cpp: dynamically load CLBlast" FORCE)
+    
+    message(STATUS "Configured for dynamic OpenCL loading - will detect at runtime")
 else()
-    # Use pre-built libraries
-    add_library(llama SHARED IMPORTED)
-    
-    if(${ANDROID_ABI} STREQUAL "arm64-v8a")
-        set_target_properties(llama PROPERTIES IMPORTED_LOCATION
-            ${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/arm64-v8a/libllama.so)
-    elseif(${ANDROID_ABI} STREQUAL "x86_64")
-        set_target_properties(llama PROPERTIES IMPORTED_LOCATION
-            ${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/x86_64/libllama.so)
-    endif()
+    message(STATUS "OpenCL disabled or unsupported architecture, using CPU-only")
+    set(LLAMA_CLBLAST OFF CACHE BOOL "llama.cpp: use CLBlast" FORCE)
 endif()
+
+# Optimizations for ARM64
+if(${ANDROID_ABI} STREQUAL "arm64-v8a")
+    # Enable ARM-specific optimizations
+    set(LLAMA_BLAS ON CACHE BOOL "llama.cpp: use BLAS" FORCE)
+    set(LLAMA_BLAS_VENDOR "OpenBLAS" CACHE STRING "llama.cpp: BLAS vendor" FORCE)
+    
+    # Enable ARM NEON intrinsics for better performance
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv8-a+simd")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8-a+simd")
+endif()
+
+# Include llama.cpp as a subdirectory
+add_subdirectory(${LLAMA_CPP_DIR} llama.cpp)
 
 # Find the React Native headers
 find_package(ReactAndroid REQUIRED CONFIG)

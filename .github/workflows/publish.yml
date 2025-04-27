@@ -1,53 +1,95 @@
-name: Publish Package to NPM
+name: Publish to NPM
 
 on:
-  release:
-    types: [created]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to publish (e.g., 1.0.0)'
-        required: true
+        description: 'Version to publish'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build-and-publish:
-    # Temporarily disable this workflow until implementation is complete
-    if: false
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
+    
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
         with:
-          submodules: false  # We'll handle submodules manually with specific version
-      
+          submodules: recursive
+        
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v3
         with:
-          node-version: '22'  # Using Node.js 22 LTS
+          node-version: 22
           registry-url: 'https://registry.npmjs.org'
-          cache: 'yarn'  # Enables caching for yarn dependencies
       
-      - name: Install Dependencies
-        run: yarn install --frozen-lockfile
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
       
-      - name: Setup llama.cpp with specific version
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v2
+          
+      - name: Install Android NDK
         run: |
-          chmod +x scripts/llama_cpp_version.sh
-          scripts/llama_cpp_version.sh init
-          scripts/llama_cpp_version.sh status
+          sdkmanager --install "ndk;23.1.7779620"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/23.1.7779620" >> $GITHUB_ENV
+          
+      - name: Initialize llama.cpp repository
+        run: bash scripts/llama_cpp_version.sh init
       
-      - name: Build
+      - name: Set up iOS XCFramework
+        run: |
+          # Try to download iOS XCFramework
+          bash scripts/download_prebuilt.sh ios || {
+            echo "Will build from source for iOS"
+            # When using build from source, ensure SYCL is disabled
+            export LLAMACPPRN_BUILD_FROM_SOURCE=true
+          }
+          
+          # Ensure iOS directories exist regardless
+          mkdir -p ios/framework ios/include
+          
+          # Copy iOS include files needed for build
+          if [ ! -f "ios/include/llama.h" ]; then
+            mkdir -p ios/include
+            cp cpp/llama.cpp/include/llama.h ios/include/
+            cp cpp/llama.cpp/include/llama-cpp.h ios/include/
+          fi
+      
+      - name: Build Android libraries
+        run: |
+          # Create the jniLibs directories
+          mkdir -p android/src/main/jniLibs/arm64-v8a
+          mkdir -p android/src/main/jniLibs/x86_64
+          mkdir -p android/src/main/cpp/include
+          
+          # Ensure OpenCL headers are available
+          cp -r cpp/llama.cpp/extra/OpenCL-Headers android/src/main/cpp/opencl
+          
+          # Copy header files
+          cp cpp/llama.cpp/include/llama.h android/src/main/cpp/include/
+          cp cpp/llama.cpp/include/llama-cpp.h android/src/main/cpp/include/
+          
+          # Build with Gradle - this will compile the llama.cpp library for Android
+          cd android && ./gradlew assembleRelease
+      
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+        
+      - name: Build package
         run: yarn prepare
       
       - name: Publish to NPM
-        if: ${{ github.event_name == 'release' || github.event.inputs.version != '' }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ "${{ github.event_name }}" == "release" ]; then
-            npm publish
+          if [ -n "${{ inputs.version }}" ]; then
+            yarn publish --new-version ${{ inputs.version }} --access public
           else
-            # Set version from workflow dispatch input
-            npm version ${{ github.event.inputs.version }} --no-git-tag-version
-            npm publish
-          fi 
+            yarn release
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} 

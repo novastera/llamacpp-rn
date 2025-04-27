@@ -1,4 +1,4 @@
-import LlamaCppRn from './specs/LlamaCppRnSpec';
+import LlamaCppRn from './specs/NativeLlamaCppRn';
 import type {
   LlamaModelParams,
   LlamaCompletionParams,
@@ -7,7 +7,7 @@ import type {
   LlamaTool,
   LlamaContextType,
   LlamaContextMethods,
-} from './specs/LlamaCppRnSpec';
+} from './specs/NativeLlamaCppRn';
 
 // Main function to initialize a Llama context
 export function initLlama(params: LlamaModelParams): Promise<LlamaContextType & LlamaContextMethods> {

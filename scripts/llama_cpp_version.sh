@@ -4,13 +4,16 @@
 
 set -e
 
-# The specific llama.cpp release tag we want to use
-# Using a release tag instead of a commit hash makes it more clear which version we're using
-# Change this to update the llama.cpp version
-LLAMA_CPP_VERSION="b5192"  # Latest release as of April 26, 2025
+# The specific llama.cpp commit hash we want to use
+# Using a specific commit hash ensures a consistent build
+LLAMA_CPP_COMMIT="77d5e9a76a7b4a8a7c5bf9cf6ebef91860123cba"  # Commit as specified by user
 
 # Path to the llama.cpp submodule
 LLAMA_CPP_DIR="cpp/llama.cpp"
+
+# Temp directory for caching
+TEMP_DIR=".llamacpp-temp"
+mkdir -p $TEMP_DIR
 
 # Colors for output
 RED='\033[0;31m'
@@ -20,7 +23,22 @@ NC='\033[0m' # No Color
 
 # Function to initialize the submodule
 init_submodule() {
-  echo -e "${YELLOW}Initializing llama.cpp submodule...${NC}"
+  # Check if the directory already exists with the right commit
+  if [ -d "$LLAMA_CPP_DIR/.git" ]; then
+    cd $LLAMA_CPP_DIR
+    CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "none")
+    cd - > /dev/null
+    
+    # If the commit is already correct, we can skip
+    if [ "$CURRENT_COMMIT" = "$LLAMA_CPP_COMMIT" ]; then
+      echo -e "${GREEN}llama.cpp is already at the correct commit: ${LLAMA_CPP_COMMIT}${NC}"
+      return 0
+    else
+      echo -e "${YELLOW}llama.cpp exists but is at commit $CURRENT_COMMIT, updating to $LLAMA_CPP_COMMIT${NC}"
+    fi
+  else
+    echo -e "${YELLOW}Initializing llama.cpp repository...${NC}"
+  fi
   
   # Check if git is available
   if ! command -v git &> /dev/null; then
@@ -28,25 +46,59 @@ init_submodule() {
     exit 1
   fi
   
-  # Initialize the submodule if it's not already
-  if [ ! -f "$LLAMA_CPP_DIR/.git" ]; then
-    git submodule update --init --recursive
+  # Create the directory structure if it doesn't exist
+  mkdir -p $LLAMA_CPP_DIR
+  
+  # Check if we have a cached clone that we can copy
+  if [ -d "$TEMP_DIR/llama.cpp/.git" ]; then
+    echo -e "${YELLOW}Using cached repository${NC}"
+    
+    # Check if the cached repo has the commit we need
+    cd "$TEMP_DIR/llama.cpp"
+    git fetch origin -q
+    if git cat-file -e $LLAMA_CPP_COMMIT^{commit} 2>/dev/null; then
+      echo -e "${GREEN}Cached repository has the required commit${NC}"
+      # Copy the cached repo to the destination
+      cd - > /dev/null
+      rsync -a --exclude .git "$TEMP_DIR/llama.cpp/" "$LLAMA_CPP_DIR/"
+      
+      # Copy just the git directory separately (better than cp -r)
+      rsync -a "$TEMP_DIR/llama.cpp/.git" "$LLAMA_CPP_DIR/"
+    else
+      echo -e "${YELLOW}Cached repository doesn't have the required commit, updating${NC}"
+      git checkout master -q
+      git pull origin master -q
+      cd - > /dev/null
+      rsync -a --exclude .git "$TEMP_DIR/llama.cpp/" "$LLAMA_CPP_DIR/"
+      rsync -a "$TEMP_DIR/llama.cpp/.git" "$LLAMA_CPP_DIR/"
+    fi
+  else
+    # If not a git repo or no cache, clone the repository
+    if [ ! -d "$LLAMA_CPP_DIR/.git" ]; then
+      echo -e "${YELLOW}Cloning fresh repository${NC}"
+      rm -rf $LLAMA_CPP_DIR
+      git clone https://github.com/ggml-org/llama.cpp.git $LLAMA_CPP_DIR
+      
+      # Also clone to cache
+      rm -rf "$TEMP_DIR/llama.cpp"
+      git clone https://github.com/ggml-org/llama.cpp.git "$TEMP_DIR/llama.cpp"
+    fi
   fi
   
   # Go to the submodule directory
   cd $LLAMA_CPP_DIR
   
-  # Fetch the latest changes
-  git fetch --quiet
+  # Checkout the specific commit (and update cache)
+  git checkout $LLAMA_CPP_COMMIT -q
+  cd - > /dev/null
   
-  # Check out the specific version (using tag)
-  git checkout $LLAMA_CPP_VERSION --quiet
+  if [ -d "$TEMP_DIR/llama.cpp/.git" ]; then
+    cd "$TEMP_DIR/llama.cpp"
+    git checkout $LLAMA_CPP_COMMIT -q 2>/dev/null || echo "Couldn't update cache, continuing anyway"
+    cd - > /dev/null
+  fi
   
-  echo -e "${GREEN}Successfully initialized llama.cpp to version: ${LLAMA_CPP_VERSION}${NC}"
-  echo -e "${YELLOW}Release information can be found at: https://github.com/ggml-org/llama.cpp/releases/tag/${LLAMA_CPP_VERSION}${NC}"
-  
-  # Go back to the root directory
-  cd ../../
+  echo -e "${GREEN}Successfully initialized llama.cpp to commit: ${LLAMA_CPP_COMMIT}${NC}"
 }
 
 # Function to display current submodule status
@@ -64,16 +116,16 @@ show_status() {
     echo -e "Commit: ${GREEN}$CURRENT_COMMIT${NC}"
     
     # Check if we're on the desired version
-    if [ "$CURRENT_TAG" = "$LLAMA_CPP_VERSION" ]; then
-      echo -e "${GREEN}✓ llama.cpp is at the correct version${NC}"
+    if [ "$CURRENT_COMMIT" = "$LLAMA_CPP_COMMIT" ]; then
+      echo -e "${GREEN}✓ llama.cpp is at the correct commit${NC}"
     else
-      echo -e "${RED}✗ llama.cpp is NOT at the expected version${NC}"
-      echo -e "${YELLOW}Expected tag: $LLAMA_CPP_VERSION${NC}"
-      echo -e "${YELLOW}Current tag:  $CURRENT_TAG${NC}"
+      echo -e "${RED}✗ llama.cpp is NOT at the expected commit${NC}"
+      echo -e "${YELLOW}Expected commit: $LLAMA_CPP_COMMIT${NC}"
+      echo -e "${YELLOW}Current commit:  $CURRENT_COMMIT${NC}"
     fi
-    cd ../../
+    cd - > /dev/null
   else
-    echo -e "${RED}Submodule not initialized${NC}"
+    echo -e "${RED}Repository not initialized${NC}"
   fi
 }
 
@@ -81,20 +133,11 @@ show_status() {
 list_tags() {
   echo -e "${YELLOW}Available llama.cpp release tags:${NC}"
   
-  if [ -d "$LLAMA_CPP_DIR/.git" ]; then
-    cd $LLAMA_CPP_DIR
-    git fetch --tags --quiet
-    # List the 10 most recent tags
-    echo -e "${GREEN}Recent releases:${NC}"
-    git tag -l "b*" --sort=-version:refname | head -10
-    cd ../../
-  else
-    # If submodule not initialized, fetch tags directly from the remote
-    echo -e "${YELLOW}Fetching tags from remote repository...${NC}"
-    git ls-remote --tags https://github.com/ggml-org/llama.cpp.git | grep -o 'refs/tags/b[0-9]*' | sed 's/refs\/tags\///' | sort -rV | head -10
-  fi
+  # Fetch tags directly from the remote
+  echo -e "${YELLOW}Fetching tags from remote repository...${NC}"
+  git ls-remote --tags https://github.com/ggml-org/llama.cpp.git | grep -o 'refs/tags/b[0-9]*' | sed 's/refs\/tags\///' | sort -rV | head -10
   
-  echo -e "\n${YELLOW}To update llama.cpp version, edit LLAMA_CPP_VERSION in this script.${NC}"
+  echo -e "\n${YELLOW}To update llama.cpp version, edit LLAMA_CPP_COMMIT in this script.${NC}"
 }
 
 # Main function
@@ -111,8 +154,8 @@ main() {
       ;;
     *)
       echo "Usage: $0 {init|status|list-tags}"
-      echo "  init       - Initialize and set the llama.cpp submodule to the correct version"
-      echo "  status     - Show current llama.cpp submodule status"
+      echo "  init       - Initialize and set the llama.cpp repository to the correct version"
+      echo "  status     - Show current llama.cpp repository status"
       echo "  list-tags  - List available llama.cpp release tags"
       ;;
   esac

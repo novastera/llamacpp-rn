@@ -9,6 +9,11 @@
 #include <jsi/jsi.h>
 #include "llama.h"
 #include <atomic>
+#include <react/renderer/core/ReactPrimitives.h>
+
+// Forward declaration of needed llama.cpp types
+struct llama_context;
+struct llama_model;
 
 namespace facebook::react {
 
@@ -49,7 +54,8 @@ private:
   std::mutex mutex_;
   
   // Cache for loaded model info to improve performance on repeated calls
-  std::unordered_map<std::string, jsi::Object> modelInfoCache_;
+  // Using shared_ptr to avoid JSI object copy constructor issues
+  std::unordered_map<std::string, std::shared_ptr<jsi::Object>> modelInfoCache_;
   
   // Flag to indicate if GPU is enabled
   bool m_gpuEnabled = false;
@@ -57,22 +63,22 @@ private:
   // Flag to indicate if an ongoing completion should be stopped
   std::atomic<bool> m_shouldStopCompletion{false};
 
-  Value setThreadCount(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value loadModel(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value getSystemInfo(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value tokenize(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value getTokens(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value evaluate(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value embeddings(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value isModelLoaded(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value freeModel(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value getContextLength(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value getVocabSize(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value encode(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value decode(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value getGpuInfo(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value enableGpuAcceleration(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-  Value isGpuAvailable(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value setThreadCount(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value loadModel(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value getSystemInfo(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value tokenize(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value getTokens(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value evaluate(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value embeddings(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value isModelLoaded(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value freeModel(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value getContextLength(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value getVocabSize(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value encode(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value decode(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value getGpuInfo(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value enableGpuAcceleration(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
+  jsi::Value isGpuAvailable(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
   
   // Helper methods
   std::vector<int32_t> jsiArrayToVector(jsi::Runtime& runtime, const jsi::Object& array);

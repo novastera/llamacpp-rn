@@ -1,14 +1,12 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "./tsconfig",
   "compilerOptions": {
-    "noEmit": false,
     "declaration": true,
-    "outDir": "lib"
+    "outDir": "lib",
+    "rootDir": "src",
+    "noEmit": false,
+    "jsx": "react-native"
   },
-  "exclude": [
-    "example/**/*",
-    "**/__tests__/**/*",
-    "**/__mocks__/**/*",
-    "lib/**/*"
-  ]
+  "include": ["src/**/*"],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "example/**/*"]
 } 
