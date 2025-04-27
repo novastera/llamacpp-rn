@@ -53,72 +53,25 @@ export default function ModelChatTest() {
       setModelInfo(info);
       console.log('Model info:', info);
       
-      // Try initializing with different GPU layer settings
-      let modelInstance = null;
-      let lastError = null;
+      // Initialize with optimal settings - the C++ module will handle GPU fallback gracefully
+      console.log('Initializing model with optimal settings...');
+      const modelInstance = await LlamaCppRn.initLlama({
+        model: modelPath,
+        n_ctx: 2048,
+        n_batch: 512,
+        n_gpu_layers: 42, // Use 42 GPU layers, the module will check support and fall back if needed
+        use_mlock: true, // Keep model in RAM and prevent swapping to disk
+      });
       
-      // First try with GPU layers (if supported)
-      if (info.gpuSupported) {
-        try {
-          console.log('Attempting to initialize with GPU support (n_gpu_layers=99)...');
-          modelInstance = await LlamaCppRn.initLlama({
-            model: modelPath,
-            n_ctx: 2048,
-            n_batch: 512,
-            //n_threads: 4,
-            n_gpu_layers: 99, // Shoudl gracefully fail if no gpu
-          });
-          console.log('Successfully initialized with GPU support');
-        } catch (gpuError) {
-          lastError = gpuError;
-          console.error('Failed to initialize with GPU support:', gpuError);
-          console.log('Falling back to CPU-only mode...');
-        }
-      }
+      console.log('Model initialized successfully');
+      setModel(modelInstance);
       
-      // If GPU initialization failed or isn't supported, try CPU-only
-      if (!modelInstance) {
-        try {
-          console.log('Initializing in CPU-only mode (n_gpu_layers=0)...');
-          modelInstance = await LlamaCppRn.initLlama({
-            model: modelPath,
-            n_ctx: 2048,
-            n_batch: 512,
-            n_threads: 4,
-            n_gpu_layers: 0,
-          });
-          console.log('Successfully initialized in CPU-only mode');
-        } catch (cpuError) {
-          lastError = cpuError;
-          console.error('Failed to initialize in CPU-only mode:', cpuError);
-          
-          // Try one more time with minimal context size
-          try {
-            console.log('Attempting with minimal settings...');
-            modelInstance = await LlamaCppRn.initLlama({
-              model: modelPath,
-              n_ctx: 512,
-              n_batch: 128,
-              n_threads: 1,
-              n_gpu_layers: 0,
-            });
-            console.log('Successfully initialized with minimal settings');
-          } catch (minimalError) {
-            lastError = minimalError;
-            console.error('Failed with minimal settings:', minimalError);
-          }
-        }
-      }
+      // Store initialization notes
+      setModelInfo((prev: any) => ({
+        ...prev,
+        initNotes: ['Model initialized with optimal settings']
+      }));
       
-      // If we have a model instance, set it and return
-      if (modelInstance) {
-        console.log('Model initialized successfully');
-        setModel(modelInstance);
-        return;
-      }
-      
-      // If we get here, all initialization attempts failed
-      throw lastError || new Error('Failed to initialize model for unknown reasons');
     } catch (err) {
       console.error('Model initialization failed:', err);
       
@@ -369,7 +322,14 @@ export default function ModelChatTest() {
             onPress={initializeModel}
             disabled={loading} 
           />
-          {loading && <ActivityIndicator style={styles.loader} />}
+          {loading && (
+            <View style={styles.loaderContainer}>
+              <ActivityIndicator size="large" color="#007bff" style={styles.loader} />
+              <Text style={styles.loadingText}>
+                {modelInfo ? 'Initializing model...' : 'Loading model information...'}
+              </Text>
+            </View>
+          )}
           {error && (
             <View style={styles.errorContainer}>
               <Text style={styles.error}>{error}</Text>
@@ -380,13 +340,23 @@ export default function ModelChatTest() {
               )}
             </View>
           )}
-          {modelInfo && (
+          {modelInfo && !loading && (
             <View style={styles.infoBox}>
               <Text style={styles.infoTitle}>Model Information:</Text>
               <Text>Parameters: {modelInfo.n_params.toLocaleString()}</Text>
               <Text>Context: {modelInfo.n_context}</Text>
               <Text>Vocab Size: {modelInfo.n_vocab}</Text>
               <Text>Description: {modelInfo.description}</Text>
+              <Text>GPU Support: {modelInfo.gpuSupported ? 'Available' : 'Not available'}</Text>
+              
+              {modelInfo.initNotes && (
+                <View style={styles.notesSection}>
+                  <Text style={styles.notesTitle}>Initialization Notes:</Text>
+                  {modelInfo.initNotes.map((note: string, index: number) => (
+                    <Text key={index} style={styles.noteItem}>• {note}</Text>
+                  ))}
+                </View>
+              )}
             </View>
           )}
         </View>
@@ -590,5 +560,28 @@ const styles = StyleSheet.create({
   sendButtonText: {
     color: 'white',
     fontWeight: 'bold',
+  },
+  notesSection: {
+    marginTop: 10,
+    padding: 10,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+  },
+  notesTitle: {
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  noteItem: {
+    marginBottom: 4,
+  },
+  loaderContainer: {
+    marginTop: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    marginTop: 8,
+    fontSize: 16,
+    color: '#333',
   },
 }); 

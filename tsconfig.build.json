@@ -5,7 +5,9 @@
     "outDir": "lib",
     "rootDir": "src",
     "noEmit": false,
-    "jsx": "react-native"
+    "jsx": "react-native",
+    "skipLibCheck": true,
+    "types": ["react-native"]
   },
   "include": ["src/**/*"],
   "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "example/**/*"]

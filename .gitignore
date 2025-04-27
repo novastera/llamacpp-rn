@@ -68,6 +68,10 @@ coverage/
 *.bin
 *.gguf
 *.ggml
+*.ggmf
+*.ggufv*
+**/models/*.gguf
+**/assets/*.gguf
 example/**/*.gguf
 example/ios
 example/android
@@ -81,3 +85,21 @@ CURSOR_RULES.md
 .cursor/ 
 
 .llamacpp-temp
+
+# Downloaded frameworks and builds
+/ios/libs/llamacpp.xcframework/
+/ios/framework/build-apple/
+/ios/framework/build/
+/ios/libs/temp_framework.zip
+/ios/includes/
+/android/libs/
+/android/build/
+/android/.cxx/
+/android/src/main/cpp/includes/
+/android/src/main/jniLibs/arm64-v8a/libllama.so
+/android/src/main/jniLibs/armeabi-v7a/libllama.so
+/android/src/main/jniLibs/x86/libllama.so
+/android/src/main/jniLibs/x86_64/libllama.so
+
+# Allow prebuilt binaries in prebuilt/ directory for npm packaging
+!/prebuilt/

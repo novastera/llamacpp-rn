@@ -20,9 +20,23 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "resolveJsonModule": true,
-    "skipLibCheck": true,
     "strict": true,
     "target": "esnext",
     "verbatimModuleSyntax": true
-  }
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "cpp/llama.cpp/examples/**/*",
+    "cpp/llama.cpp/tests/**/*",
+    "cpp/llama.cpp/website/**/*",
+    "ios",
+    "android",
+    "build",
+    "dist",
+    "example",
+    "lib"
+  ]
 } 

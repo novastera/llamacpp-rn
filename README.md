@@ -122,6 +122,10 @@ Full API documentation can be found in the [API.md](./API.md) file.
 
 See [BUILDING.md](./BUILDING.md) for instructions on building the native modules.
 
+## Prebuilt Binaries
+
+This package is distributed with prebuilt binaries to make installation easier. See [PREBUILT.md](./PREBUILT.md) for details on how these work and how to package them for distribution.
+
 ## License
 
 MIT

@@ -287,10 +287,23 @@ export default function LlamaTest() {
       try {
         const info = await LlamaCppRn.loadLlamaModelInfo(modelPath);
         console.log('Model loaded successfully:', info);
+        
+        // Check if we should try with GPU
+        const gpuTestResult = info.gpuSupported ? 
+          'GPU support available - you can enable it for inference' : 
+          'GPU support not available on this device/build';
+        
+        // On simulator, add a note about GPU not working
+        const isSimulator = modelPath.includes('Simulator');
+        const gpuSimulatorNote = isSimulator && info.gpuSupported ? 
+          ' (Note: GPU acceleration typically fails on simulators, but should work on real devices)' : '';
+        
         setModelInfo({
           path: modelPath,
           info: info,
-          rawPathUsed: false
+          rawPathUsed: false,
+          gpuSupport: gpuTestResult + gpuSimulatorNote,
+          timestamp: new Date().toISOString()
         });
         return;
       } catch (error) {
@@ -304,10 +317,23 @@ export default function LlamaTest() {
       try {
         const info = await LlamaCppRn.loadLlamaModelInfo(rawPath);
         console.log('Model loaded successfully with raw path:', info);
+        
+        // Check if we should try with GPU
+        const gpuTestResult = info.gpuSupported ? 
+          'GPU support available - you can enable it for inference' : 
+          'GPU support not available on this device/build';
+          
+        // On simulator, add a note about GPU not working
+        const isSimulator = rawPath.includes('Simulator');
+        const gpuSimulatorNote = isSimulator && info.gpuSupported ? 
+          ' (Note: GPU acceleration typically fails on simulators, but should work on real devices)' : '';
+        
         setModelInfo({
           path: rawPath,
           info: info,
-          rawPathUsed: true
+          rawPathUsed: true,
+          gpuSupport: gpuTestResult + gpuSimulatorNote,
+          timestamp: new Date().toISOString()
         });
         return;
       } catch (loadError) {
@@ -751,6 +777,8 @@ export default function LlamaTest() {
       if (modelInfo.exists) {
         try {
           console.log('Attempting to load model info for:', documentsModelPath);
+          
+          // Load model info with the same settings we'll use in chat
           const info = await LlamaCppRn.loadLlamaModelInfo(documentsModelPath);
           console.log('Successfully loaded model info:', info);
           
@@ -879,7 +907,24 @@ export default function LlamaTest() {
             <Button title="Test Direct Model Load" onPress={() => testModelLoading(false)} />
             {modelLoading && <ActivityIndicator size="small" />}
             {modelError && <View style={styles.resultBox}><Text style={styles.error}>{modelError}</Text></View>}
-            {modelInfo && <Text style={styles.resultText}>{JSON.stringify(modelInfo)}</Text>}
+            {modelInfo && (
+              <View style={styles.resultBox}>
+                <Text style={styles.resultTitle}>Model Info:</Text>
+                <Text style={styles.resultText}>Path: {modelInfo.path}</Text>
+                <Text style={styles.resultText}>Raw Path Used: {modelInfo.rawPathUsed ? 'Yes' : 'No'}</Text>
+                {modelInfo.gpuSupport && (
+                  <Text style={styles.gpuInfo}>{modelInfo.gpuSupport}</Text>
+                )}
+                <Text style={styles.resultSubtitle}>Model Properties:</Text>
+                <Text style={styles.resultText}>Type: {modelInfo.info.description || 'Unknown'}</Text>
+                <Text style={styles.resultText}>Parameters: {modelInfo.info.n_params?.toLocaleString() || 'Unknown'}</Text>
+                <Text style={styles.resultText}>Context: {modelInfo.info.n_context || 'Unknown'}</Text>
+                <Text style={styles.resultText}>Vocab Size: {modelInfo.info.n_vocab || 'Unknown'}</Text>
+                {modelInfo.timestamp && (
+                  <Text style={styles.resultTimestamp}>Last tested: {new Date(modelInfo.timestamp).toLocaleTimeString()}</Text>
+                )}
+              </View>
+            )}
           </View>
           
           <View style={styles.buttonSpacing} />
@@ -1000,5 +1045,18 @@ const styles = StyleSheet.create({
   },
   resultText: {
     marginBottom: 4,
+  },
+  gpuInfo: {
+    color: 'green',
+    marginTop: 4,
+  },
+  resultSubtitle: {
+    fontWeight: 'bold',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  resultTimestamp: {
+    color: 'gray',
+    marginTop: 4,
   },
 }); 

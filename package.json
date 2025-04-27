@@ -13,6 +13,8 @@
     "android",
     "ios",
     "cpp",
+    "prebuilt",
+    "scripts",
     "*.podspec",
     "!lib/typescript/example",
     "!ios/build",
@@ -29,6 +31,7 @@
   "scripts": {
     "test": "jest",
     "typescript": "tsc --noEmit",
+    "typescript:example": "cd example && tsc --noEmit",
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
     "prepare": "mkdir -p lib && tsc -p tsconfig.build.json",
     "release": "release-it",
@@ -40,7 +43,10 @@
     "llama-init": "bash scripts/llama_cpp_version.sh init",
     "llama-tags": "bash scripts/llama_cpp_version.sh list-tags",
     "llama-from-source": "LLAMACPPRN_BUILD_FROM_SOURCE=true yarn setup-llama-cpp",
-    "llama-prebuilt": "yarn setup-llama-cpp"
+    "llama-prebuilt": "yarn setup-llama-cpp",
+    "package-prebuilt": "bash scripts/package-prebuilt.sh",
+    "cleanup-frameworks": "bash scripts/download_prebuilt.sh clean",
+    "clean": "bash scripts/setupLlamaCpp.sh clean"
   },
   "keywords": [
     "react-native",

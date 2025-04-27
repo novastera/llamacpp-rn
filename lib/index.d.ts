@@ -1,4 +1,4 @@
-import type { LlamaModelParams, LlamaCompletionParams, LlamaCompletionResult, LlamaMessage, LlamaTool, LlamaContextType, LlamaContextMethods } from './specs/LlamaCppRnSpec';
+import type { LlamaModelParams, LlamaCompletionParams, LlamaCompletionResult, LlamaMessage, LlamaTool, LlamaContextType, LlamaContextMethods } from './specs/NativeLlamaCppRn';
 export declare function initLlama(params: LlamaModelParams): Promise<LlamaContextType & LlamaContextMethods>;
 export declare function loadLlamaModelInfo(modelPath: string): Promise<{
     n_params: number;
