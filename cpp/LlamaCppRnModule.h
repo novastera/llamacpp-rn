@@ -36,13 +36,6 @@ public:
   jsi::Value getAbsolutePath(jsi::Runtime &runtime, jsi::String relativePath);
 
 private:
-  struct SimpleJSON {
-    std::unordered_map<std::string, std::string> stringValues;
-    void set(const std::string& key, const std::string& value) {
-      stringValues[key] = value;
-    }
-  };
-
   struct GpuInfo {
     bool available;
     std::string deviceName;
@@ -60,6 +53,7 @@ private:
   bool isGpuEnabled();
   jsi::Value getVocabSize(jsi::Runtime& runtime, const jsi::Value& thisValue, 
                             const jsi::Value* args, size_t count);
+  std::string normalizeFilePath(const std::string& path);
 
 private:
   // Module state

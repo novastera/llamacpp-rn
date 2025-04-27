@@ -63,54 +63,26 @@ std::shared_ptr<TurboModule> LlamaCppRn::create(std::shared_ptr<CallInvoker> jsI
   return std::make_shared<LlamaCppRn>(std::move(jsInvoker));
 }
 
+std::string LlamaCppRn::normalizeFilePath(const std::string& path) {
+    // Remove file:// prefix if present
+    if (path.substr(0, 7) == "file://") {
+        return path.substr(7);
+    }
+    return path;
+}
+
 jsi::Value LlamaCppRn::loadLlamaModelInfo(jsi::Runtime &runtime, jsi::String modelPath) {
-  std::string path = modelPath.utf8(runtime);
-  
   // Thread-safe implementation with a lock for the cache
   std::lock_guard<std::mutex> lock(mutex_);
-  
-  // Verbose logging to debug
-  fprintf(stderr, "[LlamaCppRn] Loading model info from path: %s\n", path.c_str());
-  
-  // Basic file existence check with standard C file operations - no platform-specific code
-  FILE* file = fopen(path.c_str(), "rb");
-  if (!file) {
-    fprintf(stderr, "[LlamaCppRn] Error: File doesn't exist or can't be opened: %s\n", path.c_str());
-    throw std::runtime_error("File doesn't exist or can't be opened: " + path);
-  }
-  
-  // Get file size
-  fseek(file, 0, SEEK_END);
-  size_t fileSize = ftell(file);
-  fseek(file, 0, SEEK_SET);
-  fprintf(stderr, "[LlamaCppRn] File size: %zu bytes\n", fileSize);
-  
-  // Check for minimum file size
-  if (fileSize < 4) {
-    fclose(file);
-    fprintf(stderr, "[LlamaCppRn] Error: File too small to be a valid model\n");
-    throw std::runtime_error("File too small to be a valid model: " + path);
-  }
-  
-  // Check if it's a GGUF file by reading first 4 bytes
-  char magic[4];
-  if (fread(magic, 1, 4, file) != 4) {
-    fclose(file);
-    fprintf(stderr, "[LlamaCppRn] Error: Failed to read file header\n");
-    throw std::runtime_error("Failed to read file header: " + path);
-  }
-  
-  fclose(file);
+  std::string path = normalizeFilePath(modelPath.utf8(runtime));
   
   // Check if we already have this model info cached
   auto it = modelInfoCache_.find(path);
   if (it != modelInfoCache_.end()) {
-    fprintf(stderr, "[LlamaCppRn] Using cached model info\n");
     return jsi::Value(runtime, *(it->second));
   }
   
   try {
-    fprintf(stderr, "[LlamaCppRn] Initializing llama backend\n");
     // Initialize llama backend
     llama_backend_init();
     
@@ -120,17 +92,12 @@ jsi::Value LlamaCppRn::loadLlamaModelInfo(jsi::Runtime &runtime, jsi::String mod
     // Always use CPU for model info loading
     params.n_gpu_layers = 0;
     
-    fprintf(stderr, "[LlamaCppRn] Attempting to load model with n_gpu_layers=%d\n", params.n_gpu_layers);
-    
     // Load the model
     llama_model* model = llama_model_load_from_file(path.c_str(), params);
     
     if (!model) {
-      fprintf(stderr, "[LlamaCppRn] Error: Failed to load model\n");
       throw std::runtime_error("Failed to load model from file: " + path);
     }
-    
-    fprintf(stderr, "[LlamaCppRn] Model loaded successfully\n");
     
     // Create result object
     jsi::Object result(runtime);
@@ -169,12 +136,9 @@ jsi::Value LlamaCppRn::loadLlamaModelInfo(jsi::Runtime &runtime, jsi::String mod
     auto resultPtr = std::make_shared<jsi::Object>(std::move(result));
     modelInfoCache_[path] = resultPtr;
     
-    fprintf(stderr, "[LlamaCppRn] Model info loaded and cached successfully\n");
-    
     // Return a copy of the cached object
     return jsi::Value(runtime, *resultPtr);
   } catch (const std::exception& e) {
-    fprintf(stderr, "[LlamaCppRn] Error in loadLlamaModelInfo: %s\n", e.what());
     jsi::Object error(runtime);
     error.setProperty(runtime, "message", jsi::String::createFromUtf8(runtime, e.what()));
     throw jsi::JSError(runtime, error.getProperty(runtime, "message").asString(runtime));
@@ -190,8 +154,7 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
       throw std::runtime_error("Missing required parameter: model");
     }
     
-    std::string modelPath = params.getProperty(runtime, "model").asString(runtime).utf8(runtime);
-    fprintf(stderr, "[LlamaCppRn] Initializing model: %s\n", modelPath.c_str());
+    std::string modelPath = normalizeFilePath(params.getProperty(runtime, "model").asString(runtime).utf8(runtime));
     
     // Initialize llama backend
     llama_backend_init();
@@ -212,21 +175,12 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
     bool gpuSupported = llama_supports_gpu_offload();
     if (gpuSupported && modelParams.n_gpu_layers > 0) {
       enableGpu(true);
-      fprintf(stderr, "[LlamaCppRn] GPU enabled with %d layers\n", modelParams.n_gpu_layers);
     } else {
       if (modelParams.n_gpu_layers > 0) {
-        fprintf(stderr, "[LlamaCppRn] Warning: GPU requested but not supported. Using CPU only.\n");
+        modelParams.n_gpu_layers = 0;
       }
-      modelParams.n_gpu_layers = 0;
       enableGpu(false);
     }
-    
-    // Check file exists
-    FILE* file = fopen(modelPath.c_str(), "rb");
-    if (!file) {
-      throw std::runtime_error("Model file does not exist: " + modelPath);
-    }
-    fclose(file);
     
     // Load the model
     llama_model* model = llama_model_load_from_file(modelPath.c_str(), modelParams);
@@ -265,10 +219,8 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
     // Create and return the model object
     auto result = createModelObject(runtime, model, ctx);
     
-    fprintf(stderr, "[LlamaCppRn] Model and context initialized successfully\n");
     return result;
   } catch (const std::exception& e) {
-    fprintf(stderr, "[LlamaCppRn] Error in initLlama: %s\n", e.what());
     jsi::Object error(runtime);
     error.setProperty(runtime, "message", jsi::String::createFromUtf8(runtime, e.what()));
     throw jsi::JSError(runtime, error.getProperty(runtime, "message").asString(runtime));
@@ -302,7 +254,6 @@ jsi::Value LlamaCppRn::jsonSchemaToGbnf(jsi::Runtime &runtime, jsi::Object schem
     
     return jsi::String::createFromUtf8(runtime, gbnf.str());
   } catch (const std::exception& e) {
-    fprintf(stderr, "[LlamaCppRn] Error in jsonSchemaToGbnf: %s\n", e.what());
     jsi::Object error(runtime);
     error.setProperty(runtime, "message", jsi::String::createFromUtf8(runtime, e.what()));
     throw jsi::JSError(runtime, error.getProperty(runtime, "message").asString(runtime));
@@ -422,12 +373,13 @@ jsi::Value LlamaCppRn::getGPUInfo(jsi::Runtime &runtime) {
 
 jsi::Value LlamaCppRn::getAbsolutePath(jsi::Runtime &runtime, jsi::String relativePath) {
   std::string path = relativePath.utf8(runtime);
+  std::string normalizedPath = normalizeFilePath(path);
   
   jsi::Object result(runtime);
   result.setProperty(runtime, "relativePath", jsi::String::createFromUtf8(runtime, path));
   
   // Check if file exists
-  FILE* file = fopen(path.c_str(), "rb");
+  FILE* file = fopen(normalizedPath.c_str(), "rb");
   bool exists = (file != nullptr);
   
   if (exists) {
@@ -441,7 +393,7 @@ jsi::Value LlamaCppRn::getAbsolutePath(jsi::Runtime &runtime, jsi::String relati
     result.setProperty(runtime, "attributes", attributes);
   }
   
-  result.setProperty(runtime, "absolutePath", jsi::String::createFromUtf8(runtime, path));
+  result.setProperty(runtime, "path", jsi::String::createFromUtf8(runtime, normalizedPath));
   result.setProperty(runtime, "exists", jsi::Value(exists));
   
   return result;
