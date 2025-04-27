@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text, StyleSheet, Button, ActivityIndicator, ScrollView, Platform, Alert } from 'react-native';
+import { View, Text, StyleSheet, Button, ActivityIndicator, ScrollView, Platform, Alert, TouchableOpacity } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import * as Asset from 'expo-asset';
 // Using require instead of import to avoid TypeScript errors
@@ -30,6 +30,8 @@ export default function LlamaTest() {
   // Add API status state for simple file test
   const [apiStatus, setApiStatus] = React.useState<string | null>(null);
   const [simpleFileLoading, setSimpleFileLoading] = React.useState(false);
+
+  const [minimalSettingsLoading, setMinimalSettingsLoading] = React.useState(false);
 
   // Test file system access
   const testFileAccess = async () => {
@@ -413,16 +415,16 @@ export default function LlamaTest() {
     try {
       // Get the documents directory path
       const documentsDir = FileSystem.documentDirectory || '';
-      console.log('Documents directory:', documentsDir);
+      console.log('[testWithSimpleFile] Documents directory:', documentsDir);
       
       // Create the test file path
       const testFilePath = `${documentsDir}test_file.gguf`;
-      console.log('Test file path:', testFilePath);
+      console.log('[testWithSimpleFile] Test file path:', testFilePath);
       
       // Check if the native module is available
-      console.log('Native module available:', !!LlamaCppRn);
-      console.log('Available functions:', Object.keys(LlamaCppRn).join(', '));
-      console.log('loadLlamaModelInfo type:', typeof LlamaCppRn.loadLlamaModelInfo);
+      console.log('[testWithSimpleFile] Native module available:', !!LlamaCppRn);
+      console.log('[testWithSimpleFile] Available functions:', Object.keys(LlamaCppRn).join(', '));
+      console.log('[testWithSimpleFile] loadLlamaModelInfo type:', typeof LlamaCppRn.loadLlamaModelInfo);
       
       // Create minimal GGUF header with version 3
       const header = new Uint8Array([
@@ -440,81 +442,155 @@ export default function LlamaTest() {
         const headerStr = Array.from(header).map(byte => String.fromCharCode(byte)).join('');
         
         // Write the file with UTF8 encoding
+        console.log('[testWithSimpleFile] Attempting to write test file...');
         await FileSystem.writeAsStringAsync(testFilePath, headerStr, {
           encoding: FileSystem.EncodingType.UTF8
         });
         
         // Verify the file exists
         const fileInfo = await FileSystem.getInfoAsync(testFilePath);
-        console.log('File created successfully:', fileInfo);
+        console.log('[testWithSimpleFile] File created successfully:', JSON.stringify(fileInfo));
         
         // Verify with native module if possible
         if (LlamaCppRn.fileExists) {
           const exists = await LlamaCppRn.fileExists(testFilePath);
-          console.log('Native module fileExists check:', exists);
+          console.log('[testWithSimpleFile] Native module fileExists check:', exists);
         }
+        
+        // Log more details about the file
+        if (fileInfo && fileInfo.exists) {
+          console.log(`[testWithSimpleFile] File size: ${fileInfo.size} bytes`);
+          console.log(`[testWithSimpleFile] File URI: ${fileInfo.uri}`);
+          if (fileInfo.modificationTime) {
+            console.log(`[testWithSimpleFile] Modified: ${new Date(fileInfo.modificationTime).toISOString()}`);
+          }
+        }
+        
+        // Try to get absolute path if the function exists
+        if (LlamaCppRn.getAbsolutePath) {
+          try {
+            const absolutePath = await LlamaCppRn.getAbsolutePath(testFilePath);
+            console.log('[testWithSimpleFile] Absolute path:', absolutePath);
+          } catch (pathError) {
+            console.error('[testWithSimpleFile] Failed to get absolute path:', pathError);
+          }
+        }
+        
+        setApiStatus('File created successfully. Attempting to load model info...');
       } catch (writeError: any) {
-        console.error('Error writing test file:',
-          writeError.name,
-          writeError.message,
-          writeError.stack,
-          writeError.code,
-          writeError.userInfo
+        console.error('[testWithSimpleFile] Error writing test file:',
+          writeError instanceof Error ? {
+            name: writeError.name,
+            message: writeError.message,
+            stack: writeError.stack,
+            ...Object.fromEntries(
+              Object.getOwnPropertyNames(writeError)
+                .filter(prop => prop !== 'name' && prop !== 'message' && prop !== 'stack')
+                .map(prop => [prop, (writeError as any)[prop]])
+            )
+          } : writeError
         );
+        setApiStatus(`Failed to write test file: ${writeError instanceof Error ? writeError.message : String(writeError)}`);
+        setSimpleFileLoading(false);
         return;
       }
       
+      // First try with default options
       try {
-        // Try the first attempt with default options
-        console.log('Attempting to load model info with path:', testFilePath);
+        console.log('[testWithSimpleFile] Attempting to load model info with path:', testFilePath);
+        console.log('[testWithSimpleFile] Using default options');
+        
         const modelInfo = await LlamaCppRn.loadLlamaModelInfo(testFilePath);
-        console.log('Successfully loaded model info:', modelInfo);
+        console.log('[testWithSimpleFile] SUCCESS! Model info loaded:', modelInfo);
         setApiStatus(`Successfully loaded model info: ${JSON.stringify(modelInfo)}`);
       } catch (loadError: any) {
-        console.error('Error loading model info (default options):',
-          typeof loadError,
-          loadError?.constructor?.name,
-          loadError?.name,
-          loadError?.message,
-          loadError?.stack,
-          loadError?.code,
-          loadError?.userInfo,
-          Platform.OS === 'ios' ? loadError?.nativeStackIOS : loadError?.nativeStackAndroid
+        console.error('[testWithSimpleFile] Error loading model info (default options):',
+          loadError instanceof Error ? {
+            type: typeof loadError,
+            constructor: loadError.constructor?.name,
+            name: loadError.name,
+            message: loadError.message,
+            stack: loadError.stack,
+            code: (loadError as any).code,
+            userInfo: (loadError as any).userInfo,
+            nativeStack: Platform.OS === 'ios' 
+              ? (loadError as any).nativeStackIOS 
+              : (loadError as any).nativeStackAndroid,
+            ...Object.fromEntries(
+              Object.getOwnPropertyNames(loadError)
+                .filter(prop => !['name', 'message', 'stack', 'code', 'userInfo', 'nativeStackIOS', 'nativeStackAndroid'].includes(prop))
+                .map(prop => [prop, (loadError as any)[prop]])
+            )
+          } : loadError
         );
         
         // Try again with explicit options (disable GPU)
         try {
           const options = {
             n_gpu_layers: 0,
-            verbose: true
+            verbose: true,
+            embedding: false,
+            n_threads: 1,
+            n_batch: 8
           };
-          console.log('Attempting with explicit options:', options);
+          console.log('[testWithSimpleFile] Attempting with explicit options:', options);
+          
           const modelInfo = await LlamaCppRn.loadLlamaModelInfo(testFilePath, options);
-          console.log('Successfully loaded model info with options:', modelInfo);
+          console.log('[testWithSimpleFile] SUCCESS with options! Model info loaded:', modelInfo);
           setApiStatus(`Successfully loaded model info with options: ${JSON.stringify(modelInfo)}`);
         } catch (optionsError: any) {
-          console.error('Error loading model info (with options):',
-            typeof optionsError,
-            optionsError?.constructor?.name,
-            optionsError?.name,
-            optionsError?.message,
-            optionsError?.stack,
-            optionsError?.code,
-            optionsError?.userInfo,
-            Platform.OS === 'ios' ? optionsError?.nativeStackIOS : optionsError?.nativeStackAndroid
+          console.error('[testWithSimpleFile] Error loading model info (with options):',
+            optionsError instanceof Error ? {
+              type: typeof optionsError,
+              constructor: optionsError.constructor?.name,
+              name: optionsError.name,
+              message: optionsError.message,
+              stack: optionsError.stack,
+              code: (optionsError as any).code,
+              userInfo: (optionsError as any).userInfo,
+              nativeStack: Platform.OS === 'ios' 
+                ? (optionsError as any).nativeStackIOS 
+                : (optionsError as any).nativeStackAndroid,
+              ...Object.fromEntries(
+                Object.getOwnPropertyNames(optionsError)
+                  .filter(prop => !['name', 'message', 'stack', 'code', 'userInfo', 'nativeStackIOS', 'nativeStackAndroid'].includes(prop))
+                  .map(prop => [prop, (optionsError as any)[prop]])
+              )
+            } : optionsError
           );
-          setApiStatus(`Failed to load model info: ${loadError?.message || 'Unknown error'}`);
+          
+          // Try checking if module can see the file directly
+          try {
+            if (LlamaCppRn.fileExists) {
+              const fileExists = await LlamaCppRn.fileExists(testFilePath);
+              console.log(`[testWithSimpleFile] Final check - file exists (native): ${fileExists}`);
+              
+              setApiStatus(`Failed to load model info despite file existing (native check: ${fileExists}): ${loadError instanceof Error ? loadError.message : String(loadError)}`);
+            } else {
+              setApiStatus(`Failed to load model info: ${loadError instanceof Error ? loadError.message : String(loadError)}`);
+            }
+          } catch (finalError) {
+            console.error('[testWithSimpleFile] Final file check error:', finalError);
+            setApiStatus(`Failed to load model info: ${loadError instanceof Error ? loadError.message : String(loadError)}`);
+          }
         }
       }
     } catch (error: any) {
-      console.error('Unexpected error in testWithSimpleFile:',
-        typeof error,
-        error?.constructor?.name,
-        error?.name,
-        error?.message,
-        error?.stack
+      console.error('[testWithSimpleFile] Unexpected error:',
+        error instanceof Error ? {
+          type: typeof error,
+          constructor: error.constructor?.name,
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+          ...Object.fromEntries(
+            Object.getOwnPropertyNames(error)
+              .filter(prop => prop !== 'name' && prop !== 'message' && prop !== 'stack')
+              .map(prop => [prop, (error as any)[prop]])
+          )
+        } : error
       );
-      setApiStatus(`Error: ${error?.message || 'Unknown error'}`);
+      setApiStatus(`Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setSimpleFileLoading(false);
     }
@@ -880,6 +956,179 @@ export default function LlamaTest() {
     }
   };
 
+  const testLlamaModel = async (modelPath: string) => {
+    setApiStatus(null);
+    setModelLoading(true);
+    
+    try {
+      // First, check GPU capabilities
+      const gpuInfo = await LlamaCppRn.getGPUInfo();
+      console.log('GPU info:', gpuInfo);
+      
+      // Load model info first to check if it's available
+      const modelInfo = await LlamaCppRn.loadLlamaModelInfo(modelPath);
+      console.log('Successfully loaded model info:', modelInfo);
+      
+      // Try to load the model with explicit settings
+      // First attempt: with recommended settings from model info
+      try {
+        console.log('Initializing model with optimal settings...');
+        const context = await LlamaCppRn.initLlama({
+          model: modelPath,
+          n_ctx: 512, // Start with smaller context
+          n_batch: 512,
+          // Use Metal GPU if supported
+          n_gpu_layers: gpuInfo.isSupported ? 32 : 0
+        });
+        
+        console.log('Model initialized successfully:', context);
+        setApiStatus('Model initialized successfully');
+        // Use context for completions, embeddings, etc.
+        return context;
+      } catch (loadError: any) {
+        console.error('Model initialization failed:', loadError);
+        
+        // Second attempt: try with CPU only
+        try {
+          console.log('Trying with CPU only mode...');
+          const context = await LlamaCppRn.initLlama({
+            model: modelPath,
+            n_ctx: 512, // Small context size
+            n_batch: 256, // Smaller batch size
+            n_gpu_layers: 0, // Force CPU mode
+            use_mlock: true, // Try to keep model in memory
+          });
+          
+          console.log('Model initialized with CPU only:', context);
+          setApiStatus('Model initialized with CPU only');
+          return context;
+        } catch (cpuError: any) {
+          console.error('CPU-only initialization also failed:', cpuError);
+          
+          // Third attempt: minimal context size
+          try {
+            console.log('Trying with minimal context size...');
+            const context = await LlamaCppRn.initLlama({
+              model: modelPath,
+              n_ctx: 128, // Minimal context
+              n_batch: 64, // Minimal batch
+              n_gpu_layers: 0,
+              n_threads: 1, // Minimal threads
+            });
+            
+            console.log('Model initialized with minimal settings:', context);
+            setApiStatus('Model initialized with minimal settings');
+            return context;
+          } catch (minimalError: any) {
+            console.error('All initialization attempts failed:', minimalError);
+            setApiStatus(`Failed to initialize model after multiple attempts: ${minimalError.message}`);
+            throw new Error(`Could not initialize model after all attempts: ${minimalError.message}`);
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('Error loading model:', error);
+      setApiStatus(`Error: ${error.message}`);
+      throw error;
+    } finally {
+      setModelLoading(false);
+    }
+  };
+
+  const testWithAdvancedFallbacks = async () => {
+    setApiStatus(null);
+    setModelLoading(true);
+    
+    try {
+      if (!modelInfo || !modelInfo.path) {
+        setApiStatus('No model loaded yet. Please load a model first.');
+        return;
+      }
+      
+      // Use the testLlamaModel function with fallbacks
+      await testLlamaModel(modelInfo.path);
+    } catch (error: any) {
+      console.error('Advanced model loading failed:', error);
+      setApiStatus(`Error: ${error.message}`);
+    } finally {
+      setModelLoading(false);
+    }
+  };
+
+  const testMinimalSettings = async () => {
+    setMinimalSettingsLoading(true);
+    setApiStatus(null);
+    
+    try {
+      console.log('[testMinimalSettings] Starting minimal settings test');
+      const documentDirectory = FileSystem.documentDirectory;
+      const testFilePath = `${documentDirectory}test.bin`;
+      
+      console.log(`[testMinimalSettings] Documents dir: ${documentDirectory}`);
+      console.log(`[testMinimalSettings] Test file path: ${testFilePath}`);
+      
+      // Create a small test file (1KB of zeros)
+      const testData = new Array(1024).fill('0').join('');
+      try {
+        await FileSystem.writeAsStringAsync(testFilePath, testData);
+        console.log(`[testMinimalSettings] Created test file at ${testFilePath}`);
+        
+        // Check if file exists using native method
+        if (LlamaCppRn.fileExists) {
+          const exists = await LlamaCppRn.fileExists(testFilePath);
+          console.log(`[testMinimalSettings] Native file check - exists: ${exists}`);
+        }
+        
+        const fileInfo = await FileSystem.getInfoAsync(testFilePath);
+        console.log(`[testMinimalSettings] File exists: ${fileInfo.exists}, URI: ${fileInfo.uri}`);
+        
+        // Log available functions in LlamaCppRn
+        console.log('[testMinimalSettings] Available functions in LlamaCppRn:', 
+          Object.keys(LlamaCppRn).join(', '));
+        
+        // Try to load with absolute minimal settings
+        console.log('[testMinimalSettings] Attempting to load with minimal settings...');
+        const options = {
+          n_gpu_layers: 0,
+          verbose: true,
+          embedding: false,
+          n_threads: 1,
+          n_batch: 8
+        };
+        
+        const modelInfo = await LlamaCppRn.loadLlamaModelInfo(testFilePath, options);
+        console.log('[testMinimalSettings] SUCCESS! Model info loaded:', modelInfo);
+        setApiStatus('Success with minimal settings! See console for details.');
+      } catch (writeError) {
+        console.error('[testMinimalSettings] Error writing test file:', 
+          writeError instanceof Error ? writeError.message : writeError);
+        if (writeError instanceof Error) {
+          console.error('Error type:', writeError.constructor.name);
+          console.error('Error stack:', writeError.stack);
+          // Log additional properties
+          Object.keys(writeError).forEach(key => {
+            console.error(`${key}:`, (writeError as any)[key]);
+          });
+        }
+        setApiStatus(`Error writing test file: ${writeError instanceof Error ? writeError.message : writeError}`);
+      }
+    } catch (error) {
+      console.error('[testMinimalSettings] Outer error:', 
+        error instanceof Error ? error.message : error);
+      if (error instanceof Error) {
+        console.error('Error type:', error.constructor.name);
+        console.error('Error stack:', error.stack);
+        // Log additional properties
+        Object.keys(error).forEach(key => {
+          console.error(`${key}:`, (error as any)[key]);
+        });
+      }
+      setApiStatus(`Error during minimal settings test: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setMinimalSettingsLoading(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView style={styles.scrollView}>
@@ -957,10 +1206,31 @@ export default function LlamaTest() {
           
           <View style={styles.buttonSpacing} />
           
-          <View>
-            <Button title="Test With Simple File" onPress={testWithSimpleFile} />
-            {simpleFileLoading && <ActivityIndicator size="small" />}
-            {apiStatus && <Text style={styles.resultText}>{apiStatus}</Text>}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Advanced Tests</Text>
+            
+            <View style={styles.buttonContainer}>
+              <TouchableOpacity 
+                style={styles.button} 
+                onPress={testWithSimpleFile}
+                disabled={simpleFileLoading}>
+                <Text style={styles.buttonText}>Test with Simple File</Text>
+                {simpleFileLoading ? <ActivityIndicator /> : null}
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.button} 
+                onPress={testMinimalSettings}
+                disabled={minimalSettingsLoading}>
+                <Text style={styles.buttonText}>Test Minimal Settings</Text>
+                {minimalSettingsLoading ? <ActivityIndicator /> : null}
+              </TouchableOpacity>
+            </View>
+            
+            {apiStatus && (
+              <View style={styles.resultBox}>
+                <Text style={styles.resultText}>{apiStatus}</Text>
+              </View>
+            )}
           </View>
           
           <View style={styles.buttonSpacing} />
@@ -989,6 +1259,15 @@ export default function LlamaTest() {
             {fileError && <View style={styles.resultBox}><Text style={styles.error}>{fileError}</Text></View>}
             {fileTest && <Text style={styles.resultText}>{JSON.stringify(fileTest)}</Text>}
           </View>
+          
+          <View style={styles.buttonSpacing} />
+          
+          <View>
+            <Button title="Test With Advanced Fallbacks" onPress={testWithAdvancedFallbacks} />
+            {modelLoading && <ActivityIndicator size="small" />}
+            {modelError && <View style={styles.resultBox}><Text style={styles.error}>{modelError}</Text></View>}
+            {apiStatus && <Text style={styles.resultText}>{apiStatus}</Text>}
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -997,10 +1276,38 @@ export default function LlamaTest() {
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
     padding: 16,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-    marginTop: 20,
+  },
+  pre: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  logContainer: {
+    backgroundColor: '#f0f0f0',
+    padding: 10,
+    borderRadius: 4,
+    marginVertical: 8,
+  },
+  button: {
+    padding: 12,
+    backgroundColor: '#007bff',
+    borderRadius: 6,
+    marginHorizontal: 4,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginRight: 8,
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    marginVertical: 8,
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   title: {
     fontSize: 18,
@@ -1011,15 +1318,16 @@ const styles = StyleSheet.create({
     maxHeight: 500,
   },
   section: {
-    backgroundColor: '#fff',
-    padding: 16,
+    marginVertical: 12,
+    padding: 12,
+    backgroundColor: '#f5f5f5',
     borderRadius: 8,
-    marginBottom: 16,
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: 'bold',
     marginBottom: 12,
+    color: '#333',
   },
   loader: {
     marginTop: 12,
@@ -1032,12 +1340,12 @@ const styles = StyleSheet.create({
     height: 10,
   },
   resultBox: {
-    marginTop: 16,
-    padding: 12,
-    backgroundColor: '#f0f7ff',
+    marginTop: 12,
+    padding: 10,
+    backgroundColor: '#e6f7ff',
     borderRadius: 6,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4a8eff',
+    borderWidth: 1,
+    borderColor: '#91d5ff',
   },
   resultTitle: {
     fontWeight: 'bold',

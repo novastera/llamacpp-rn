@@ -45,4 +45,7 @@ Pod::Spec.new do |s|
   s.dependency "RCTRequired"
   s.dependency "RCTTypeSafety"
   s.dependency "ReactCommon/turbomodule/core"
+
+  # Install dependencies for Turbo Modules
+  install_modules_dependencies(s)
 end

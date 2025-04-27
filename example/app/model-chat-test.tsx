@@ -59,7 +59,7 @@ export default function ModelChatTest() {
         model: modelPath,
         n_ctx: 2048,
         n_batch: 512,
-        n_gpu_layers: 42, // Use 42 GPU layers, the module will check support and fall back if needed
+        n_gpu_layers: 0, // Use 42 GPU layers, the module will check support and fall back if needed
         use_mlock: true, // Keep model in RAM and prevent swapping to disk
       });
       

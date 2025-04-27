@@ -73,88 +73,22 @@ std::string LlamaCppRn::normalizeFilePath(const std::string& path) {
 }
 
 jsi::Value LlamaCppRn::loadLlamaModelInfo(jsi::Runtime &runtime, jsi::String modelPath) {
-  // Thread-safe implementation with a lock for the cache
-  std::lock_guard<std::mutex> lock(mutex_);
   std::string path = normalizeFilePath(modelPath.utf8(runtime));
   
-  // Check if we already have this model info cached
-  auto it = modelInfoCache_.find(path);
-  if (it != modelInfoCache_.end()) {
-    return jsi::Value(runtime, *(it->second));
-  }
-  
   try {
-    std::cout << "Loading model info from path: " << path << std::endl;
-    
-    // Check if file exists first
-    FILE* file = fopen(path.c_str(), "rb");
-    if (!file) {
-      std::string errorMsg = "Model file not found: " + path;
-      std::cout << "Error: " << errorMsg << std::endl;
-      throw std::runtime_error(errorMsg);
-    }
-    
-    // Check file size
-    fseek(file, 0, SEEK_END);
-    long fileSize = ftell(file);
-    fclose(file);
-    
-    std::cout << "File size: " << fileSize << " bytes" << std::endl;
-    
-    if (fileSize < 64) { // Minimum size for a valid GGUF file
-      std::string errorMsg = "Model file is too small to be valid: " + path + " (size: " + std::to_string(fileSize) + " bytes)";
-      std::cout << "Error: " << errorMsg << std::endl;
-      throw std::runtime_error(errorMsg);
-    }
-    
-    // Check if file starts with GGUF magic
-    file = fopen(path.c_str(), "rb");
-    if (file) {
-      char magic[4];
-      if (fread(magic, 1, 4, file) == 4) {
-        fclose(file);
-        if (memcmp(magic, "GGUF", 4) != 0) {
-          std::string errorMsg = "File does not appear to be a valid GGUF model: " + path;
-          std::cout << "Error: " << errorMsg << " (magic: " << 
-            static_cast<int>(magic[0]) << " " << 
-            static_cast<int>(magic[1]) << " " << 
-            static_cast<int>(magic[2]) << " " << 
-            static_cast<int>(magic[3]) << ")" << std::endl;
-          throw std::runtime_error(errorMsg);
-        } else {
-          std::cout << "Valid GGUF magic detected" << std::endl;
-        }
-      } else {
-        fclose(file);
-        std::string errorMsg = "Could not read file header: " + path;
-        std::cout << "Error: " << errorMsg << std::endl;
-        throw std::runtime_error(errorMsg);
-      }
-    }
-    
     // Initialize llama backend
-    std::cout << "Initializing llama backend..." << std::endl;
     llama_backend_init();
     
     // Create model params
-    std::cout << "Creating model params..." << std::endl;
     llama_model_params params = llama_model_default_params();
-    
-    // Always use CPU for model info loading
-    params.n_gpu_layers = 0;
+    params.n_gpu_layers = 0; // Use CPU for model info loading
     
     // Load the model
-    std::cout << "Calling llama_model_load_from_file..." << std::endl;
     llama_model* model = llama_model_load_from_file(path.c_str(), params);
     
     if (!model) {
-      std::string errorMsg = "Failed to load model from file: " + path + " (llama.cpp reported no specific error)";
-      std::cout << "Error: " << errorMsg << std::endl;
-      std::cout << "Last llama error: " << llama_last_error() << std::endl;
-      throw std::runtime_error(errorMsg);
+      throw std::runtime_error("Failed to load model from file: " + path);
     }
-    
-    std::cout << "Model loaded successfully" << std::endl;
     
     // Create result object
     jsi::Object result(runtime);
@@ -189,12 +123,7 @@ jsi::Value LlamaCppRn::loadLlamaModelInfo(jsi::Runtime &runtime, jsi::String mod
     // Free the model
     llama_model_free(model);
     
-    // Cache the result
-    auto resultPtr = std::make_shared<jsi::Object>(std::move(result));
-    modelInfoCache_[path] = resultPtr;
-    
-    // Return a copy of the cached object
-    return jsi::Value(runtime, *resultPtr);
+    return result;
   } catch (const std::exception& e) {
     jsi::Object error(runtime);
     error.setProperty(runtime, "message", jsi::String::createFromUtf8(runtime, e.what()));
@@ -230,19 +159,34 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
     
     // Check if GPU is supported
     bool gpuSupported = llama_supports_gpu_offload();
-    if (gpuSupported && modelParams.n_gpu_layers > 0) {
-      // Try to enable GPU, but don't fail if it can't be enabled
-      bool gpuEnabled = enableGpu(true);
-      if (!gpuEnabled) {
-        std::cout << "Warning: GPU requested but couldn't be enabled. Falling back to CPU." << std::endl;
-        modelParams.n_gpu_layers = 0; // Fall back to CPU
+    if (params.hasProperty(runtime, "n_gpu_layers")) {
+      // User specified GPU layers
+      if (modelParams.n_gpu_layers > 0) {
+        // User wants GPU - check if supported
+        if (gpuSupported) {
+          // Try to enable GPU, but silently fall back to CPU if it can't be enabled
+          bool gpuEnabled = enableGpu(true);
+          if (!gpuEnabled) {
+            std::cout << "Warning: GPU requested but couldn't be enabled. Falling back to CPU." << std::endl;
+            modelParams.n_gpu_layers = 0; // Fall back to CPU
+          } else {
+            std::cout << "GPU enabled with " << modelParams.n_gpu_layers << " layers" << std::endl;
+          }
+        } else {
+          // GPU not supported - silently fall back to CPU
+          std::cout << "Warning: GPU layers requested but GPU is not supported. Using CPU only." << std::endl;
+          modelParams.n_gpu_layers = 0;
+        }
+      } else {
+        // User explicitly disabled GPU
+        enableGpu(false);
+        std::cout << "GPU explicitly disabled by user" << std::endl;
       }
     } else {
-      if (modelParams.n_gpu_layers > 0) {
-        std::cout << "Warning: GPU layers requested but GPU is not supported. Using CPU only." << std::endl;
-        modelParams.n_gpu_layers = 0;
-      }
+      // User didn't specify - default to CPU
+      modelParams.n_gpu_layers = 0;
       enableGpu(false);
+      std::cout << "No GPU layers specified, using CPU only" << std::endl;
     }
     
     // Load the model
@@ -251,7 +195,6 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
     if (!model) {
       std::string errorMsg = "Failed to load model: " + modelPath;
       std::cout << "Error: " << errorMsg << std::endl;
-      std::cout << "Last llama error: " << llama_last_error() << std::endl;
       throw std::runtime_error(errorMsg);
     }
     
@@ -270,17 +213,25 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
     // Get thread count
     if (params.hasProperty(runtime, "n_threads")) {
       contextParams.n_threads = (int)params.getProperty(runtime, "n_threads").asNumber();
+      std::cout << "Using user-specified thread count: " << contextParams.n_threads << std::endl;
     } else {
       // Get available CPU cores
       int cpuCores = std::thread::hardware_concurrency();
       
-      // If we have more than 4 cores, leave 2 free (one for UI, one for system)
-      // Otherwise just leave 1 free to prevent UI stutter
-      if (cpuCores > 4) {
-        contextParams.n_threads = std::max(1, cpuCores - 2);
+      // Apply the requested logic:
+      // - If only 1 core, use 1 thread
+      // - If less than 4 cores, use (cores - 1) threads
+      // - If 4+ cores, use (cores - 2) threads
+      if (cpuCores <= 1) {
+        contextParams.n_threads = 1;
+      } else if (cpuCores < 4) {
+        contextParams.n_threads = cpuCores - 1;
       } else {
-        contextParams.n_threads = std::max(1, cpuCores - 1);
+        contextParams.n_threads = cpuCores - 2;
       }
+      
+      // Ensure we have at least 1 thread
+      contextParams.n_threads = std::max(1, contextParams.n_threads);
       
       // Log thread allocation decision
       std::cout << "CPU cores: " << cpuCores << ", Using threads: " << contextParams.n_threads << std::endl;
@@ -292,7 +243,6 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
     if (!ctx) {
       std::string errorMsg = "Failed to create context";
       std::cout << "Error: " << errorMsg << std::endl;
-      std::cout << "Last llama error: " << llama_last_error() << std::endl;
       llama_model_free(model);
       throw std::runtime_error(errorMsg);
     }

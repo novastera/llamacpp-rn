@@ -2,6 +2,8 @@
 
 > ⚠️ **WORK IN PROGRESS**: This package is currently under active development and not ready for production use. The implementation is incomplete and the package is not yet published to NPM.
 
+This library was greatly inspired by [llama.rn](https://github.com/mybigday/llama.rn) and aims to provide a thin wrapper around [llama.cpp](https://github.com/ggerganov/llama.cpp) to make it work seamlessly on mobile devices. The goal is to maintain a minimal abstraction layer while providing automatic CPU/GPU detection capabilities to simplify mobile development.
+
 ## Features
 
 - Run Llama-based models directly on device using React Native
