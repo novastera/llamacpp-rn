@@ -116,6 +116,29 @@ export interface Spec extends TurboModule {
 
   // Convert JSON schema to GBNF grammar
   jsonSchemaToGbnf(schema: Record<string, any>): Promise<string>;
+  
+  // Get absolute path and file information
+  getAbsolutePath(relativePath: string): Promise<{
+    relativePath: string;
+    path: string;
+    exists: boolean;
+    attributes?: {
+      size: number;
+    };
+  }>;
+  
+  // Get GPU capabilities information
+  getGPUInfo(): Promise<{
+    isSupported: boolean;
+    available: boolean;
+    deviceName: string;
+    deviceVendor: string;
+    deviceVersion: string;
+    deviceComputeUnits: number;
+    deviceMemorySize: number;
+    implementation?: string;
+    metalEnabled?: boolean;
+  }>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('LlamaCppRn');

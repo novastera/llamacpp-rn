@@ -5,6 +5,7 @@ import AndroidTest from './android-test';
 import LlamaTest from './llama-test';
 import LlamaSchemaTest from './llama-schema-test';
 import LlamaSimpleTest from './llama-simple-test';
+import ModelChatTest from './model-chat-test';
 
 export default function App() {
   return (
@@ -19,6 +20,9 @@ export default function App() {
       
       {/* Full Llama Test Component */}
       <LlamaTest />
+      
+      {/* Chat interface with model loading */}
+      <ModelChatTest />
       
       {/* Module test that works on both platforms */}
       <TestModule />

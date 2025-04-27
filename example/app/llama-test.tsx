@@ -5,1219 +5,945 @@ import * as Asset from 'expo-asset';
 // Using require instead of import to avoid TypeScript errors
 const LlamaCppRn = require('@novastera-oss/llamacpp-rn');
 
-export default function LlamaTest() {
-  const [modelInfo, setModelInfo] = React.useState<any>(null);
-  const [modelInfoLoading, setModelInfoLoading] = React.useState(false);
-  const [modelInfoError, setModelInfoError] = React.useState<string | null>(null);
-  
-  const [context, setContext] = React.useState<any>(null);
-  const [contextLoading, setContextLoading] = React.useState(false);
-  const [contextError, setContextError] = React.useState<string | null>(null);
-  
-  const [completion, setCompletion] = React.useState<string | null>(null);
-  const [completionLoading, setCompletionLoading] = React.useState(false);
-  const [completionError, setCompletionError] = React.useState<string | null>(null);
-  
-  const [modelPath, setModelPath] = React.useState<string | null>(null);
-  
-  const [apiStatus, setApiStatus] = React.useState<string | null>(null);
-  const [apiStatusLoading, setApiStatusLoading] = React.useState(false);
-  const [apiStatusError, setApiStatusError] = React.useState<string | null>(null);
-  
-  const [bundleFileTest, setBundleFileTest] = React.useState<any>(null);
-  const [bundleFileLoading, setBundleFileLoading] = React.useState(false);
-  const [bundleFileError, setBundleFileError] = React.useState<string | null>(null);
+// Define interface for file info
+interface ExtendedFileInfo {
+  exists: boolean;
+  uri: string;
+  isDirectory: boolean;
+  modificationTime: number;
+  size?: number;
+}
 
-  // Try to load the model using various methods
-  const loadModel = async () => {
-    setModelInfoLoading(true);
-    setModelInfoError(null);
-    setModelInfo(null);
-    
-    const modelName = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
-    const possiblePaths = [
-      // 1. Try the direct project path (for development)
-      `/Users/hassan/github/llamacpp-rn/example/ios/example/models/${modelName}`,
-      
-      // 2. Try app bundle paths (for iOS)
-      `${FileSystem.bundleDirectory}models/${modelName}`,
-      `models/${modelName}`,
-      
-      // 3. Try Android asset paths (for Android)
-      `asset:/models/${modelName}`,
-      `file:///android_asset/models/${modelName}`
-    ];
-    
-    console.log('Trying to load model from possible paths...');
-    
-    for (const path of possiblePaths) {
-      try {
-        console.log(`Attempting path: ${path}`);
-        const info = await LlamaCppRn.loadLlamaModelInfo(path);
-        console.log('✅ Success! Model loaded from:', path);
-        console.log('Model info:', info);
-        
-        setModelPath(path);
-        setModelInfo(info);
-        return true;
-      } catch (error) {
-        console.log(`❌ Failed to load from ${path}:`, error);
-      }
-    }
-    
-    // If all paths fail, try using Asset.loadAsync as a last resort
-    try {
-      console.log('Trying to load model as an asset...');
-      
-      // If we had the model in the assets folder, we could use:
-      // const asset = Asset.fromModule(require('../assets/Mistral-7B-Instruct-v0.3.Q4_K_M.gguf'));
-      // await asset.downloadAsync();
-      // console.log('Asset downloaded to:', asset.localUri);
-      
-      // For now, we'll just show a message with instructions
-      setModelInfoError('Could not find model in any expected location. Please ensure the model file is added to the Xcode project manually.');
-      Alert.alert(
-        'Model Not Found',
-        'The model file could not be loaded. Please follow these steps:\n\n' +
-        '1. Open the Xcode project\n' +
-        '2. Right-click on the example project in the Navigator\n' +
-        '3. Select "Add Files to example..."\n' +
-        '4. Navigate to the models directory and select the model file\n' +
-        '5. Make sure "Create folder references" is selected\n' +
-        '6. Rebuild the project'
-      );
-    } catch (error) {
-      console.error('Asset loading failed:', error);
-      setModelInfoError(`Failed to load model: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setModelInfoLoading(false);
-    }
-    
-    return false;
-  };
-  // Simple test for bundle directory file access
-  const testBundleDirectoryAccess = async () => {
-    setBundleFileLoading(true);
-    setBundleFileError(null);
-    setBundleFileTest(null);
+export default function LlamaTest() {
+  const [fileTest, setFileTest] = React.useState<any>(null);
+  const [fileLoading, setFileLoading] = React.useState(false);
+  const [fileError, setFileError] = React.useState<string | null>(null);
+  
+  const [modelInfo, setModelInfo] = React.useState<any>(null);
+  const [modelLoading, setModelLoading] = React.useState(false);
+  const [modelError, setModelError] = React.useState<string | null>(null);
+  
+  const [schemaResult, setSchemaResult] = React.useState<string | null>(null);
+  const [schemaLoading, setSchemaLoading] = React.useState(false);
+  const [schemaError, setSchemaError] = React.useState<string | null>(null);
+  
+  // Add API status state for simple file test
+  const [apiStatus, setApiStatus] = React.useState<string | null>(null);
+  const [simpleFileLoading, setSimpleFileLoading] = React.useState(false);
+
+  // Test file system access
+  const testFileAccess = async () => {
+    setFileLoading(true);
+    setFileError(null);
+    setFileTest(null);
     
     try {
-      // Read bundle directory
-      console.log('Checking bundle directory...');
+      console.log('Testing file system access...');
+      
+      // Get basic directory information
       const bundleDir = FileSystem.bundleDirectory || '';
+      const documentsDir = FileSystem.documentDirectory || '';
+      
       console.log('Bundle directory:', bundleDir);
+      console.log('Documents directory:', documentsDir);
       
-      // List files in the bundle directory to see if any exist
-      console.log('Listing files in bundle directory...');
-      let bundleFiles: string[] = [];
-      try {
-        bundleFiles = await FileSystem.readDirectoryAsync(bundleDir || '');
-        console.log('Bundle directory files:', bundleFiles);
-      } catch (dirError) {
-        console.log('Error reading bundle directory:', dirError);
-      }
-      
-      // Create small test GGUF file in documents directory
-      console.log('Creating test file in documents directory...');
-      const docDir = FileSystem.documentDirectory;
-      const testFilePath = `${docDir}test_model.gguf`;
-      
-      // Create a small binary file with GGUF magic
-      const fileContent = new Uint8Array([
-        // GGUF magic header
-        0x47, 0x47, 0x55, 0x46, // "GGUF"
-        // Add some dummy content to make it look like a GGUF file
-        0x00, 0x00, 0x00, 0x01, // Version 1
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Some dummy data
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        // Add more bytes to make it larger than the minimum size check
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-        // Repeat this a few times to pass size checks
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-      ]);
-      
-      // Convert to base64 for file system write
-      let binary = '';
-      fileContent.forEach(byte => {
-        binary += String.fromCharCode(byte);
-      });
-      const base64Data = btoa(binary);
-      
-      // Write file
-      await FileSystem.writeAsStringAsync(testFilePath, base64Data, { 
-        encoding: FileSystem.EncodingType.Base64 
-      });
-      console.log('Test file created at:', testFilePath);
+      // Create test file in documents directory
+      const testFilePath = `${documentsDir}test_file.txt`;
+      await FileSystem.writeAsStringAsync(testFilePath, 'This is a test file');
       
       // Verify file exists
-      const fileInfo = await FileSystem.getInfoAsync(testFilePath);
-      console.log('File info:', fileInfo);
+      const fileInfo = await FileSystem.getInfoAsync(testFilePath) as ExtendedFileInfo;
+      console.log('Test file info:', fileInfo);
       
-      // Try to get native path info
-      let nativePathInfo = null;
+      // Test native module path conversion if available
+      let nativePath = null;
       if (typeof LlamaCppRn.getAbsolutePath === 'function') {
-        nativePathInfo = await LlamaCppRn.getAbsolutePath(testFilePath);
-        console.log('Native path info:', nativePathInfo);
+        try {
+          nativePath = await LlamaCppRn.getAbsolutePath(testFilePath);
+          console.log('Native path:', nativePath);
+        } catch (error) {
+          console.error('Error getting native path:', error);
+        }
       }
       
-      // Try to load model info (this will likely fail but should be handled gracefully)
-      let modelInfoResult = null;
+      // Test file exists function if available
+      let fileExistsResult = null;
+      if (typeof LlamaCppRn.fileExists === 'function') {
+        try {
+          fileExistsResult = await LlamaCppRn.fileExists(testFilePath);
+          console.log('File exists (via native module):', fileExistsResult);
+        } catch (error) {
+          console.error('Error checking if file exists:', error);
+        }
+      }
+      
+      // List files in bundle directory
+      let bundleFiles: string[] = [];
       try {
-        console.log('Attempting to load model info from test file...' + testFilePath);
-        modelInfoResult = await LlamaCppRn.loadLlamaModelInfo(testFilePath.replace('file://', ''));
-        console.log('Test model info result:', modelInfoResult);
-      } catch (modelError) {
-        console.log('Error loading test model info (expected):', modelError);
-        modelInfoResult = { error: modelError instanceof Error ? modelError.message : String(modelError) };
+        bundleFiles = await FileSystem.readDirectoryAsync(bundleDir);
+        console.log('Bundle directory files:', bundleFiles);
+      } catch (error) {
+        console.error('Error listing bundle directory:', error);
       }
       
-      // Set results
-      setBundleFileTest({
-        bundleDir,
-        bundleFiles,
-        testFilePath,
-        fileInfo,
-        nativePathInfo,
-        modelInfoResult,
-      });
+      // Look for model files
+      const ggufFiles = bundleFiles.filter(file => file.endsWith('.gguf'));
+      console.log('GGUF files in bundle:', ggufFiles);
       
+      setFileTest({
+        bundleDir,
+        documentsDir,
+        testFilePath,
+        fileExists: fileInfo.exists,
+        fileSize: fileInfo.size,
+        nativePath,
+        fileExistsResult,
+        bundleFiles,
+        ggufFiles
+      });
     } catch (error) {
-      console.error('Error in bundle file test:', error);
-      setBundleFileError(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('File access test failed:', error);
+      setFileError(`Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      setBundleFileLoading(false);
+      setFileLoading(false);
     }
   };
 
-  const handleLoadModelInfo = async () => {
-    if (!modelPath) {
-      setModelInfoError('Model file not found. Please make sure it was copied correctly.');
-      return;
-    }
-    console.log('**Loading model info from:', modelPath);
-    setModelInfoLoading(true);
-    setModelInfoError(null);
+  // Test loading a model
+  const testModelLoading = async (useFakeModel = false) => {
+    setModelLoading(true);
+    setModelError(null);
     setModelInfo(null);
     
     try {
-      console.log('Loading model info from:', modelPath);
+      console.log(`Testing model loading with ${useFakeModel ? 'fake' : 'real'} model...`);
       
-      const info = await LlamaCppRn.loadLlamaModelInfo(modelPath);
-      console.log('Model info loaded successfully:', info);
-      setModelInfo(info);
+      let modelPath = '';
+      
+      if (useFakeModel) {
+        // Create a fake model file for testing
+        const documentsDir = FileSystem.documentDirectory || '';
+        modelPath = `${documentsDir}fake_model.gguf`;
+        
+        // Create minimal GGUF header
+        const headerData = new Uint8Array([
+          // GGUF magic
+          0x47, 0x47, 0x55, 0x46, // "GGUF"
+          0x00, 0x00, 0x00, 0x01, // Version 1
+          // Add some dummy data to get past minimal checks
+          ...Array(256).fill(0).map((_, i) => i % 256)
+        ]);
+        
+        // Convert to Base64 for writing
+        let binary = '';
+        headerData.forEach(byte => {
+          binary += String.fromCharCode(byte);
+        });
+        const base64Data = btoa(binary);
+        
+        try {
+          // Write the fake model file
+          await FileSystem.writeAsStringAsync(modelPath, base64Data, {
+            encoding: FileSystem.EncodingType.Base64
+          });
+          
+          const fileInfo = await FileSystem.getInfoAsync(modelPath) as ExtendedFileInfo;
+          console.log('Fake model file created:', fileInfo);
+        } catch (writeError) {
+          console.error('Error creating fake model:', writeError);
+          throw new Error(`Failed to create fake model: ${writeError instanceof Error ? writeError.message : String(writeError)}`);
+        }
+      } else {
+        // Look for real models in the bundle
+        const bundleDir = FileSystem.bundleDirectory || '';
+        const documentsDir = FileSystem.documentDirectory || '';
+        
+        console.log('Bundle directory (exact):', bundleDir);
+        console.log('Documents directory (exact):', documentsDir);
+        
+        // First check if there are any GGUF files in bundle
+        let bundleFiles: string[] = [];
+        try {
+          bundleFiles = await FileSystem.readDirectoryAsync(bundleDir);
+          console.log('Bundle directory files:', bundleFiles);
+          
+          // Specifically look for model files by known names
+          const modelNames = [
+            'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+            'Mistral-7B-Instruct-v0.3.Q4_K_M.gguf'
+          ];
+          
+          for (const name of modelNames) {
+            if (bundleFiles.includes(name)) {
+              modelPath = `${bundleDir}${name}`;
+              console.log('Found specific model in bundle root:', modelPath);
+              break;
+            }
+          }
+        } catch (error) {
+          console.log('Could not read bundle directory:', error);
+        }
+        
+        // If we found a model by name in the bundle, use it
+        if (modelPath) {
+          console.log('Using model found in bundle:', modelPath);
+        } 
+        // Otherwise check for any .gguf file
+        else {
+          const ggufFiles = bundleFiles.filter(file => file.endsWith('.gguf'));
+          
+          if (ggufFiles.length > 0) {
+            // Use the first GGUF file found
+            modelPath = `${bundleDir}${ggufFiles[0]}`;
+            console.log('Found GGUF model in bundle:', modelPath);
+          } else {
+            // Check for models in the assets directory
+            try {
+              // First check if there are models in the example/assets directory
+              try {
+                const assetsDir = `${bundleDir}assets/`;
+                console.log('Checking assets directory:', assetsDir);
+                const assetFiles = await FileSystem.readDirectoryAsync(assetsDir);
+                console.log('Asset directory files:', assetFiles);
+                
+                const assetGgufFiles = assetFiles.filter(file => file.endsWith('.gguf'));
+                if (assetGgufFiles.length > 0) {
+                  modelPath = `${assetsDir}${assetGgufFiles[0]}`;
+                  console.log('Found model in assets directory:', modelPath);
+                  return;
+                }
+              } catch (assetsDirError) {
+                console.log('Could not read assets directory:', assetsDirError);
+              }
+              
+              // Check the documents/assets directory
+              const assetDir = FileSystem.documentDirectory + 'assets/';
+              await FileSystem.makeDirectoryAsync(assetDir, { intermediates: true }).catch(() => {});
+              
+              // Copy models from bundle to documents directory if they don't exist
+              const llamaModelDestPath = assetDir + 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
+              const mistralModelDestPath = assetDir + 'Mistral-7B-Instruct-v0.3.Q4_K_M.gguf';
+              
+              // Check if the models are already in the assets directory
+              const llamaExists = await FileSystem.getInfoAsync(llamaModelDestPath);
+              const mistralExists = await FileSystem.getInfoAsync(mistralModelDestPath);
+              
+              if (llamaExists.exists) {
+                console.log('Found Llama model in assets directory');
+                modelPath = llamaModelDestPath;
+                return;
+              } else if (mistralExists.exists) {
+                console.log('Found Mistral model in assets directory');
+                modelPath = mistralModelDestPath;
+                return;
+              }
+
+              // Try to create a minimal test model in the documents directory
+              // This ensures we at least have something to test with
+              console.log('No existing models found, creating a minimal test model');
+              const testModelPath = `${documentsDir}test_model.gguf`;
+              
+              // Create minimal GGUF header with version 3
+              const header = new Uint8Array([
+                0x47, 0x47, 0x55, 0x46, // Magic: GGUF
+                0x00, 0x00, 0x00, 0x03, // Version 3
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // KV count (0)
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Tensor count (0)
+                // Add some extra bytes to make it look more realistic
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10
+              ]);
+              
+              try {
+                await FileSystem.writeAsStringAsync(testModelPath, String.fromCharCode(...header), {
+                  encoding: FileSystem.EncodingType.UTF8
+                });
+                const fileInfo = await FileSystem.getInfoAsync(testModelPath);
+                console.log('Created test model file:', fileInfo);
+                
+                if (fileInfo.exists) {
+                  modelPath = testModelPath;
+                  console.log('Using created test model:', modelPath);
+                  return;
+                }
+              } catch (writeError) {
+                console.error('Failed to create test model:', writeError);
+              }
+              
+              console.log('No models found in assets directory');
+              
+              // If we get here, no models were found anywhere
+              throw new Error('No GGUF models found in bundle, models directory, or assets');
+            } catch (overallError) {
+              console.error('Error finding models:', overallError);
+              throw new Error('No GGUF models found. Please add a model to your app bundle or assets directory.');
+            }
+          }
+        }
+      }
+      
+      // Try loading with file:// path
+      console.log('Attempting to load model from path:', modelPath);
+      try {
+        const info = await LlamaCppRn.loadLlamaModelInfo(modelPath);
+        console.log('Model loaded successfully:', info);
+        setModelInfo({
+          path: modelPath,
+          info: info,
+          rawPathUsed: false
+        });
+        return;
+      } catch (error) {
+        console.error('Failed to load with file:// path:', error);
+        // Continue with raw path
+      }
+      
+      // Try loading with raw path (no file:// prefix)
+      const rawPath = modelPath.replace('file://', '');
+      console.log('Attempting to load model with raw path:', rawPath);
+      try {
+        const info = await LlamaCppRn.loadLlamaModelInfo(rawPath);
+        console.log('Model loaded successfully with raw path:', info);
+        setModelInfo({
+          path: rawPath,
+          info: info,
+          rawPathUsed: true
+        });
+        return;
+      } catch (loadError) {
+        // Log detailed error information
+        console.error('Failed to load with raw path:', loadError);
+        console.error('Error type:', typeof loadError);
+        console.error('Error message:', loadError instanceof Error ? loadError.message : String(loadError));
+        console.error('Error stack:', loadError instanceof Error ? loadError.stack : 'No stack');
+        
+        // Check for specific error properties
+        if (loadError instanceof Error) {
+          const errorObj = loadError as any;
+          if (errorObj.code) console.error('Error code:', errorObj.code);
+          if (errorObj.userInfo) console.error('Error userInfo:', errorObj.userInfo);
+        }
+        
+        throw loadError;
+      }
     } catch (error) {
-      console.error('Failed to load model info:', error);
-      setModelInfoError(error instanceof Error ? error.message : String(error));
+      console.error('Model loading test failed:', error);
+      setModelError(`Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      setModelInfoLoading(false);
+      setModelLoading(false);
     }
   };
 
-  const handleInitContext = async () => {
-    if (!modelPath) {
-      setContextError('Model file not found. Please make sure it was copied correctly.');
-      return;
-    }
-    
-    setContextLoading(true);
-    setContextError(null);
-    setContext(null);
+  // Test schema conversion
+  const testSchemaConversion = async () => {
+    setSchemaLoading(true);
+    setSchemaError(null);
+    setSchemaResult(null);
     
     try {
-      console.log('Initializing context with model:', modelPath);
+      console.log('Testing JSON schema to GBNF conversion...');
       
-      const ctx = await LlamaCppRn.initLlama({
-        modelPath,
-        contextSize: 2048,
-        seed: 42,
-        batchSize: 512,
-        gpuLayers: 0, // Use CPU for compatibility
-      });
+      // Simple JSON schema
+      const schema = {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          age: { type: 'number' },
+          isActive: { type: 'boolean' },
+          tags: {
+            type: 'array',
+            items: { type: 'string' }
+          },
+          address: {
+            type: 'object',
+            properties: {
+              street: { type: 'string' },
+              city: { type: 'string' }
+            },
+            required: ['street', 'city']
+          }
+        },
+        required: ['name', 'age']
+      };
       
-      setContext(ctx);
-      console.log('Context initialized:', ctx);
+      // Call the conversion function
+      const result = await LlamaCppRn.jsonSchemaToGbnf(schema);
+      console.log('Schema conversion result:', result);
+      
+      setSchemaResult(result);
     } catch (error) {
-      console.error('Failed to initialize context:', error);
-      setContextError(error instanceof Error ? error.message : String(error));
+      console.error('Schema conversion test failed:', error);
+      setSchemaError(`Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      setContextLoading(false);
+      setSchemaLoading(false);
     }
   };
 
-  const handleCompletion = async () => {
-    if (!context) {
-      setCompletionError('Context not initialized');
-      return;
-    }
-    
-    setCompletionLoading(true);
-    setCompletionError(null);
-    setCompletion(null);
-    
-    try {
-      console.log('Starting completion with context:', context);
-      
-      const result = await context.completion({
-        prompt: "What is artificial intelligence?",
-        maxTokens: 256,
-        temperature: 0.7,
-        topP: 0.9
-      });
-      
-      setCompletion(result.text);
-      console.log('Completion result:', result);
-    } catch (error) {
-      console.error('Failed to generate completion:', error);
-      setCompletionError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setCompletionLoading(false);
-    }
-  };
-
-  // Test if we can call the native module directly
-  const testDirectAPICall = async () => {
-    setApiStatusLoading(true);
-    setApiStatusError(null);
+  // Test with a simple file
+  const testWithSimpleFile = async () => {
+    setSimpleFileLoading(true);
     setApiStatus(null);
     
     try {
-      console.log('Testing direct API call to native module...');
+      // Get the documents directory path
+      const documentsDir = FileSystem.documentDirectory || '';
+      console.log('Documents directory:', documentsDir);
       
-      // Try a simple call to the module
-      if (typeof LlamaCppRn.jsonSchemaToGbnf === 'function') {
-        const schema = { 
-          type: 'object',
-          properties: { 
-            name: { type: 'string' },
-            age: { type: 'number' }
-          }
-        };
-        
-        const gbnf = await LlamaCppRn.jsonSchemaToGbnf(schema);
-        console.log('GBNF result:', gbnf);
-        setApiStatus('API call successful: jsonSchemaToGbnf');
-      } else {
-        setApiStatus('jsonSchemaToGbnf function not available');
-      }
-    } catch (error) {
-      console.error('Failed to make direct API call:', error);
-      setApiStatusError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setApiStatusLoading(false);
-    }
-  };
-
-  // Add a new function to load a model file from assets
-  const copyModelFromAssetsIfNeeded = async () => {
-    setModelInfoLoading(true);
-    setModelInfoError(null);
-    setModelInfo(null);
-
-    try {
-      console.log('Checking for model file in app bundle and documents...');
-
-      // Check bundle directory first
-      const bundleDir = FileSystem.bundleDirectory;
-      console.log('Bundle directory:', bundleDir);
+      // Create the test file path
+      const testFilePath = `${documentsDir}test_file.gguf`;
+      console.log('Test file path:', testFilePath);
       
-      // Try to list files in the 'models' subdirectory of the bundle
-      let bundleModelsDir = `${bundleDir}models/`;
-      let bundleModelFiles: string[] = [];
-      try {
-        bundleModelFiles = await FileSystem.readDirectoryAsync(bundleModelsDir);
-        console.log('Models in bundle:', bundleModelFiles);
-      } catch (error) {
-        console.log('Could not read models directory in bundle:', error);
-      }
-
-      // Check if we have any GGUF files
-      const ggufFiles = bundleModelFiles.filter(file => file.endsWith('.gguf'));
-      if (ggufFiles.length > 0) {
-        console.log('Found GGUF files in bundle:', ggufFiles);
-        
-        // Use the first GGUF file
-        const modelName = ggufFiles[0];
-        const bundleModelPath = `${bundleModelsDir}${modelName}`;
-        console.log('Using model:', bundleModelPath);
-        
-        // Try to load directly from bundle
-        try {
-          console.log('Trying to load model directly from bundle...');
-          const info = await LlamaCppRn.loadLlamaModelInfo(bundleModelPath);
-          console.log('Successfully loaded model from bundle:', info);
-          
-          setModelPath(bundleModelPath);
-          setModelInfo(info);
-          setModelInfoLoading(false);
-          return true;
-        } catch (error) {
-          console.log('Failed to load from bundle directly:', error);
-          // Continue to try copying and loading from documents
-        }
-        
-        // Copy to documents directory
-        const documentsDir = FileSystem.documentDirectory;
-        const docsModelPath = `${documentsDir}${modelName}`;
-        
-        // Check if the file already exists in documents
-        const fileInfo = await FileSystem.getInfoAsync(docsModelPath);
-        if (fileInfo.exists) {
-          console.log('Model already exists in documents directory:', docsModelPath);
-          
-          try {
-            console.log('Loading model from documents directory...');
-            const info = await LlamaCppRn.loadLlamaModelInfo(docsModelPath);
-            console.log('Successfully loaded model from documents:', info);
-            
-            setModelPath(docsModelPath);
-            setModelInfo(info);
-            setModelInfoLoading(false);
-            return true;
-          } catch (error) {
-            console.log('Failed to load from documents, will try copying again:', error);
-            // Will re-copy file below
-          }
-        }
-        
-        // Copy the file
-        console.log(`Copying model from bundle to documents: ${bundleModelPath} -> ${docsModelPath}`);
-        await FileSystem.copyAsync({
-          from: bundleModelPath,
-          to: docsModelPath
-        });
-        
-        // Verify the copy
-        const copiedFileInfo = await FileSystem.getInfoAsync(docsModelPath);
-        if (copiedFileInfo.exists) {
-          console.log('File copied successfully, size:', copiedFileInfo.size);
-          
-          // Try to load from documents
-          try {
-            console.log('Loading model from newly copied file...');
-            const info = await LlamaCppRn.loadLlamaModelInfo(docsModelPath);
-            console.log('Successfully loaded model:', info);
-            
-            setModelPath(docsModelPath);
-            setModelInfo(info);
-            setModelInfoLoading(false);
-            return true;
-          } catch (error) {
-            console.log('Failed to load copied model:', error);
-            setModelInfoError(`Failed to load copied model: ${error instanceof Error ? error.message : String(error)}`);
-          }
-        } else {
-          setModelInfoError('Failed to copy model file to documents directory');
-        }
-      } else {
-        console.log('No GGUF files found in bundle models directory');
-        
-        // Create a small test GGUF file
-        console.log('Creating a test GGUF file in documents directory...');
-        const docDir = FileSystem.documentDirectory;
-        const testModelPath = `${docDir}test_model.gguf`;
-        
-        // Create a larger binary file with more realistic GGUF format
-        // This still won't be a real model but should pass more basic checks
-        const createLargerTestFile = () => {
-          // Start with the magic header
-          const header = new Uint8Array([
-            // GGUF magic header
-            0x47, 0x47, 0x55, 0x46, // "GGUF"
-            0x00, 0x00, 0x00, 0x01, // Version 1
-          ]);
-          
-          // Add metadata section
-          const metaLength = new Uint8Array(8); // 8 bytes for uint64 length
-          const view = new DataView(metaLength.buffer);
-          view.setBigUint64(0, BigInt(10), true); // 10 metadata entries
-          
-          // Generate a large block of data to make the file sizeable
-          // ~1MB of data should be enough to pass basic file size checks
-          const blockSize = 1024 * 1024; // 1MB
-          const dataBlock = new Uint8Array(blockSize);
-          
-          // Fill with pseudorandom data
-          for (let i = 0; i < blockSize; i++) {
-            dataBlock[i] = i % 256;
-          }
-          
-          // Add some GGUF-like structures
-          // n_vocab, n_embd, n_mult, n_head values
-          const modelParams = new Uint8Array([
-            // Set some parameter values that might be read by llama.cpp
-            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // n_vocab (dummy value)
-            0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // n_embd (dummy value)
-            0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // n_mult (dummy value)
-            0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // n_head (dummy value)
-          ]);
-          
-          // Combine all parts
-          const combinedLength = header.length + metaLength.length + modelParams.length + dataBlock.length;
-          const combined = new Uint8Array(combinedLength);
-          
-          let offset = 0;
-          combined.set(header, offset);
-          offset += header.length;
-          combined.set(metaLength, offset);
-          offset += metaLength.length;
-          combined.set(modelParams, offset);
-          offset += modelParams.length;
-          combined.set(dataBlock, offset);
-          
-          return combined;
-        };
-        
-        const fileContent = createLargerTestFile();
-        console.log(`Created test file with size: ${fileContent.length} bytes`);
-        
-        // Convert to base64 for file system write
-        let binary = '';
-        for (let i = 0; i < Math.min(fileContent.length, 1024 * 1024 * 10); i++) { // Limit to 10MB max for safety
-          binary += String.fromCharCode(fileContent[i]);
-        }
-        const base64Data = btoa(binary);
-        
-        // Write file
-        try {
-          await FileSystem.writeAsStringAsync(testModelPath, base64Data, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-          
-          // Verify the file exists and check its size
-          const fileInfo = await FileSystem.getInfoAsync(testModelPath);
-          console.log('Test file created:', JSON.stringify(fileInfo));
-          
-          // Try to load the test model
-          console.log('Attempting to load test model from:', testModelPath);
-          
-          // First try to get the native path if that function exists
-          let nativePath = testModelPath;
-          if (typeof LlamaCppRn.getAbsolutePath === 'function') {
-            try {
-              const pathInfo = await LlamaCppRn.getAbsolutePath(testModelPath);
-              console.log('Native path info:', pathInfo);
-              if (pathInfo && pathInfo.path) {
-                nativePath = pathInfo.path;
-                console.log('Using native path instead:', nativePath);
-              }
-            } catch (pathError) {
-              console.error('Error getting native path:', pathError);
-              // Continue with original path
-            }
-          }
-          
-          try {
-            console.log('Loading model from path:', nativePath);
-            const modelInfo = await LlamaCppRn.loadLlamaModelInfo(nativePath);
-            console.log('Successfully loaded test model info:', JSON.stringify(modelInfo));
-            return { success: true, path: nativePath, info: modelInfo };
-          } catch (loadError: unknown) {
-            console.error('Error loading test model:', loadError);
-            // Log detailed error properties
-            console.error('Error type:', typeof loadError);
-            console.error('Error name:', (loadError as Error)?.name);
-            console.error('Error message:', (loadError as Error)?.message);
-            console.error('Error stack:', (loadError as Error)?.stack);
-            if ((loadError as any)?.code) console.error('Error code:', (loadError as any).code);
-            if ((loadError as any)?.userInfo) console.error('Error userInfo:', JSON.stringify((loadError as any).userInfo));
-            
-            // Try loading with explicit options
-            console.log('Trying to load with explicit options...');
-            try {
-              // Note: this assumes loadLlamaModelInfo accepts a second parameter with options
-              // If it doesn't, we'll catch another error
-              const modelInfoWithOptions = await LlamaCppRn.loadLlamaModelInfo(nativePath, {
-                useGPU: false, // Try without GPU
-                verbose: true, // Enable verbose logging
-              });
-              console.log('Successfully loaded test model with options:', JSON.stringify(modelInfoWithOptions));
-              return { success: true, path: nativePath, info: modelInfoWithOptions };
-            } catch (optionsError: unknown) {
-              console.error('Failed to load with options:', optionsError);
-              return { success: false, path: nativePath, error: (optionsError as Error)?.message || String(optionsError) };
-            }
-          }
-        } catch (writeError: unknown) {
-          console.error('Error creating test file:', writeError);
-          return { success: false, error: `Failed to create test file: ${(writeError as Error)?.message || String(writeError)}` };
-        }
-      }
-    } catch (error) {
-      console.error('Error in copy model operation:', error);
-      setModelInfoError(`Error in copy model operation: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    
-    setModelInfoLoading(false);
-    return false;
-  };
-
-  // Test with raw file path
-  const testWithRawFilePath = async () => {
-    setModelInfoLoading(true);
-    setModelInfoError(null);
-    setModelInfo(null);
-    
-    try {
-      console.log('Testing with raw file path...');
+      // Check if the native module is available
+      console.log('Native module available:', !!LlamaCppRn);
+      console.log('Available functions:', Object.keys(LlamaCppRn).join(', '));
+      console.log('loadLlamaModelInfo type:', typeof LlamaCppRn.loadLlamaModelInfo);
       
-      // Get the path to the model in the app bundle
-      const bundleDir = FileSystem.bundleDirectory || '';
-      const modelName = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
-      const bundlePath = `${bundleDir}${modelName}`;
-      
-      // Check if the file exists
-      const fileInfo = await FileSystem.getInfoAsync(bundlePath);
-      console.log('Bundle file info:', JSON.stringify(fileInfo));
-      
-      if (!fileInfo.exists) {
-        console.log('Model not found in bundle, checking bundle directory contents...');
-        try {
-          const files = await FileSystem.readDirectoryAsync(bundleDir || '');
-          console.log('Bundle directory contains:', files);
-        } catch (e) {
-          console.error('Error reading bundle directory:', e);
-        }
-        throw new Error('Model file not found in bundle');
-      }
-      
-      // Extract raw file path from the URI
-      // For iOS, the file URI can be converted to a raw path
-      let rawPath = bundlePath;
-      if (Platform.OS === 'ios' && bundlePath.startsWith('file://')) {
-        rawPath = bundlePath.replace('file://', '');
-      }
-      console.log('Using raw path:', rawPath);
-      
-      // Try direct load with raw path
-      try {
-        console.log('Loading model with raw path:', rawPath);
-        const modelInfo = await LlamaCppRn.loadLlamaModelInfo(rawPath);
-        console.log('Successfully loaded model with raw path:', modelInfo);
-        setModelInfo(modelInfo);
-        setModelPath(rawPath);
-        return true;
-      } catch (error) {
-        console.error('Error loading with raw path:', error);
-        throw error;
-      }
-    } catch (error) {
-      console.error('Raw path test failed:', error);
-      setModelInfoError(`Raw path test failed: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setModelInfoLoading(false);
-    }
-    
-    return false;
-  };
-
-  // Test with a file at a known iOS path
-  const testWithIOSPath = async () => {
-    if (Platform.OS !== 'ios') {
-      Alert.alert('iOS Only', 'This test is only for iOS devices');
-      return;
-    }
-    
-    setModelInfoLoading(true);
-    setModelInfoError(null);
-    setModelInfo(null);
-    
-    try {
-      console.log('Testing with iOS-specific path...');
-      
-      // Get documents directory through FileSystem
-      const docDir = FileSystem.documentDirectory;
-      console.log('Documents directory:', docDir);
-      
-      // Create a test GGUF file in documents directory
-      const testFileName = 'ios_test_model.gguf';
-      const testFilePath = `${docDir}${testFileName}`;
-      
-      // Create a basic file with GGUF magic
-      const fileData = new Uint8Array([
-        // GGUF magic
-        0x47, 0x47, 0x55, 0x46, // "GGUF"
-        0x00, 0x00, 0x00, 0x01, // Version 1
-        // Add 100+ bytes of data to pass size checks
-        ...Array(200).fill(0).map((_, i) => i % 256)
+      // Create minimal GGUF header with version 3
+      const header = new Uint8Array([
+        0x47, 0x47, 0x55, 0x46, // Magic: GGUF
+        0x00, 0x00, 0x00, 0x03, // Version 3
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // KV count (0)
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Tensor count (0)
+        // Add some extra bytes to make it look more realistic
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10
       ]);
       
-      // Convert to base64
-      let binary = '';
-      fileData.forEach(byte => {
-        binary += String.fromCharCode(byte);
-      });
-      const base64 = btoa(binary);
-      
-      // Write the file
-      console.log('Writing test file to:', testFilePath);
-      await FileSystem.writeAsStringAsync(testFilePath, base64, {
-        encoding: FileSystem.EncodingType.Base64
-      });
-      
-      // Verify file exists
-      const fileInfo = await FileSystem.getInfoAsync(testFilePath);
-      console.log('Test file info:', JSON.stringify(fileInfo));
-      
-      if (!fileInfo.exists) {
-        throw new Error('Failed to create test file');
-      }
-      
-      // Convert to raw path
-      let rawPath = testFilePath;
-      if (testFilePath.startsWith('file://')) {
-        rawPath = testFilePath.replace('file://', '');
-      }
-      console.log('Raw iOS path:', rawPath);
-      
-      // Try to get native path using the module
-      if (typeof LlamaCppRn.getAbsolutePath === 'function') {
-        try {
-          const nativePath = await LlamaCppRn.getAbsolutePath(testFilePath);
-          console.log('Native path from module:', nativePath);
-          if (nativePath && nativePath.path) {
-            console.log('Will use native path:', nativePath.path);
-            rawPath = nativePath.path;
-          }
-        } catch (e) {
-          console.error('Error getting native path:', e);
-        }
-      }
-      
-      // Try to load the model using the raw path
       try {
-        console.log('Loading model from iOS path:', rawPath);
-        // Log path components to check for any encoding issues
-        console.log('Path components:', rawPath.split('/'));
-        const modelInfo = await LlamaCppRn.loadLlamaModelInfo(rawPath);
-        console.log('Successfully loaded model from iOS path:', modelInfo);
-        setModelInfo(modelInfo);
-        setModelPath(rawPath);
-        return true;
-      } catch (error) {
-        console.error('Error loading model from iOS path:', error);
+        // Convert the binary data to a string that can be written
+        const headerStr = Array.from(header).map(byte => String.fromCharCode(byte)).join('');
         
-        // Try with explicit options as a last resort
+        // Write the file with UTF8 encoding
+        await FileSystem.writeAsStringAsync(testFilePath, headerStr, {
+          encoding: FileSystem.EncodingType.UTF8
+        });
+        
+        // Verify the file exists
+        const fileInfo = await FileSystem.getInfoAsync(testFilePath);
+        console.log('File created successfully:', fileInfo);
+        
+        // Verify with native module if possible
+        if (LlamaCppRn.fileExists) {
+          const exists = await LlamaCppRn.fileExists(testFilePath);
+          console.log('Native module fileExists check:', exists);
+        }
+      } catch (writeError: any) {
+        console.error('Error writing test file:',
+          writeError.name,
+          writeError.message,
+          writeError.stack,
+          writeError.code,
+          writeError.userInfo
+        );
+        return;
+      }
+      
+      try {
+        // Try the first attempt with default options
+        console.log('Attempting to load model info with path:', testFilePath);
+        const modelInfo = await LlamaCppRn.loadLlamaModelInfo(testFilePath);
+        console.log('Successfully loaded model info:', modelInfo);
+        setApiStatus(`Successfully loaded model info: ${JSON.stringify(modelInfo)}`);
+      } catch (loadError: any) {
+        console.error('Error loading model info (default options):',
+          typeof loadError,
+          loadError?.constructor?.name,
+          loadError?.name,
+          loadError?.message,
+          loadError?.stack,
+          loadError?.code,
+          loadError?.userInfo,
+          Platform.OS === 'ios' ? loadError?.nativeStackIOS : loadError?.nativeStackAndroid
+        );
+        
+        // Try again with explicit options (disable GPU)
         try {
-          console.log('Trying with options object...');
-          const modelInfo = await LlamaCppRn.loadLlamaModelInfo(rawPath, {
-            useGPU: false,
+          const options = {
+            n_gpu_layers: 0,
             verbose: true
-          });
-          console.log('Successfully loaded with options:', modelInfo);
-          setModelInfo(modelInfo);
-          setModelPath(rawPath);
-          return true;
-        } catch (optError) {
-          console.error('Failed with options too:', optError);
-          throw error;
+          };
+          console.log('Attempting with explicit options:', options);
+          const modelInfo = await LlamaCppRn.loadLlamaModelInfo(testFilePath, options);
+          console.log('Successfully loaded model info with options:', modelInfo);
+          setApiStatus(`Successfully loaded model info with options: ${JSON.stringify(modelInfo)}`);
+        } catch (optionsError: any) {
+          console.error('Error loading model info (with options):',
+            typeof optionsError,
+            optionsError?.constructor?.name,
+            optionsError?.name,
+            optionsError?.message,
+            optionsError?.stack,
+            optionsError?.code,
+            optionsError?.userInfo,
+            Platform.OS === 'ios' ? optionsError?.nativeStackIOS : optionsError?.nativeStackAndroid
+          );
+          setApiStatus(`Failed to load model info: ${loadError?.message || 'Unknown error'}`);
         }
       }
-    } catch (error) {
-      console.error('iOS path test failed:', error);
-      setModelInfoError(`iOS path test failed: ${error instanceof Error ? error.message : String(error)}`);
+    } catch (error: any) {
+      console.error('Unexpected error in testWithSimpleFile:',
+        typeof error,
+        error?.constructor?.name,
+        error?.name,
+        error?.message,
+        error?.stack
+      );
+      setApiStatus(`Error: ${error?.message || 'Unknown error'}`);
     } finally {
-      setModelInfoLoading(false);
+      setSimpleFileLoading(false);
     }
+  };
+
+  // Basic test function for the native module
+  const testModuleImport = async () => {
+    setFileLoading(true);
+    setFileError(null);
+    setFileTest(null);
     
-    return false;
+    try {
+      console.log('Testing module import...');
+      
+      // Check if module is imported
+      const moduleExists = typeof LlamaCppRn !== 'undefined';
+      console.log('Module exists:', moduleExists);
+      
+      // List available functions
+      const functions = moduleExists ? Object.keys(LlamaCppRn) : [];
+      console.log('Available functions:', functions);
+      
+      setFileTest({
+        moduleExists,
+        functions
+      });
+    } catch (error) {
+      console.error('Module import test failed:', error);
+      setFileError(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setFileLoading(false);
+    }
+  };
+
+  // Test just the bundle directory contents without trying to load any models
+  const testBundleDirectoryOnly = async () => {
+    setFileLoading(true);
+    setFileError(null);
+    setFileTest(null);
+    
+    try {
+      console.log('Testing bundle directory contents only...');
+      
+      const bundleDir = FileSystem.bundleDirectory || '';
+      const documentsDir = FileSystem.documentDirectory || '';
+      
+      console.log('Bundle directory:', bundleDir);
+      console.log('Documents directory:', documentsDir);
+      
+      // List files in bundle directory
+      let bundleFiles: string[] = [];
+      try {
+        bundleFiles = await FileSystem.readDirectoryAsync(bundleDir);
+        console.log('Bundle directory files:', bundleFiles);
+      } catch (error) {
+        console.error('Error listing bundle directory:', error);
+        throw new Error(`Failed to read bundle directory: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      
+      // Get directory sizes and check for GGUF files
+      const ggufFiles = bundleFiles.filter(file => file.endsWith('.gguf'));
+      console.log('GGUF files in bundle:', ggufFiles);
+      
+      // If there are any GGUF files, get their info
+      const ggufInfos = [];
+      for (const file of ggufFiles) {
+        try {
+          const filePath = `${bundleDir}${file}`;
+          const info = await FileSystem.getInfoAsync(filePath) as ExtendedFileInfo;
+          ggufInfos.push({
+            name: file,
+            path: filePath,
+            size: info.size || 0,
+            exists: info.exists
+          });
+        } catch (error) {
+          console.error(`Error getting info for file ${file}:`, error);
+        }
+      }
+      
+      setFileTest({
+        bundleDir,
+        documentsDir,
+        bundleFiles,
+        ggufFiles,
+        ggufInfos,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Bundle directory test failed:', error);
+      setFileError(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setFileLoading(false);
+    }
+  };
+
+  // Test GPU support on iOS and Android
+  const testGpuCapabilities = async () => {
+    setFileLoading(true);
+    setFileError(null);
+    setFileTest(null);
+    
+    try {
+      console.log('Testing GPU capabilities...');
+      
+      // Check if getGPUInfo function exists
+      if (typeof LlamaCppRn.getGPUInfo !== 'function') {
+        throw new Error('getGPUInfo function is not available in the native module');
+      }
+      
+      // Call getGPUInfo
+      const gpuInfo = await LlamaCppRn.getGPUInfo();
+      console.log('GPU capabilities:', gpuInfo);
+      
+      const platform = Platform.OS;
+      console.log(`Platform: ${platform}`);
+      
+      setFileTest({
+        platform,
+        gpuInfo,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('GPU capabilities test failed:', error);
+      setFileError(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setFileLoading(false);
+    }
+  };
+
+  // Test basic native function that doesn't depend on model loading
+  const testBasicNativeFunction = async () => {
+    setFileLoading(true);
+    setFileError(null);
+    setFileTest(null);
+    
+    try {
+      console.log('Testing basic native functions...');
+      
+      // Check if the module exists
+      if (typeof LlamaCppRn === 'undefined') {
+        throw new Error('LlamaCppRn module is not available');
+      }
+      
+      // Get all available functions
+      const functions = Object.keys(LlamaCppRn);
+      console.log('Available functions:', functions);
+      
+      // Try to call simpler functions
+      const results: Record<string, any> = {};
+      
+      // Test fileExists if available
+      if (typeof LlamaCppRn.fileExists === 'function') {
+        const documentsDir = FileSystem.documentDirectory || '';
+        const testPath = `${documentsDir}test_basic.txt`;
+        
+        // Create a test file
+        await FileSystem.writeAsStringAsync(testPath, 'Test content');
+        
+        // Check if it exists
+        const exists = await LlamaCppRn.fileExists(testPath);
+        results.fileExists = { path: testPath, exists };
+      }
+      
+      // Test llama.cpp version if available
+      if (typeof LlamaCppRn.getLlamaCppVersion === 'function') {
+        const version = await LlamaCppRn.getLlamaCppVersion();
+        results.llamaCppVersion = version;
+      }
+      
+      // Get library info if available
+      if (typeof LlamaCppRn.getLibraryInfo === 'function') {
+        const info = await LlamaCppRn.getLibraryInfo();
+        results.libraryInfo = info;
+      }
+      
+      setFileTest({
+        timestamp: new Date().toISOString(),
+        functions,
+        results
+      });
+    } catch (error) {
+      console.error('Basic native function test failed:', error);
+      setFileError(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setFileLoading(false);
+    }
+  };
+
+  // Test getAbsolutePath specifically
+  const testGetAbsolutePath = async () => {
+    setFileLoading(true);
+    setFileError(null);
+    setFileTest(null);
+    
+    try {
+      console.log('Testing getAbsolutePath function...');
+      
+      // Check if the module exists
+      if (typeof LlamaCppRn === 'undefined') {
+        throw new Error('LlamaCppRn module is not available');
+      }
+      
+      // Check if getAbsolutePath is available
+      console.log('getAbsolutePath type:', typeof LlamaCppRn.getAbsolutePath);
+      console.log('All available methods:', Object.keys(LlamaCppRn).filter(key => typeof LlamaCppRn[key] === 'function'));
+      
+      if (typeof LlamaCppRn.getAbsolutePath !== 'function') {
+        throw new Error('getAbsolutePath function is not available');
+      }
+      
+      // Try to call getAbsolutePath with a simple path
+      const documentsDir = FileSystem.documentDirectory || '';
+      const testPath = `${documentsDir}test_path_check.txt`;
+      
+      // Create a test file
+      await FileSystem.writeAsStringAsync(testPath, 'Test content');
+      
+      // Call getAbsolutePath
+      const pathInfo = await LlamaCppRn.getAbsolutePath(testPath);
+      console.log('getAbsolutePath result:', pathInfo);
+      
+      setFileTest({
+        functionExists: true,
+        pathInfo,
+        testPath
+      });
+    } catch (error) {
+      console.error('getAbsolutePath test failed:', error);
+      setFileError(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setFileLoading(false);
+    }
+  };
+
+  // Test model location and prepare for chat test
+  const testPrepareModelForChat = async () => {
+    setFileLoading(true);
+    setFileError(null);
+    setFileTest(null);
+    
+    try {
+      console.log('Testing model preparation for chat...');
+      
+      const bundleDir = FileSystem.bundleDirectory || '';
+      const documentsDir = FileSystem.documentDirectory || '';
+      
+      console.log('Bundle directory:', bundleDir);
+      console.log('Documents directory:', documentsDir);
+      
+      // Look for the specific model we want to use for chat
+      const llamaModelName = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
+      const documentsModelPath = `${documentsDir}${llamaModelName}`;
+      
+      // First check if the model exists in the documents directory
+      const modelInfo = await FileSystem.getInfoAsync(documentsModelPath);
+      console.log('Llama model in documents directory exists:', modelInfo.exists);
+      
+      // If it exists, try to load its info to verify it's valid
+      if (modelInfo.exists) {
+        try {
+          console.log('Attempting to load model info for:', documentsModelPath);
+          const info = await LlamaCppRn.loadLlamaModelInfo(documentsModelPath);
+          console.log('Successfully loaded model info:', info);
+          
+          setFileTest({
+            modelLocation: documentsModelPath,
+            modelExists: true,
+            modelInfo: info,
+            modelSize: modelInfo.size,
+            timestamp: new Date().toISOString()
+          });
+          return;
+        } catch (loadError) {
+          console.error('Failed to load model info:', loadError);
+          // If we can't load info, the model might be corrupted - proceed below
+        }
+      }
+      
+      // Check for a model in specific locations that need to be copied
+      const sourceLocations = [
+        `${bundleDir}${llamaModelName}`,
+        `${bundleDir}assets/${llamaModelName}`,
+        `${bundleDir}example/assets/${llamaModelName}`
+      ];
+      
+      console.log('Checking possible source locations:', sourceLocations);
+      
+      let sourceModelPath = null;
+      
+      // Check each source location
+      for (const path of sourceLocations) {
+        try {
+          const info = await FileSystem.getInfoAsync(path);
+          if (info.exists) {
+            console.log('Found source model at:', path);
+            sourceModelPath = path;
+            break;
+          }
+        } catch (pathError) {
+          console.log(`Error checking path ${path}:`, pathError);
+        }
+      }
+      
+      // If we found a source model, copy it to the documents directory
+      if (sourceModelPath) {
+        try {
+          console.log(`Copying model from ${sourceModelPath} to ${documentsModelPath}...`);
+          await FileSystem.copyAsync({
+            from: sourceModelPath,
+            to: documentsModelPath
+          });
+          
+          // Verify the copy
+          const copiedInfo = await FileSystem.getInfoAsync(documentsModelPath);
+          if (copiedInfo.exists) {
+            console.log('Successfully copied model to documents directory');
+            
+            // Try to load model info
+            try {
+              const info = await LlamaCppRn.loadLlamaModelInfo(documentsModelPath);
+              console.log('Successfully loaded model info after copy:', info);
+              
+              setFileTest({
+                modelLocation: documentsModelPath,
+                modelExists: true,
+                modelInfo: info,
+                modelSize: copiedInfo.size,
+                sourceModelPath,
+                copied: true,
+                timestamp: new Date().toISOString()
+              });
+              return;
+            } catch (loadError) {
+              console.error('Failed to load model info after copy:', loadError);
+              // Continue below
+            }
+          }
+        } catch (copyError) {
+          console.error('Error copying model:', copyError);
+        }
+      }
+      
+      // If we get here, we couldn't find or copy a valid model
+      setFileTest({
+        modelExists: false,
+        documentsDir,
+        bundleDir,
+        checkedLocations: sourceLocations,
+        timestamp: new Date().toISOString(),
+        message: "No suitable model found. Please download a valid GGUF model and place it in the documents directory.",
+      });
+      
+      // Set a specific helpful error message
+      setFileError(`No valid GGUF model found for chat. You need to download the Llama-3.2-1B-Instruct-Q4_K_M.gguf model (or another compatible GGUF) and place it in ${documentsDir}. This is required for the chat test to work.`);
+    } catch (error) {
+      console.error('Model preparation test failed:', error);
+      setFileError(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setFileLoading(false);
+    }
   };
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Llama.cpp Test</Text>
-      
       <ScrollView style={styles.scrollView}>
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>0. Test API</Text>
-          <Button 
-            title="Test Direct API Call" 
-            onPress={testDirectAPICall} 
-            disabled={apiStatusLoading}
-          />
+          <Text style={styles.sectionTitle}>Module Linkage Tests</Text>
+          <View>
+            <Button title="Test LlamaCppRn Import" onPress={testModuleImport} />
+            {fileLoading && <ActivityIndicator size="small" />}
+            {fileError && <View style={styles.resultBox}><Text style={styles.error}>{fileError}</Text></View>}
+            {fileTest && <Text style={styles.resultText}>{JSON.stringify(fileTest)}</Text>}
+          </View>
           
           <View style={styles.buttonSpacing} />
           
-          <Button 
-            title="Test Bundle File Access" 
-            onPress={testBundleDirectoryAccess} 
-            disabled={bundleFileLoading}
-          />
+          <View>
+            <Button title="Test File Access" onPress={testFileAccess} />
+            {fileLoading && <ActivityIndicator size="small" />}
+            {fileError && <View style={styles.resultBox}><Text style={styles.error}>{fileError}</Text></View>}
+            {fileTest && <Text style={styles.resultText}>{JSON.stringify(fileTest)}</Text>}
+          </View>
           
           <View style={styles.buttonSpacing} />
           
-          <Button 
-            title="Test Simple File Access" 
-            onPress={async () => {
-              try {
-                setApiStatusLoading(true);
-                setApiStatus('Testing basic file access...');
-                
-                // Create a simple text file in the documents directory
-                const docDir = FileSystem.documentDirectory || '';
-                const testFilePath = `${docDir}test.txt`;
-                
-                // Write a simple text file
-                console.log('Writing simple text file to:', testFilePath);
-                await FileSystem.writeAsStringAsync(testFilePath, 'This is a test file.');
-                
-                // Verify file exists
-                const fileInfo = await FileSystem.getInfoAsync(testFilePath);
-                console.log('Text file info:', JSON.stringify(fileInfo));
-                
-                if (!fileInfo.exists) {
-                  throw new Error('Failed to create text file');
-                }
-                
-                // Try to read the file content using FileSystem
-                const content = await FileSystem.readAsStringAsync(testFilePath);
-                console.log('File content read via FileSystem:', content);
-                
-                // Try to read the same file using the native module if there's a readFile function
-                const hasReadFunction = typeof LlamaCppRn.readFile === 'function';
-                console.log('Native module has readFile function:', hasReadFunction);
-                
-                if (hasReadFunction) {
-                  try {
-                    const nativeContent = await LlamaCppRn.readFile(testFilePath);
-                    console.log('File content read via native module:', nativeContent);
-                    setApiStatus('Native module can read files! Check logs.');
-                  } catch (e) {
-                    console.error('Native module could not read the file:', e);
-                    setApiStatus('Native module cannot read files. Check logs.');
-                  }
-                } else if (typeof LlamaCppRn.fileExists === 'function') {
-                  // Try the fileExists function instead
-                  try {
-                    const exists = await LlamaCppRn.fileExists(testFilePath);
-                    console.log('File exists according to native module:', exists);
-                    setApiStatus(`File exists check: ${exists ? 'Success' : 'Failed'}`);
-                  } catch (e) {
-                    console.error('Error checking file existence:', e);
-                    setApiStatus('Error checking file existence. Check logs.');
-                  }
-                } else {
-                  setApiStatus('Native module has no file reading functions.');
-                }
-                
-                // Try with path without file:// prefix
-                if (testFilePath.startsWith('file://')) {
-                  const rawPath = testFilePath.replace('file://', '');
-                  console.log('Testing with raw path:', rawPath);
-                  
-                  if (hasReadFunction) {
-                    try {
-                      const nativeContent = await LlamaCppRn.readFile(rawPath);
-                      console.log('File content read via native module (raw path):', nativeContent);
-                      setApiStatus('Native module can read files with raw path! Check logs.');
-                    } catch (e) {
-                      console.error('Native module could not read the file with raw path:', e);
-                    }
-                  } else if (typeof LlamaCppRn.fileExists === 'function') {
-                    try {
-                      const exists = await LlamaCppRn.fileExists(rawPath);
-                      console.log('File exists (raw path) according to native module:', exists);
-                    } catch (e) {
-                      console.error('Error checking file existence (raw path):', e);
-                    }
-                  }
-                }
-              } catch (error) {
-                console.error('File access test error:', error);
-                setApiStatusError(`File access test error: ${error instanceof Error ? error.message : String(error)}`);
-              } finally {
-                setApiStatusLoading(false);
-              }
-            }}
-            disabled={apiStatusLoading}
-          />
+          <View>
+            <Button title="Test Direct Model Load" onPress={() => testModelLoading(false)} />
+            {modelLoading && <ActivityIndicator size="small" />}
+            {modelError && <View style={styles.resultBox}><Text style={styles.error}>{modelError}</Text></View>}
+            {modelInfo && <Text style={styles.resultText}>{JSON.stringify(modelInfo)}</Text>}
+          </View>
           
           <View style={styles.buttonSpacing} />
           
-          <Button 
-            title="Find and Load 1B Model" 
-            onPress={loadModel} 
-            disabled={modelInfoLoading}
-          />
-          
-          <View style={styles.buttonSpacing} />
-          
-          <Button 
-            title="Check and Copy Model File" 
-            onPress={copyModelFromAssetsIfNeeded} 
-            disabled={modelInfoLoading}
-          />
-
-          <View style={styles.buttonSpacing} />
-          
-          <Button 
-            title="Test with Raw File Path" 
-            onPress={testWithRawFilePath} 
-            disabled={modelInfoLoading}
-          />
-          
-          <View style={styles.buttonSpacing} />
-          
-          <Button 
-            title="Test with iOS Path" 
-            onPress={testWithIOSPath} 
-            disabled={modelInfoLoading}
-          />
-          
-          <View style={styles.buttonSpacing} />
-          
-          <Button 
-            title="Test With Real Model" 
-            onPress={async () => {
-              try {
-                setApiStatusLoading(true);
-                console.log('Testing with real model file in bundle...');
-                
-                // We know from previous logs that this file exists in the bundle
-                const modelName = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
-                const bundleDir = FileSystem.bundleDirectory || '';
-                const bundlePath = `${bundleDir}${modelName}`;
-                
-                // First, verify the file exists
-                const fileInfo = await FileSystem.getInfoAsync(bundlePath);
-                console.log('Real model file info:', JSON.stringify(fileInfo));
-                
-                if (!fileInfo.exists) {
-                  throw new Error('Real model file not found in bundle');
-                }
-                
-                // Now try different path formats with the real model
-                const rawBundlePath = bundlePath.replace('file://', '');
-                console.log('Raw bundle path:', rawBundlePath);
-                
-                console.log('Trying to load with file:// path...');
-                try {
-                  const modelInfo = await LlamaCppRn.loadLlamaModelInfo(bundlePath);
-                  console.log('SUCCESS with file:// path:', modelInfo);
-                  setModelInfo(modelInfo);
-                  setModelPath(bundlePath);
-                  setApiStatus('Successfully loaded model with file:// path');
-                  return;
-                } catch (e) {
-                  console.error('Failed with file:// path:', e);
-                }
-                
-                console.log('Trying to load with raw path...');
-                try {
-                  const modelInfo = await LlamaCppRn.loadLlamaModelInfo(rawBundlePath);
-                  console.log('SUCCESS with raw path:', modelInfo);
-                  setModelInfo(modelInfo);
-                  setModelPath(rawBundlePath);
-                  setApiStatus('Successfully loaded model with raw path');
-                  return;
-                } catch (e) {
-                  console.error('Failed with raw path:', e);
-                }
-                
-                // If we couldn't load directly, try to copy to documents directory
-                console.log('Copying model to documents directory...');
-                const docsDir = FileSystem.documentDirectory || '';
-                const docsPath = `${docsDir}${modelName}`;
-                
-                await FileSystem.copyAsync({
-                  from: bundlePath,
-                  to: docsPath
-                });
-                
-                const docsInfo = await FileSystem.getInfoAsync(docsPath);
-                console.log('Copied file info:', JSON.stringify(docsInfo));
-                
-                const rawDocsPath = docsPath.replace('file://', '');
-                
-                // Try to load from documents directory
-                console.log('Trying to load from documents with file:// path...');
-                try {
-                  const modelInfo = await LlamaCppRn.loadLlamaModelInfo(docsPath);
-                  console.log('SUCCESS from documents with file:// path:', modelInfo);
-                  setModelInfo(modelInfo);
-                  setModelPath(docsPath);
-                  setApiStatus('Successfully loaded model from documents with file:// path');
-                  return;
-                } catch (e) {
-                  console.error('Failed from documents with file:// path:', e);
-                }
-                
-                console.log('Trying to load from documents with raw path...');
-                try {
-                  const modelInfo = await LlamaCppRn.loadLlamaModelInfo(rawDocsPath);
-                  console.log('SUCCESS from documents with raw path:', modelInfo);
-                  setModelInfo(modelInfo);
-                  setModelPath(rawDocsPath);
-                  setApiStatus('Successfully loaded model from documents with raw path');
-                  return;
-                } catch (e) {
-                  console.error('Failed from documents with raw path:', e);
-                  
-                  // Log detailed error for raw docs path
-                  console.log('Document path raw loading error details:');
-                  if (e instanceof Error) {
-                    console.log('  Error name:', e.name);
-                    console.log('  Error message:', e.message);
-                    console.log('  Error stack:', e.stack);
-                    if ((e as any).code) console.log('  Error code:', (e as any).code);
-                    if ((e as any).userInfo) console.log('  Error userInfo:', JSON.stringify((e as any).userInfo));
-                  } else {
-                    console.log('  Non-error object:', e);
-                  }
-                }
-                
-                setApiStatus('All loading attempts failed - check logs');
-              } catch (error) {
-                console.error('Real model test error:', error);
-                setApiStatusError(`Real model test error: ${error instanceof Error ? error.message : String(error)}`);
-              } finally {
-                setApiStatusLoading(false);
-              }
-            }}
-            disabled={apiStatusLoading}
-          />
-          
-          <View style={styles.buttonSpacing} />
-          
-          <Button 
-            title="Extract & Test Header" 
-            onPress={async () => {
-              try {
-                setApiStatusLoading(true);
-                console.log('Extracting header from real model file...');
-                
-                // We know from previous logs that this file exists in the bundle
-                const modelName = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
-                const bundleDir = FileSystem.bundleDirectory || '';
-                const bundlePath = `${bundleDir}${modelName}`;
-                
-                // First, verify the file exists
-                const fileInfo = await FileSystem.getInfoAsync(bundlePath);
-                console.log('Real model file info:', JSON.stringify(fileInfo));
-                
-                if (!fileInfo.exists) {
-                  throw new Error('Real model file not found in bundle');
-                }
-                
-                // Get documents directory
-                const docsDir = FileSystem.documentDirectory || '';
-                
-                // Read a small chunk of the real model file (just the header)
-                const modelChunk = await FileSystem.readAsStringAsync(bundlePath, {
-                  encoding: FileSystem.EncodingType.Base64,
-                  length: 32768, // Read first 32KB
-                  position: 0
-                });
-                
-                console.log(`Read ${modelChunk.length} bytes (base64) from model file`);
-                
-                // Write this chunk to a new file with .gguf extension
-                const headerFilePath = `${docsDir}model_header.gguf`;
-                await FileSystem.writeAsStringAsync(headerFilePath, modelChunk, {
-                  encoding: FileSystem.EncodingType.Base64
-                });
-                
-                const headerFileInfo = await FileSystem.getInfoAsync(headerFilePath);
-                console.log('Header file info:', JSON.stringify(headerFileInfo));
-                
-                // Now try to load the header file
-                const rawHeaderPath = headerFilePath.replace('file://', '');
-                
-                console.log('Trying to load header file with raw path...');
-                try {
-                  const headerInfo = await LlamaCppRn.loadLlamaModelInfo(rawHeaderPath);
-                  console.log('SUCCESS loading header file!', headerInfo);
-                  setModelInfo(headerInfo);
-                  setModelPath(rawHeaderPath);
-                  setApiStatus('Successfully loaded model header file');
-                  return;
-                } catch (e) {
-                  console.error('Failed to load header file:', e);
-                  
-                  // Check if there's more specific error info
-                  if (e instanceof Error) {
-                    if (e.message.includes("file doesn't exist")) {
-                      console.log('Header file path issue - trying different path formats');
-                      
-                      // Try a few different path formats for the header file
-                      const pathsToTry = [
-                        { name: 'Raw with double slash', path: rawHeaderPath.replace('/', '//') },
-                        { name: 'Absolute only', path: '/model_header.gguf' },
-                        { name: 'Documents folder only', path: `${docsDir}model_header.gguf` }
-                      ];
-                      
-                      for (const pathInfo of pathsToTry) {
-                        console.log(`Trying path format: ${pathInfo.name} - ${pathInfo.path}`);
-                        try {
-                          const result = await LlamaCppRn.loadLlamaModelInfo(pathInfo.path);
-                          console.log(`SUCCESS with ${pathInfo.name}!`, result);
-                          setModelInfo(result);
-                          setModelPath(pathInfo.path);
-                          setApiStatus(`Successfully loaded with ${pathInfo.name}`);
-                          return;
-                        } catch (pathError) {
-                          console.error(`Failed with ${pathInfo.name}:`, pathError);
-                        }
-                      }
-                    } else if (e.message.includes("Failed to load model")) {
-                      console.log('Header file format issue - trying to create a more complete model header');
-                      
-                      // Let's try a larger chunk
-                      const largerChunk = await FileSystem.readAsStringAsync(bundlePath, {
-                        encoding: FileSystem.EncodingType.Base64,
-                        length: 262144, // 256KB
-                        position: 0
-                      });
-                      
-                      console.log(`Read ${largerChunk.length} bytes (base64) from model file for larger chunk`);
-                      
-                      // Create a file with a larger chunk
-                      const largerPath = `${docsDir}model_larger.gguf`;
-                      await FileSystem.writeAsStringAsync(largerPath, largerChunk, {
-                        encoding: FileSystem.EncodingType.Base64
-                      });
-                      
-                      const largerFileInfo = await FileSystem.getInfoAsync(largerPath);
-                      console.log('Larger file info:', JSON.stringify(largerFileInfo));
-                      
-                      const rawLargerPath = largerPath.replace('file://', '');
-                      
-                      console.log('Trying to load larger chunk...');
-                      try {
-                        const largerInfo = await LlamaCppRn.loadLlamaModelInfo(rawLargerPath);
-                        console.log('SUCCESS loading larger chunk!', largerInfo);
-                        setModelInfo(largerInfo);
-                        setModelPath(rawLargerPath);
-                        setApiStatus('Successfully loaded larger model chunk');
-                        return;
-                      } catch (largerError) {
-                        console.error('Failed to load larger chunk:', largerError);
-                      }
-                    }
-                  }
-                }
-                
-                setApiStatus('All loading attempts failed - check logs');
-              } catch (error) {
-                console.error('Header extraction error:', error);
-                setApiStatusError(`Header extraction error: ${error instanceof Error ? error.message : String(error)}`);
-              } finally {
-                setApiStatusLoading(false);
-              }
-            }}
-            disabled={apiStatusLoading}
-          />
-          
-          {apiStatusLoading && <ActivityIndicator style={styles.loader} />}
-          {bundleFileLoading && <ActivityIndicator style={styles.loader} />}
-          
-          {apiStatusError && (
-            <Text style={styles.error}>API Error: {apiStatusError}</Text>
-          )}
-          
-          {bundleFileError && (
-            <Text style={styles.error}>Bundle File Error: {bundleFileError}</Text>
-          )}
-          
-          {apiStatus && (
-            <View style={styles.resultBox}>
-              <Text style={styles.resultTitle}>API Status:</Text>
-              <Text style={styles.resultText}>{apiStatus}</Text>
-            </View>
-          )}
-          
-          {bundleFileTest && (
-            <View style={styles.resultBox}>
-              <Text style={styles.resultTitle}>Bundle File Test:</Text>
-              <Text style={styles.resultText}>Bundle directory: {bundleFileTest.bundleDir}</Text>
-              <Text style={styles.resultText}>Bundle files count: {bundleFileTest.bundleFiles?.length || 0}</Text>
-              <Text style={styles.resultText}>Test file created: {bundleFileTest.fileInfo?.exists ? '✅' : '❌'}</Text>
-              <Text style={styles.resultText}>Test file size: {bundleFileTest.fileInfo?.size || 0} bytes</Text>
-              {bundleFileTest.nativePathInfo && (
-                <Text style={styles.resultText}>Native path valid: {bundleFileTest.nativePathInfo.exists ? '✅' : '❌'}</Text>
-              )}
-              {bundleFileTest.modelInfoResult?.error ? (
-                <Text style={styles.resultText}>Model info error (expected): ✓</Text>
-              ) : (
-                <Text style={styles.resultText}>Received model info: {bundleFileTest.modelInfoResult ? '✅' : '❌'}</Text>
-              )}
-            </View>
-          )}
+          <View>
+            <Button title="Test Schema Conversion" onPress={testSchemaConversion} />
+            {schemaLoading && <ActivityIndicator size="small" />}
+            {schemaError && <View style={styles.resultBox}><Text style={styles.error}>{schemaError}</Text></View>}
+            {schemaResult && <Text style={styles.resultText}>{schemaResult}</Text>}
+          </View>
         </View>
         
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>1. Load Model Info</Text>
-          <Button 
-            title="Load Model Info" 
-            onPress={handleLoadModelInfo} 
-            disabled={modelInfoLoading}
-          />
+          <Text style={styles.sectionTitle}>Advanced diagnostics</Text>
+          <View>
+            <Button title="Test Bundle Directory Only" onPress={testBundleDirectoryOnly} />
+            {fileLoading && <ActivityIndicator size="small" />}
+            {fileError && <View style={styles.resultBox}><Text style={styles.error}>{fileError}</Text></View>}
+            {fileTest && <Text style={styles.resultText}>{JSON.stringify(fileTest)}</Text>}
+          </View>
           
-          {modelInfoLoading && <ActivityIndicator style={styles.loader} />}
+          <View style={styles.buttonSpacing} />
           
-          {modelInfoError && (
-            <Text style={styles.error}>Error: {modelInfoError}</Text>
-          )}
+          <View>
+            <Button title="Test GPU Capabilities" onPress={testGpuCapabilities} />
+            {fileLoading && <ActivityIndicator size="small" />}
+            {fileError && <View style={styles.resultBox}><Text style={styles.error}>{fileError}</Text></View>}
+            {fileTest && <Text style={styles.resultText}>{JSON.stringify(fileTest)}</Text>}
+          </View>
           
-          {modelInfo && (
-            <View style={styles.resultBox}>
-              <Text style={styles.resultTitle}>Model Info:</Text>
-              <Text style={styles.resultText}>Parameters: {modelInfo.n_params}</Text>
-              <Text style={styles.resultText}>Vocabulary: {modelInfo.n_vocab}</Text>
-              <Text style={styles.resultText}>Context Size: {modelInfo.n_context}</Text>
-              <Text style={styles.resultText}>Embedding: {modelInfo.n_embd}</Text>
-              <Text style={styles.resultText}>Description: {modelInfo.description}</Text>
-            </View>
-          )}
-        </View>
-        
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>2. Initialize Context</Text>
-          <Button 
-            title="Initialize Context" 
-            onPress={handleInitContext} 
-            disabled={contextLoading || !modelInfo}
-          />
+          <View style={styles.buttonSpacing} />
           
-          {contextLoading && <ActivityIndicator style={styles.loader} />}
+          <View>
+            <Button title="Test With Simple File" onPress={testWithSimpleFile} />
+            {simpleFileLoading && <ActivityIndicator size="small" />}
+            {apiStatus && <Text style={styles.resultText}>{apiStatus}</Text>}
+          </View>
           
-          {contextError && (
-            <Text style={styles.error}>Error: {contextError}</Text>
-          )}
+          <View style={styles.buttonSpacing} />
           
-          {context && (
-            <View style={styles.resultBox}>
-              <Text style={styles.resultTitle}>Context Initialized</Text>
-              <Text style={styles.resultText}>Context is ready for use</Text>
-            </View>
-          )}
-        </View>
-        
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>3. Generate Completion</Text>
-          <Button 
-            title="Generate Response" 
-            onPress={handleCompletion} 
-            disabled={completionLoading || !context}
-          />
+          <View>
+            <Button title="Test Basic Native Function" onPress={testBasicNativeFunction} />
+            {fileLoading && <ActivityIndicator size="small" />}
+            {fileError && <View style={styles.resultBox}><Text style={styles.error}>{fileError}</Text></View>}
+            {fileTest && <Text style={styles.resultText}>{JSON.stringify(fileTest)}</Text>}
+          </View>
           
-          {completionLoading && <ActivityIndicator style={styles.loader} />}
+          <View style={styles.buttonSpacing} />
           
-          {completionError && (
-            <Text style={styles.error}>Error: {completionError}</Text>
-          )}
+          <View>
+            <Button title="Test getAbsolutePath" onPress={testGetAbsolutePath} />
+            {fileLoading && <ActivityIndicator size="small" />}
+            {fileError && <View style={styles.resultBox}><Text style={styles.error}>{fileError}</Text></View>}
+            {fileTest && <Text style={styles.resultText}>{JSON.stringify(fileTest)}</Text>}
+          </View>
           
-          {completion && (
-            <View style={styles.resultBox}>
-              <Text style={styles.resultTitle}>AI Response:</Text>
-              <Text style={styles.resultText}>{completion}</Text>
-            </View>
-          )}
+          <View style={styles.buttonSpacing} />
+          
+          <View>
+            <Button title="Prepare Model for Chat" onPress={testPrepareModelForChat} />
+            {fileLoading && <ActivityIndicator size="small" />}
+            {fileError && <View style={styles.resultBox}><Text style={styles.error}>{fileError}</Text></View>}
+            {fileTest && <Text style={styles.resultText}>{JSON.stringify(fileTest)}</Text>}
+          </View>
         </View>
       </ScrollView>
     </View>

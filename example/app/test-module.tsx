@@ -1,94 +1,61 @@
 import * as React from 'react';
-import { View, Text, StyleSheet, NativeModules, Platform } from 'react-native';
+import { View, Text, StyleSheet, Button, NativeModules } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
 
-// Import approach 1: Direct reference to source
-let directImport: any = null;
-let directImportError = '';
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  directImport = require('../../src/index');
-  console.log('Direct import succeeded:', directImport);
-} catch (error) {
-  directImportError = error instanceof Error ? error.message : String(error);
-  console.log('Direct import failed:', directImportError);
-}
-
-// Import approach 2: Package name (as users would use it)
-let packageImport: any = null;
-let packageImportError = '';
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  packageImport = require('@novastera-oss/llamacpp-rn');
-  console.log('Package import succeeded:', packageImport);
-} catch (error) {
-  packageImportError = error instanceof Error ? error.message : String(error);
-  console.log('Package import failed:', packageImportError);
-}
-
-// Function to check if TurboModule is properly registered and available
-function checkModuleAvailability() {
-  // Check for the module in both TurboModuleRegistry and NativeModules
-  const modName = 'LlamaCppRn';
-  const standardModule = NativeModules[modName];
-  const turboModule = TurboModuleRegistry.get(modName);
-  
-  // List all available modules
-  const allNativeModules = Object.keys(NativeModules);
-  console.log('All Native Modules:', allNativeModules);
-  
-  // For demo, try calling a method if the module is available
-  let methodCallResult = null;
-  let methodCallError = '';
-  
-  if (standardModule || turboModule) {
-    try {
-      const module = turboModule || standardModule;
-      if (module && typeof module.loadLlamaModelInfo === 'function') {
-        // Don't actually call it, just check if it exists
-        methodCallResult = 'Method exists but not called';
-      } else {
-        methodCallResult = 'Method does not exist';
-      }
-    } catch (error) {
-      methodCallError = error instanceof Error ? error.message : String(error);
-    }
-  }
-  
-  return {
-    available: {
-      standardModule: !!standardModule,
-      turboModule: !!turboModule,
-    },
-    moduleInfo: {
-      standardModule: standardModule ? Object.keys(standardModule).join(', ') : 'N/A',
-      turboModule: turboModule ? Object.keys(turboModule).join(', ') : 'N/A',
-    },
-    imports: {
-      direct: directImport ? 'Success' : 'Failed',
-      package: packageImport ? 'Success' : 'Failed',
-      directError: directImportError,
-      packageError: packageImportError,
-    },
-    methodCall: {
-      result: methodCallResult,
-      error: methodCallError,
-    },
-    allNativeModules,
-  };
-}
+// Using require instead of import to avoid TypeScript errors
+const LlamaCppRn = require('@novastera-oss/llamacpp-rn');
 
 export default function TestModule() {
-  const [result, setResult] = React.useState(() => checkModuleAvailability());
+  const [moduleInfo, setModuleInfo] = React.useState<any>(null);
   
-  // Check again after a delay to ensure modules have registered
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult(checkModuleAvailability());
-    }, 2000);
+  // Check module availability
+  const checkModuleAvailability = () => {
+    const modName = 'LlamaCppRn';
+    const standardModule = NativeModules[modName];
+    const turboModule = TurboModuleRegistry.get(modName);
     
-    return () => clearTimeout(timer);
+    // Log more detailed information about the module
+    console.log('Checking for LlamaCppRn module');
+    console.log('All Native Modules:', Object.keys(NativeModules));
+    console.log('Standard module available:', !!standardModule);
+    console.log('Turbo module available:', !!turboModule);
+    console.log('Direct require result type:', typeof LlamaCppRn);
+    
+    // Check if LlamaCppRn is loaded but with a different name
+    for (const key of Object.keys(NativeModules)) {
+      console.log(`Module "${key}" methods:`, Object.keys(NativeModules[key]));
+    }
+    
+    // Check available methods
+    const availableFunctions = Object.keys(LlamaCppRn || {}).filter(
+      key => typeof LlamaCppRn[key] === 'function'
+    );
+    console.log('LlamaCppRn available functions:', availableFunctions);
+    
+    return {
+      available: {
+        standardModule: !!standardModule,
+        turboModule: !!turboModule,
+      },
+      moduleInfo: {
+        functions: availableFunctions,
+        hasInitLlama: typeof LlamaCppRn?.initLlama === 'function',
+        hasJsonSchemaToGbnf: typeof LlamaCppRn?.jsonSchemaToGbnf === 'function',
+        hasLoadLlamaModelInfo: typeof LlamaCppRn?.loadLlamaModelInfo === 'function',
+        hasGetAbsolutePath: typeof LlamaCppRn?.getAbsolutePath === 'function',
+      },
+    };
+  };
+  
+  // Check module on mount
+  React.useEffect(() => {
+    setModuleInfo(checkModuleAvailability());
   }, []);
+  
+  // Manually refresh check
+  const handleRefreshCheck = () => {
+    setModuleInfo(checkModuleAvailability());
+  };
   
   return (
     <View style={styles.container}>
@@ -96,51 +63,38 @@ export default function TestModule() {
       
       <View style={styles.resultContainer}>
         <Text style={styles.sectionTitle}>Module Availability</Text>
-        <Text style={styles.item}>
-          Standard Module: {result.available.standardModule ? '✅' : '❌'}
-        </Text>
-        <Text style={styles.item}>
-          Turbo Module: {result.available.turboModule ? '✅' : '❌'}
-        </Text>
-        
-        <Text style={styles.sectionTitle}>Import Status</Text>
-        <Text style={styles.item}>
-          Direct Import: {result.imports.direct}
-          {result.imports.directError && (
-            <Text style={styles.error}>{'\n'}Error: {result.imports.directError}</Text>
-          )}
-        </Text>
-        <Text style={styles.item}>
-          Package Import: {result.imports.package}
-          {result.imports.packageError && (
-            <Text style={styles.error}>{'\n'}Error: {result.imports.packageError}</Text>
-          )}
-        </Text>
-        
-        <Text style={styles.sectionTitle}>Methods</Text>
-        <Text style={styles.item}>
-          Standard Module: {result.moduleInfo.standardModule}
-        </Text>
-        <Text style={styles.item}>
-          Turbo Module: {result.moduleInfo.turboModule}
-        </Text>
-        
-        {(result.methodCall.result || result.methodCall.error) && (
+        {moduleInfo && (
           <>
-            <Text style={styles.sectionTitle}>Method Call</Text>
-            {result.methodCall.result && (
-              <Text style={styles.item}>Result: {result.methodCall.result}</Text>
-            )}
-            {result.methodCall.error && (
-              <Text style={styles.error}>Error: {result.methodCall.error}</Text>
-            )}
+            <Text style={styles.item}>
+              Standard Module: {moduleInfo.available.standardModule ? '✅' : '❌'}
+            </Text>
+            <Text style={styles.item}>
+              Turbo Module: {moduleInfo.available.turboModule ? '✅' : '❌'}
+            </Text>
+            
+            <Text style={styles.sectionTitle}>Available Functions</Text>
+            {moduleInfo.moduleInfo.functions.map((func: string) => (
+              <Text key={func} style={styles.item}>• {func}</Text>
+            ))}
+            
+            <Text style={styles.sectionTitle}>Core Functions</Text>
+            <Text style={styles.item}>
+              initLlama: {moduleInfo.moduleInfo.hasInitLlama ? '✅' : '❌'}
+            </Text>
+            <Text style={styles.item}>
+              jsonSchemaToGbnf: {moduleInfo.moduleInfo.hasJsonSchemaToGbnf ? '✅' : '❌'}
+            </Text>
+            <Text style={styles.item}>
+              loadLlamaModelInfo: {moduleInfo.moduleInfo.hasLoadLlamaModelInfo ? '✅' : '❌'}
+            </Text>
+            <Text style={styles.item}>
+              getAbsolutePath: {moduleInfo.moduleInfo.hasGetAbsolutePath ? '✅' : '❌'}
+            </Text>
           </>
         )}
         
-        <Text style={styles.sectionTitle}>All Native Modules</Text>
-        <Text style={styles.smallItem}>
-          {result.allNativeModules.join(', ')}
-        </Text>
+        <View style={styles.buttonSpacing} />
+        <Button title="Refresh Check" onPress={handleRefreshCheck} />
       </View>
     </View>
   );
@@ -175,13 +129,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     color: '#555',
   },
-  smallItem: {
-    fontSize: 12,
-    color: '#777',
-    lineHeight: 18,
-  },
-  error: {
-    fontSize: 12,
-    color: '#d00',
+  buttonSpacing: {
+    height: 16,
   },
 }); 
