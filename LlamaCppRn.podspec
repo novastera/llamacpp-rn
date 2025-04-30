@@ -18,7 +18,9 @@ Pod::Spec.new do |s|
                    "cpp/LlamaCppRnModule.h", 
                    "cpp/LlamaCppRnModule.cpp", 
                    "cpp/ChatTemplates.h", 
-                   "cpp/ChatTemplates.cpp"
+                   "cpp/ChatTemplates.cpp",
+                   "cpp/SystemUtils.h",
+                   "cpp/SystemUtils.cpp"
   
   # Include llama.cpp headers for compilation
   s.preserve_paths = "ios/include/**/*.h", "ios/framework/**/*"

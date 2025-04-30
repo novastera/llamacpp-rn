@@ -9,6 +9,7 @@
 #include <utility>
 #include <thread>
 #include "ChatTemplates.h"
+#include "SystemUtils.h"
 
 #if defined(__ANDROID__) || defined(__linux__)
 #include <unistd.h>
@@ -161,32 +162,15 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
     bool gpuSupported = llama_supports_gpu_offload();
     if (params.hasProperty(runtime, "n_gpu_layers")) {
       // User specified GPU layers
-      if (modelParams.n_gpu_layers > 0) {
-        // User wants GPU - check if supported
-        if (gpuSupported) {
-          // Try to enable GPU, but silently fall back to CPU if it can't be enabled
-          bool gpuEnabled = enableGpu(true);
-          if (!gpuEnabled) {
-            std::cout << "Warning: GPU requested but couldn't be enabled. Falling back to CPU." << std::endl;
-            modelParams.n_gpu_layers = 0; // Fall back to CPU
-          } else {
-            std::cout << "GPU enabled with " << modelParams.n_gpu_layers << " layers" << std::endl;
-          }
-        } else {
-          // GPU not supported - silently fall back to CPU
-          std::cout << "Warning: GPU layers requested but GPU is not supported. Using CPU only." << std::endl;
-          modelParams.n_gpu_layers = 0;
-        }
-      } else {
-        // User explicitly disabled GPU
-        enableGpu(false);
-        std::cout << "GPU explicitly disabled by user" << std::endl;
+      modelParams.n_gpu_layers = (int)params.getProperty(runtime, "n_gpu_layers").asNumber();
+      if (modelParams.n_gpu_layers > 0 && !gpuSupported) {
+        // GPU not supported - silently fall back to CPU
+        std::cout << "Warning: GPU layers requested but GPU is not supported. Using CPU only." << std::endl;
+        modelParams.n_gpu_layers = 0;
       }
     } else {
-      // User didn't specify - default to CPU
-      modelParams.n_gpu_layers = 0;
-      enableGpu(false);
-      std::cout << "No GPU layers specified, using CPU only" << std::endl;
+      // User didn't specify - use optimal GPU layers if supported
+      modelParams.n_gpu_layers = gpuSupported ? SystemUtils::getOptimalGpuLayers() : 0;
     }
     
     // Load the model
@@ -215,26 +199,8 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
       contextParams.n_threads = (int)params.getProperty(runtime, "n_threads").asNumber();
       std::cout << "Using user-specified thread count: " << contextParams.n_threads << std::endl;
     } else {
-      // Get available CPU cores
-      int cpuCores = std::thread::hardware_concurrency();
-      
-      // Apply the requested logic:
-      // - If only 1 core, use 1 thread
-      // - If less than 4 cores, use (cores - 1) threads
-      // - If 4+ cores, use (cores - 2) threads
-      if (cpuCores <= 1) {
-        contextParams.n_threads = 1;
-      } else if (cpuCores < 4) {
-        contextParams.n_threads = cpuCores - 1;
-      } else {
-        contextParams.n_threads = cpuCores - 2;
-      }
-      
-      // Ensure we have at least 1 thread
-      contextParams.n_threads = std::max(1, contextParams.n_threads);
-      
-      // Log thread allocation decision
-      std::cout << "CPU cores: " << cpuCores << ", Using threads: " << contextParams.n_threads << std::endl;
+      contextParams.n_threads = SystemUtils::getOptimalThreadCount();
+      std::cout << "Using optimal thread count: " << contextParams.n_threads << std::endl;
     }
     
     // Create context
