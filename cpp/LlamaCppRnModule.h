@@ -7,6 +7,8 @@
 #include <unordered_map>
 #include <atomic>
 #include <mutex>
+#include <thread>
+#include <vector>
 
 // Forward declarations for C++ only
 struct llama_model;
@@ -17,6 +19,7 @@ using namespace facebook;
 
 namespace facebook::react {
 
+// LlamaCppRn native module
 class LlamaCppRn : public TurboModule {
 public:
   static constexpr auto kModuleName = "LlamaCppRn";
@@ -32,27 +35,16 @@ public:
   jsi::Value initLlama(jsi::Runtime &runtime, jsi::Object params);
   jsi::Value loadLlamaModelInfo(jsi::Runtime &runtime, jsi::String modelPath);
   jsi::Value jsonSchemaToGbnf(jsi::Runtime &runtime, jsi::Object schema);
-  jsi::Value getGPUInfo(jsi::Runtime &runtime);
-  jsi::Value getAbsolutePath(jsi::Runtime &runtime, jsi::String relativePath);
+
+  // Model methods 
+  jsi::Value getVocabSize(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
 
 private:
-  struct GpuInfo {
-    bool available;
-    std::string deviceName;
-    std::string deviceVendor;
-    std::string deviceVersion;
-    size_t deviceComputeUnits;
-    size_t deviceMemSize;
-  };
-
   // Helper methods
   jsi::Object createModelObject(jsi::Runtime& runtime, llama_model* model, llama_context* ctx);
-  GpuInfo getGpuCapabilities();
   bool detectGpuCapabilities();
   bool enableGpu(bool enable);
   bool isGpuEnabled();
-  jsi::Value getVocabSize(jsi::Runtime& runtime, const jsi::Value& thisValue, 
-                            const jsi::Value* args, size_t count);
   std::string normalizeFilePath(const std::string& path);
 
 private:

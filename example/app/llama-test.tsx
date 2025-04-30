@@ -57,17 +57,6 @@ export default function LlamaTest() {
       const fileInfo = await FileSystem.getInfoAsync(testFilePath) as ExtendedFileInfo;
       console.log('Test file info:', fileInfo);
       
-      // Test native module path conversion if available
-      let nativePath = null;
-      if (typeof LlamaCppRn.getAbsolutePath === 'function') {
-        try {
-          nativePath = await LlamaCppRn.getAbsolutePath(testFilePath);
-          console.log('Native path:', nativePath);
-        } catch (error) {
-          console.error('Error getting native path:', error);
-        }
-      }
-      
       // Test file exists function if available
       let fileExistsResult = null;
       if (typeof LlamaCppRn.fileExists === 'function') {
@@ -98,7 +87,6 @@ export default function LlamaTest() {
         testFilePath,
         fileExists: fileInfo.exists,
         fileSize: fileInfo.size,
-        nativePath,
         fileExistsResult,
         bundleFiles,
         ggufFiles
@@ -466,16 +454,6 @@ export default function LlamaTest() {
           }
         }
         
-        // Try to get absolute path if the function exists
-        if (LlamaCppRn.getAbsolutePath) {
-          try {
-            const absolutePath = await LlamaCppRn.getAbsolutePath(testFilePath);
-            console.log('[testWithSimpleFile] Absolute path:', absolutePath);
-          } catch (pathError) {
-            console.error('[testWithSimpleFile] Failed to get absolute path:', pathError);
-          }
-        }
-        
         setApiStatus('File created successfully. Attempting to load model info...');
       } catch (writeError: any) {
         console.error('[testWithSimpleFile] Error writing test file:',
@@ -687,40 +665,6 @@ export default function LlamaTest() {
     }
   };
 
-  // Test GPU support on iOS and Android
-  const testGpuCapabilities = async () => {
-    setFileLoading(true);
-    setFileError(null);
-    setFileTest(null);
-    
-    try {
-      console.log('Testing GPU capabilities...');
-      
-      // Check if getGPUInfo function exists
-      if (typeof LlamaCppRn.getGPUInfo !== 'function') {
-        throw new Error('getGPUInfo function is not available in the native module');
-      }
-      
-      // Call getGPUInfo
-      const gpuInfo = await LlamaCppRn.getGPUInfo();
-      console.log('GPU capabilities:', gpuInfo);
-      
-      const platform = Platform.OS;
-      console.log(`Platform: ${platform}`);
-      
-      setFileTest({
-        platform,
-        gpuInfo,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('GPU capabilities test failed:', error);
-      setFileError(`Error: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setFileLoading(false);
-    }
-  };
-
   // Test basic native function that doesn't depend on model loading
   const testBasicNativeFunction = async () => {
     setFileLoading(true);
@@ -774,52 +718,6 @@ export default function LlamaTest() {
       });
     } catch (error) {
       console.error('Basic native function test failed:', error);
-      setFileError(`Error: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setFileLoading(false);
-    }
-  };
-
-  // Test getAbsolutePath specifically
-  const testGetAbsolutePath = async () => {
-    setFileLoading(true);
-    setFileError(null);
-    setFileTest(null);
-    
-    try {
-      console.log('Testing getAbsolutePath function...');
-      
-      // Check if the module exists
-      if (typeof LlamaCppRn === 'undefined') {
-        throw new Error('LlamaCppRn module is not available');
-      }
-      
-      // Check if getAbsolutePath is available
-      console.log('getAbsolutePath type:', typeof LlamaCppRn.getAbsolutePath);
-      console.log('All available methods:', Object.keys(LlamaCppRn).filter(key => typeof LlamaCppRn[key] === 'function'));
-      
-      if (typeof LlamaCppRn.getAbsolutePath !== 'function') {
-        throw new Error('getAbsolutePath function is not available');
-      }
-      
-      // Try to call getAbsolutePath with a simple path
-      const documentsDir = FileSystem.documentDirectory || '';
-      const testPath = `${documentsDir}test_path_check.txt`;
-      
-      // Create a test file
-      await FileSystem.writeAsStringAsync(testPath, 'Test content');
-      
-      // Call getAbsolutePath
-      const pathInfo = await LlamaCppRn.getAbsolutePath(testPath);
-      console.log('getAbsolutePath result:', pathInfo);
-      
-      setFileTest({
-        functionExists: true,
-        pathInfo,
-        testPath
-      });
-    } catch (error) {
-      console.error('getAbsolutePath test failed:', error);
       setFileError(`Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setFileLoading(false);
@@ -961,10 +859,6 @@ export default function LlamaTest() {
     setModelLoading(true);
     
     try {
-      // First, check GPU capabilities
-      const gpuInfo = await LlamaCppRn.getGPUInfo();
-      console.log('GPU info:', gpuInfo);
-      
       // Load model info first to check if it's available
       const modelInfo = await LlamaCppRn.loadLlamaModelInfo(modelPath);
       console.log('Successfully loaded model info:', modelInfo);
@@ -977,8 +871,8 @@ export default function LlamaTest() {
           model: modelPath,
           n_ctx: 512, // Start with smaller context
           n_batch: 512,
-          // Use Metal GPU if supported
-          n_gpu_layers: gpuInfo.isSupported ? 32 : 0
+          // Use GPU if supported based on model info
+          n_gpu_layers: modelInfo.gpuSupported ? 32 : 0
         });
         
         console.log('Model initialized successfully:', context);
@@ -1197,15 +1091,6 @@ export default function LlamaTest() {
           
           <View style={styles.buttonSpacing} />
           
-          <View>
-            <Button title="Test GPU Capabilities" onPress={testGpuCapabilities} />
-            {fileLoading && <ActivityIndicator size="small" />}
-            {fileError && <View style={styles.resultBox}><Text style={styles.error}>{fileError}</Text></View>}
-            {fileTest && <Text style={styles.resultText}>{JSON.stringify(fileTest)}</Text>}
-          </View>
-          
-          <View style={styles.buttonSpacing} />
-          
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Advanced Tests</Text>
             
@@ -1237,15 +1122,6 @@ export default function LlamaTest() {
           
           <View>
             <Button title="Test Basic Native Function" onPress={testBasicNativeFunction} />
-            {fileLoading && <ActivityIndicator size="small" />}
-            {fileError && <View style={styles.resultBox}><Text style={styles.error}>{fileError}</Text></View>}
-            {fileTest && <Text style={styles.resultText}>{JSON.stringify(fileTest)}</Text>}
-          </View>
-          
-          <View style={styles.buttonSpacing} />
-          
-          <View>
-            <Button title="Test getAbsolutePath" onPress={testGetAbsolutePath} />
             {fileLoading && <ActivityIndicator size="small" />}
             {fileError && <View style={styles.resultBox}><Text style={styles.error}>{fileError}</Text></View>}
             {fileTest && <Text style={styles.resultText}>{JSON.stringify(fileTest)}</Text>}

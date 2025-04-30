@@ -106,6 +106,7 @@ file(GLOB_RECURSE LLAMACPPRN_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${LLAMA_CPP_DIR}
+    ${LLAMA_CPP_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp
 )
 
@@ -127,6 +128,8 @@ add_library(llamacpprn SHARED
     ${LLAMACPPRN_SOURCES}
     # Shared C++ implementation with iOS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/LlamaCppRnModule.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/LlamaCppModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/SystemUtils.cpp
 )
 
 # Link against dependencies

@@ -31,6 +31,7 @@ export default function ModelChatTest() {
   ]);
   const [generating, setGenerating] = React.useState(false);
   const [modelInfo, setModelInfo] = React.useState<any>(null);
+  const [testResult, setTestResult] = React.useState<string | null>(null);
   
   const scrollViewRef = React.useRef<ScrollView>(null);
   
@@ -58,9 +59,10 @@ export default function ModelChatTest() {
       const modelInstance = await LlamaCppRn.initLlama({
         model: modelPath,
         n_ctx: 2048,
-        n_batch: 512,
-        n_gpu_layers: 0, // Use 42 GPU layers, the module will check support and fall back if needed
+        n_batch: 256,  // Reduced from 512 to avoid memory issues
+        n_gpu_layers: 0, // Use 0 GPU layers on simulator to avoid issues
         use_mlock: true, // Keep model in RAM and prevent swapping to disk
+        n_threads: 4,  // Explicitly set thread count to 4 for stability
       });
       
       console.log('Model initialized successfully');
@@ -103,9 +105,89 @@ export default function ModelChatTest() {
         await model.release();
         console.log('Model unloaded successfully');
         setModel(null);
+        setTestResult('Model released successfully');
       } catch (err) {
         console.error('Failed to unload model:', err);
+        setTestResult(`Release Error: ${err instanceof Error ? err.message : String(err)}`);
       }
+    }
+  };
+  
+  // Test tokenizer
+  const testTokenizer = async () => {
+    if (!model) return;
+    setTestResult(null);
+    
+    try {
+      console.log('Testing tokenizer with input:', input || 'Hello, how are you?');
+      const testText = input || 'Hello, how are you?';
+      const tokens = await model.tokenize(testText);
+      console.log('Tokenization result:', tokens);
+      setTestResult(`Tokenized to ${tokens.length} tokens: ${JSON.stringify(tokens)}`);
+    } catch (err) {
+      console.error('Tokenization error:', err);
+      setTestResult(`Tokenization Error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  
+  // Test template detection
+  const testTemplateDetection = async () => {
+    if (!model) return;
+    setTestResult(null);
+    
+    try {
+      console.log('Testing template detection');
+      const template = await model.detectTemplate(messages);
+      console.log('Template detection result:', template);
+      setTestResult(`Detected template: ${template}`);
+    } catch (err) {
+      console.error('Template detection error:', err);
+      setTestResult(`Template Detection Error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  
+  // Test get built-in templates
+  const testBuiltinTemplates = async () => {
+    if (!model) return;
+    setTestResult(null);
+    
+    try {
+      console.log('Getting built-in templates');
+      const templates = await model.getBuiltinTemplates();
+      console.log('Built-in templates:', templates);
+      setTestResult(`Built-in templates (${templates.length}): ${templates.join(', ')}`);
+    } catch (err) {
+      console.error('Get built-in templates error:', err);
+      setTestResult(`Get Built-in Templates Error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  
+  // Test basic completion with a simple prompt
+  const testBasicCompletion = async () => {
+    if (!model) return;
+    setTestResult(null);
+    
+    try {
+      console.log('Testing basic completion with a simple prompt');
+      
+      // Use a very simple prompt with minimal parameters
+      const testPrompt = input || "The capital of France is";
+      console.log('Test prompt:', testPrompt);
+      
+      // Use minimal parameters
+      const response = await model.completion({
+        prompt: testPrompt,  // Use prompt instead of messages
+        temperature: 0.0,    // Deterministic to reduce variability
+        top_p: 1.0,          // No filtering
+        top_k: 0,            // No filtering
+        max_tokens: 10,      // Just need a few tokens
+      });
+      
+      console.log('Basic completion result:', response.text);
+      setTestResult(`Basic completion result: "${response.text}"`);
+    } catch (err) {
+      console.error('Basic completion error:', err);
+      setTestResult(`Basic Completion Error: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
   
@@ -117,18 +199,21 @@ export default function ModelChatTest() {
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setGenerating(true);
+    setError(null); // Clear any previous errors
     
     try {
       // Prepare the messages for completion
       const formattedMessages = [...messages, userMessage];
       
+      console.log('Starting completion with', formattedMessages.length, 'messages');
+      
       // Generate completion
       const response = await model.completion({
         messages: formattedMessages,
-        temperature: 0.7,
-        top_p: 0.95,
-        top_k: 40,
-        max_tokens: 500,
+        temperature: 0.5,     // Lower temperature for more stability
+        top_p: 0.9,           // Slightly more conservative top_p
+        top_k: 30,            // Lower top_k
+        max_tokens: 200,      // Reduced max tokens for initial test
         stop: ["</s>", "<|im_end|>"]
       });
       
@@ -140,7 +225,30 @@ export default function ModelChatTest() {
       setMessages(prev => [...prev, assistantMessage]);
     } catch (err) {
       console.error('Completion error:', err);
-      setError(`Error generating response: ${err instanceof Error ? err.message : String(err)}`);
+      
+      // Extract more detailed error information
+      let errorMessage = err instanceof Error ? err.message : String(err);
+      let diagnostics = '';
+      
+      // Check if there are detailed diagnostics in the error object
+      if (err && typeof err === 'object' && 'diagnostics' in err) {
+        const diag = (err as any).diagnostics;
+        try {
+          // Format diagnostics as a list
+          diagnostics = '\n\nDiagnostics:\n';
+          if (diag.messages_count) diagnostics += `- Messages: ${diag.messages_count}\n`;
+          if (diag.message_roles) diagnostics += `- Roles: ${diag.message_roles.join(', ')}\n`;
+          if (diag.temperature) diagnostics += `- Temperature: ${diag.temperature}\n`;
+          if (diag.top_p) diagnostics += `- Top_p: ${diag.top_p}\n`;
+          if (diag.top_k) diagnostics += `- Top_k: ${diag.top_k}\n`;
+          if (diag.max_tokens) diagnostics += `- Max tokens: ${diag.max_tokens}\n`;
+          if (diag.template_name) diagnostics += `- Template: ${diag.template_name}\n`;
+        } catch (e) {
+          diagnostics = '\n\nDiagnostics available but could not be formatted.';
+        }
+      }
+      
+      setError(`Error generating response: ${errorMessage}${diagnostics}`);
     } finally {
       setGenerating(false);
     }
@@ -370,13 +478,45 @@ export default function ModelChatTest() {
             <Text style={styles.modelName}>
               {modelInfo?.description || 'AI Assistant'}
             </Text>
-            <TouchableOpacity 
-              style={styles.unloadButton} 
-              onPress={unloadModel}
-            >
-              <Text style={styles.unloadButtonText}>Unload</Text>
-            </TouchableOpacity>
+            <View style={styles.headerButtons}>
+              <TouchableOpacity 
+                style={styles.testButton} 
+                onPress={testTokenizer}
+              >
+                <Text style={styles.testButtonText}>Test Tokenizer</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.testButton} 
+                onPress={testTemplateDetection}
+              >
+                <Text style={styles.testButtonText}>Test Template</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.testButton} 
+                onPress={testBuiltinTemplates}
+              >
+                <Text style={styles.testButtonText}>Test Built-in Templates</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.testButton} 
+                onPress={testBasicCompletion}
+              >
+                <Text style={styles.testButtonText}>Test Basic Completion</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.unloadButton} 
+                onPress={unloadModel}
+              >
+                <Text style={styles.unloadButtonText}>Unload</Text>
+              </TouchableOpacity>
+            </View>
           </View>
+          
+          {testResult && (
+            <View style={styles.testResultContainer}>
+              <Text style={styles.testResultText}>{testResult}</Text>
+            </View>
+          )}
           
           <ScrollView 
             style={styles.messagesContainer}
@@ -494,17 +634,51 @@ const styles = StyleSheet.create({
   modelName: {
     fontWeight: 'bold',
     fontSize: 16,
+    flex: 1, // Take available space
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap', // Allow buttons to wrap if needed
+    justifyContent: 'flex-end',
+  },
+  testButton: {
+    backgroundColor: '#007bff',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 4,
+    marginLeft: 6,
+    marginBottom: 4,
+  },
+  testButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 11,
   },
   unloadButton: {
     backgroundColor: '#dc3545',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 4,
+    marginLeft: 6,
   },
   unloadButtonText: {
     color: 'white',
     fontWeight: 'bold',
-    fontSize: 12,
+    fontSize: 11,
+  },
+  testResultContainer: {
+    marginVertical: 10,
+    padding: 10,
+    backgroundColor: '#e9ecef',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+    maxHeight: 120,
+  },
+  testResultText: {
+    color: '#212529',
+    fontSize: 14,
   },
   messagesContainer: {
     flex: 1,

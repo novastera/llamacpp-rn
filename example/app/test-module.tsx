@@ -42,7 +42,6 @@ export default function TestModule() {
         hasInitLlama: typeof LlamaCppRn?.initLlama === 'function',
         hasJsonSchemaToGbnf: typeof LlamaCppRn?.jsonSchemaToGbnf === 'function',
         hasLoadLlamaModelInfo: typeof LlamaCppRn?.loadLlamaModelInfo === 'function',
-        hasGetAbsolutePath: typeof LlamaCppRn?.getAbsolutePath === 'function',
       },
     };
   };
@@ -86,9 +85,6 @@ export default function TestModule() {
             </Text>
             <Text style={styles.item}>
               loadLlamaModelInfo: {moduleInfo.moduleInfo.hasLoadLlamaModelInfo ? '✅' : '❌'}
-            </Text>
-            <Text style={styles.item}>
-              getAbsolutePath: {moduleInfo.moduleInfo.hasGetAbsolutePath ? '✅' : '❌'}
             </Text>
           </>
         )}

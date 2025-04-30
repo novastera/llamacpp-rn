@@ -8,8 +8,8 @@
 #include <unordered_map>
 #include <utility>
 #include <thread>
-#include "ChatTemplates.h"
 #include "SystemUtils.h"
+#include "LlamaCppModel.h"
 
 #if defined(__ANDROID__) || defined(__linux__)
 #include <unistd.h>
@@ -41,24 +41,12 @@ static jsi::Value __hostFunction_LlamaCppRnSpecJsonSchemaToGbnf(
   return static_cast<LlamaCppRn *>(&turboModule)->jsonSchemaToGbnf(rt, args[0].getObject(rt));
 }
 
-static jsi::Value __hostFunction_LlamaCppRnSpecGetGPUInfo(
-    jsi::Runtime &rt, TurboModule &turboModule, const jsi::Value *args, size_t count) {
-  return static_cast<LlamaCppRn *>(&turboModule)->getGPUInfo(rt);
-}
-
-static jsi::Value __hostFunction_LlamaCppRnSpecGetAbsolutePath(
-    jsi::Runtime &rt, TurboModule &turboModule, const jsi::Value *args, size_t count) {
-  return static_cast<LlamaCppRn *>(&turboModule)->getAbsolutePath(rt, args[0].getString(rt));
-}
-
 LlamaCppRn::LlamaCppRn(std::shared_ptr<CallInvoker> jsInvoker)
     : TurboModule(kModuleName, std::move(jsInvoker)) {
   // Initialize and register methods
   methodMap_["initLlama"] = MethodMetadata{1, __hostFunction_LlamaCppRnSpecInitLlama};
   methodMap_["loadLlamaModelInfo"] = MethodMetadata{1, __hostFunction_LlamaCppRnSpecLoadLlamaModelInfo};
   methodMap_["jsonSchemaToGbnf"] = MethodMetadata{1, __hostFunction_LlamaCppRnSpecJsonSchemaToGbnf};
-  methodMap_["getGPUInfo"] = MethodMetadata{0, __hostFunction_LlamaCppRnSpecGetGPUInfo};
-  methodMap_["getAbsolutePath"] = MethodMetadata{1, __hostFunction_LlamaCppRnSpecGetAbsolutePath};
 }
 
 std::shared_ptr<TurboModule> LlamaCppRn::create(std::shared_ptr<CallInvoker> jsInvoker) {
@@ -259,198 +247,80 @@ jsi::Value LlamaCppRn::jsonSchemaToGbnf(jsi::Runtime &runtime, jsi::Object schem
   }
 }
 
-bool LlamaCppRn::detectGpuCapabilities() {
-  llama_backend_init();
-  return llama_supports_gpu_offload();
-}
-
-bool LlamaCppRn::enableGpu(bool enable) {
-  if (enable == m_gpuEnabled) {
-    return true;  // Already in desired state
-  }
-  
-  if (enable) {
-    // Check if GPU is available
-    if (llama_supports_gpu_offload()) {
-      m_gpuEnabled = true;
-      return true;
-    }
-    return false;
-  } else {
-    m_gpuEnabled = false;
-    return true;
-  }
-}
-
-bool LlamaCppRn::isGpuEnabled() {
-  return m_gpuEnabled;
-}
-
-LlamaCppRn::GpuInfo LlamaCppRn::getGpuCapabilities() {
-  GpuInfo info;
-  
-  // Default values
-  info.available = false;
-  info.deviceName = "CPU Only";
-  info.deviceVendor = "N/A";
-  info.deviceVersion = "N/A";
-  info.deviceComputeUnits = 0;
-  info.deviceMemSize = 0;
-  
-  // Check if GPU is supported
-  llama_backend_init();
-  
-  if (llama_supports_gpu_offload()) {
-    info.available = true;
-    
-    // Platform-specific GPU details
-#if defined(__APPLE__)
-    info.deviceName = "Apple GPU";
-    info.deviceVendor = "Apple";
-    info.deviceVersion = "Metal";
-    
-    // Get basic hardware info
-    size_t size;
-    uint64_t memsize = 0;
-    
-    size = sizeof(memsize);
-    if (sysctlbyname("hw.memsize", &memsize, &size, NULL, 0) == 0) {
-      info.deviceMemSize = memsize / 3;  // Estimated GPU memory
-    }
-    
-    // Estimate compute units
-#if TARGET_OS_IPHONE
-    info.deviceComputeUnits = 8;  // iOS estimate
-#else
-    info.deviceComputeUnits = 16; // macOS estimate 
-#endif
-
-#elif defined(GGML_USE_CLBLAST)
-    info.deviceName = "OpenCL GPU";
-    info.deviceVendor = "OpenCL";
-    info.deviceVersion = "OpenCL";
-#endif
-  }
-  
-  return info;
-}
-
-jsi::Value LlamaCppRn::getGPUInfo(jsi::Runtime &runtime) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  
-  jsi::Object result(runtime);
-  
-  // Initialize
-  llama_backend_init();
-  
-  // Check if GPU is supported
-  bool gpuSupported = llama_supports_gpu_offload();
-  result.setProperty(runtime, "isSupported", jsi::Value(gpuSupported));
-  
-  // Get detailed info
-  GpuInfo info = getGpuCapabilities();
-  
-  result.setProperty(runtime, "available", jsi::Value(info.available));
-  result.setProperty(runtime, "deviceName", jsi::String::createFromUtf8(runtime, info.deviceName));
-  result.setProperty(runtime, "deviceVendor", jsi::String::createFromUtf8(runtime, info.deviceVendor));
-  result.setProperty(runtime, "deviceVersion", jsi::String::createFromUtf8(runtime, info.deviceVersion));
-  result.setProperty(runtime, "deviceComputeUnits", jsi::Value((double)info.deviceComputeUnits));
-  result.setProperty(runtime, "deviceMemorySize", jsi::Value((double)info.deviceMemSize));
-  
-  // Add implementation info
-#if defined(__APPLE__)
-  result.setProperty(runtime, "implementation", jsi::String::createFromUtf8(runtime, "Metal"));
-  result.setProperty(runtime, "metalEnabled", jsi::Value(m_gpuEnabled));
-#elif defined(GGML_USE_CLBLAST)
-  result.setProperty(runtime, "implementation", jsi::String::createFromUtf8(runtime, "OpenCL"));
-#else
-  result.setProperty(runtime, "implementation", jsi::String::createFromUtf8(runtime, "CPU"));
-#endif
-  
-  return result;
-}
-
-jsi::Value LlamaCppRn::getAbsolutePath(jsi::Runtime &runtime, jsi::String relativePath) {
-  std::string path = relativePath.utf8(runtime);
-  std::string normalizedPath = normalizeFilePath(path);
-  
-  jsi::Object result(runtime);
-  result.setProperty(runtime, "relativePath", jsi::String::createFromUtf8(runtime, path));
-  
-  // Check if file exists
-  FILE* file = fopen(normalizedPath.c_str(), "rb");
-  bool exists = (file != nullptr);
-  
-  if (exists) {
-    // Get file size
-    fseek(file, 0, SEEK_END);
-    size_t fileSize = ftell(file);
-    fclose(file);
-    
-    jsi::Object attributes(runtime);
-    attributes.setProperty(runtime, "size", jsi::Value((double)fileSize));
-    result.setProperty(runtime, "attributes", attributes);
-  }
-  
-  result.setProperty(runtime, "path", jsi::String::createFromUtf8(runtime, normalizedPath));
-  result.setProperty(runtime, "exists", jsi::Value(exists));
-  
-  return result;
-}
-
 jsi::Object LlamaCppRn::createModelObject(jsi::Runtime& runtime, llama_model* model, llama_context* ctx) {
+  // Create the LlamaCppModel instance to handle model operations
+  auto* llamaModel = new LlamaCppModel(model, ctx);
+  
   // Create object to represent the model
   jsi::Object result(runtime);
   
-  // Store pointers as numbers
-  result.setProperty(runtime, "_model", jsi::Value((double)(uintptr_t)model));
-  result.setProperty(runtime, "_ctx", jsi::Value((double)(uintptr_t)ctx));
+  // Store a pointer to the model as a number
+  result.setProperty(runtime, "_model", jsi::Value((double)(uintptr_t)llamaModel));
   
-  // Add model properties
-  const llama_vocab* vocab = llama_model_get_vocab(model);
+  // Add basic model properties 
+  result.setProperty(runtime, "n_vocab", jsi::Value((double)llamaModel->getVocabSize()));
+  result.setProperty(runtime, "n_ctx", jsi::Value((double)llamaModel->getContextSize()));
+  result.setProperty(runtime, "n_embd", jsi::Value((double)llamaModel->getEmbeddingSize()));
   
-  result.setProperty(runtime, "n_vocab", jsi::Value((double)llama_vocab_n_tokens(vocab)));
-  result.setProperty(runtime, "n_ctx", jsi::Value((double)llama_n_ctx(ctx)));
-  result.setProperty(runtime, "n_embd", jsi::Value((double)llama_model_n_embd(model)));
-  
-  // Add methods (stub implementations - expand as needed)
+  // Add tokenize method
   result.setProperty(runtime, "tokenize", 
     jsi::Function::createFromHostFunction(runtime, 
       jsi::PropNameID::forAscii(runtime, "tokenize"), 
       1,  // takes text to tokenize
-      [this](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
-        // Simple stub implementation
-        return jsi::Object(rt);
+      [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
+        return llamaModel->tokenizeJsi(rt, args, count);
       })
   );
   
+  // Add completion method
   result.setProperty(runtime, "completion", 
     jsi::Function::createFromHostFunction(runtime, 
       jsi::PropNameID::forAscii(runtime, "completion"), 
       1,  // takes completion options
-      [this](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
-        // Simple stub implementation
-        return jsi::Object(rt);
+      [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
+        return llamaModel->completionJsi(rt, args, count);
       })
   );
   
+  // Add embedding method
   result.setProperty(runtime, "embedding", 
     jsi::Function::createFromHostFunction(runtime, 
       jsi::PropNameID::forAscii(runtime, "embedding"), 
       1,  // takes text to embed
-      [this](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
-        // Simple stub implementation
-        return jsi::Object(rt);
+      [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
+        return llamaModel->embeddingJsi(rt, args, count);
       })
   );
   
+  // Add detectTemplate method
+  result.setProperty(runtime, "detectTemplate", 
+    jsi::Function::createFromHostFunction(runtime, 
+      jsi::PropNameID::forAscii(runtime, "detectTemplate"), 
+      1,  // takes messages array
+      [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
+        return llamaModel->detectTemplateJsi(rt, args, count);
+      })
+  );
+  
+  // Add getBuiltinTemplates method
+  result.setProperty(runtime, "getBuiltinTemplates", 
+    jsi::Function::createFromHostFunction(runtime, 
+      jsi::PropNameID::forAscii(runtime, "getBuiltinTemplates"), 
+      0,  // takes no arguments
+      [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
+        return llamaModel->getBuiltinTemplatesJsi(rt, args, count);
+      })
+  );
+  
+  // Add release method
   result.setProperty(runtime, "release", 
     jsi::Function::createFromHostFunction(runtime, 
       jsi::PropNameID::forAscii(runtime, "release"), 
       0,  // takes no arguments
-      [this](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
-        // Simple stub implementation
-        return jsi::Value(true);
+      [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
+        jsi::Value result = llamaModel->releaseJsi(rt, args, count);
+        delete llamaModel; // Free the model when release is called
+        return result;
       })
   );
   
@@ -470,17 +340,14 @@ jsi::Value LlamaCppRn::getVocabSize(jsi::Runtime& runtime, const jsi::Value& thi
     }
     
     uintptr_t model_ptr = (uintptr_t)obj.getProperty(runtime, "_model").asNumber();
-    llama_model* model = (llama_model*)model_ptr;
+    LlamaCppModel* llamaModel = (LlamaCppModel*)model_ptr;
     
-    if (!model) {
+    if (!llamaModel) {
       throw std::runtime_error("No model loaded");
     }
     
-    // Get vocab size
-    const llama_vocab* vocab = llama_model_get_vocab(model);
-    int32_t n_vocab = llama_vocab_n_tokens(vocab);
-    
-    return jsi::Value((double)n_vocab);
+    // Get vocab size using the model
+    return jsi::Value((double)llamaModel->getVocabSize());
   } catch (const std::exception& e) {
     throw jsi::JSError(runtime, e.what());
   }

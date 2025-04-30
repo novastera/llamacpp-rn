@@ -13,6 +13,35 @@ This library was greatly inspired by [llama.rn](https://github.com/mybigday/llam
 - Chat completion with prompt templates
 - Embeddings generation
 - JSON mode with grammar constraints
+- **Opinionated defaults** for thread count and GPU layers
+
+## Opinionated Resource Handling
+
+Given the wide diversity of mobile devices, LlamaCppRn takes an opinionated approach to resource management:
+
+- **Thread Count**: If `n_threads` is not provided, the library attempts to select a reasonable thread count based on the device's CPU cores.
+- **GPU Layers**: If `n_gpu_layers` is not specified, the library makes a best-effort estimate based on the device's capabilities and model parameters.
+- **User Control**: When you explicitly provide values for `n_threads` or `n_gpu_layers`, your values always take precedence.
+- **Graceful Fallback**: If GPU acceleration is requested but not available, the library silently falls back to CPU-only mode.
+
+This approach aims to simplify development across different mobile devices while still giving you full control when needed.
+
+## Known Issues
+
+### iOS Simulator GPU Detection
+
+When running on iOS simulators, the library may detect GPU support but fail when attempting to use it. This is a known limitation of Metal in iOS simulators:
+
+```typescript
+// For iOS simulator testing, explicitly disable GPU acceleration:
+const context = await initLlama({
+  model: 'path/to/model.gguf',
+  n_gpu_layers: 0, // Force CPU-only mode on simulators
+  // other parameters...
+});
+```
+
+Always test GPU acceleration on real devices. For simulator development, explicitly set `n_gpu_layers: 0` to avoid potential crashes.
 
 ## Installation
 
@@ -71,19 +100,21 @@ console.log(`Model has ${modelInfo.n_params} parameters`);
 
 // Initialize the model
 const context = await initLlama({
-  modelPath: 'path/to/model.gguf',
-  contextSize: 2048,
-  seed: 42,
-  batchSize: 512,
-  gpuLayers: 42, // Set to 0 for CPU only
+  model: 'path/to/model.gguf',
+  n_ctx: 2048,
+  n_batch: 512,
+  // Optionally specify GPU layers (if omitted, defaults will be applied)
+  // n_gpu_layers: 32,
+  // Optionally specify thread count (if omitted, defaults will be applied)
+  // n_threads: 4,
 });
 
 // Generate a completion
 const result = await context.completion({
   prompt: 'What is artificial intelligence?',
-  maxTokens: 256,
+  n_predict: 256,
   temperature: 0.7,
-  topP: 0.9
+  top_p: 0.9
 });
 
 console.log('Response:', result.text);
@@ -94,14 +125,14 @@ const messages = [
   { role: 'user', content: 'Tell me about React Native.' }
 ];
 
-const chatResult = await context.chat({
+const chatResult = await context.completion({
   messages,
-  maxTokens: 512,
+  n_predict: 512,
   temperature: 0.7,
   stop: ['USER:']
 });
 
-console.log('Chat response:', chatResult.message.content);
+console.log('Chat response:', chatResult.text);
 ```
 
 ## Model Path Handling
@@ -120,14 +151,16 @@ The module accepts different types of paths depending on the platform:
 
 Full API documentation can be found in the [API.md](./API.md) file.
 
-## Building from Source
-
-See [BUILDING.md](./BUILDING.md) for instructions on building the native modules.
-
 ## Prebuilt Binaries
 
 This package is distributed with prebuilt binaries to make installation easier. See [PREBUILT.md](./PREBUILT.md) for details on how these work and how to package them for distribution.
 
+## About
+
+Part of [Novastera](https://novastera.com)'s suite of privacy-focused solutions, this package enables on-device LLM inference with no data leaving the user's device. We're committed to helping developers build AI-powered applications that respect user privacy and provide complete control over sensitive data. By running models locally rather than relying on cloud APIs, your application gains independence from external services while ensuring user data remains private.
+
+Visit our website to learn more about our approach to privacy-first AI solutions.
+
 ## License
 
-MIT
+Apache 2.0 © [Novastera](https://novastera.com)

@@ -18,7 +18,6 @@ export default function LlamaSimpleTest() {
       hasInitLlama: typeof LlamaCppRn.initLlama === 'function',
       hasJsonSchemaToGbnf: typeof LlamaCppRn.jsonSchemaToGbnf === 'function',
       hasLoadLlamaModelInfo: typeof LlamaCppRn.loadLlamaModelInfo === 'function',
-      hasGetAbsolutePath: typeof LlamaCppRn.getAbsolutePath === 'function',
     });
   }, []);
   
@@ -105,13 +104,6 @@ export default function LlamaSimpleTest() {
       const fileInfo = await FileSystem.getInfoAsync(testFilePath);
       console.log('File info:', fileInfo);
       
-      // Use the native module to get absolute path
-      let nativePathInfo = null;
-      if (typeof LlamaCppRn.getAbsolutePath === 'function') {
-        nativePathInfo = await LlamaCppRn.getAbsolutePath(testFilePath);
-        console.log('Native path info:', nativePathInfo);
-      }
-      
       // Try to load model info (expect failure but it should handle it gracefully)
       let modelInfoResult = null;
       try {
@@ -127,7 +119,6 @@ export default function LlamaSimpleTest() {
       setFileTestResult({
         fileCreated: true,
         fileInfo,
-        nativePathInfo,
         modelInfoResult
       });
       
@@ -156,7 +147,6 @@ export default function LlamaSimpleTest() {
             <Text style={styles.info}>initLlama available: {moduleInfo.hasInitLlama ? '✅' : '❌'}</Text>
             <Text style={styles.info}>jsonSchemaToGbnf available: {moduleInfo.hasJsonSchemaToGbnf ? '✅' : '❌'}</Text>
             <Text style={styles.info}>loadLlamaModelInfo available: {moduleInfo.hasLoadLlamaModelInfo ? '✅' : '❌'}</Text>
-            <Text style={styles.info}>getAbsolutePath available: {moduleInfo.hasGetAbsolutePath ? '✅' : '❌'}</Text>
             
             {moduleInfo.schemaTestPassed && (
               <Text style={[styles.info, styles.success]}>Schema test passed! ✅</Text>
@@ -192,9 +182,6 @@ export default function LlamaSimpleTest() {
             <Text style={styles.resultText}>File created: {fileTestResult.fileCreated ? '✅' : '❌'}</Text>
             {fileTestResult.fileInfo && (
               <Text style={styles.resultText}>File size: {fileTestResult.fileInfo.size} bytes</Text>
-            )}
-            {fileTestResult.nativePathInfo && (
-              <Text style={styles.resultText}>Native path exists: {fileTestResult.nativePathInfo.exists ? '✅' : '❌'}</Text>
             )}
             {fileTestResult.modelInfoResult && fileTestResult.modelInfoResult.error ? (
               <Text style={styles.resultText}>Model loading (expected failure): ✅</Text>

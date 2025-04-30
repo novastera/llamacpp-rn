@@ -31,6 +31,12 @@ export interface LlamaCompletionParams {
   top_k?: number;              // top-k sampling (default: 40)
   n_predict?: number;          // max tokens to predict (default: -1, infinite)
   stop?: string[];             // stop sequences
+  chat_template?: string;      // optional chat template name to use
+  
+  // Tool calling parameters
+  jinja?: boolean;             // Enable Jinja template parser
+  tool_choice?: string | 'auto' | 'none'; // Tool choice mode
+  tools?: LlamaTool[];         // Available tools
   
   // Advanced parameters
   frequency_penalty?: number;  // frequency penalty (default: 0.0)
@@ -41,11 +47,6 @@ export interface LlamaCompletionParams {
   penalize_nl?: boolean;       // penalize newlines (default: true)
   seed?: number;               // RNG seed (default: -1, random)
   logit_bias?: Record<number, number>; // token biases for sampling
-  
-  // Tool calling parameters
-  jinja?: boolean;             // Enable Jinja template parser
-  tool_choice?: string | 'auto' | 'none'; // Tool choice mode
-  tools?: LlamaTool[];         // Available tools
   
   // JSON response format parameters
   response_format?: {
@@ -95,6 +96,7 @@ export interface LlamaContextMethods {
   tokenize(content: string): Promise<number[]>;
   detokenize(tokens: number[]): Promise<string>;
   embedding(content: string): Promise<number[]>;
+  detectTemplate(messages: LlamaMessage[]): Promise<string>;
   loadSession(path: string): Promise<boolean>;
   saveSession(path: string): Promise<boolean>;
   stopCompletion(): Promise<void>;
@@ -116,29 +118,6 @@ export interface Spec extends TurboModule {
 
   // Convert JSON schema to GBNF grammar
   jsonSchemaToGbnf(schema: Record<string, any>): Promise<string>;
-  
-  // Get absolute path and file information
-  getAbsolutePath(relativePath: string): Promise<{
-    relativePath: string;
-    path: string;
-    exists: boolean;
-    attributes?: {
-      size: number;
-    };
-  }>;
-  
-  // Get GPU capabilities information
-  getGPUInfo(): Promise<{
-    isSupported: boolean;
-    available: boolean;
-    deviceName: string;
-    deviceVendor: string;
-    deviceVersion: string;
-    deviceComputeUnits: number;
-    deviceMemorySize: number;
-    implementation?: string;
-    metalEnabled?: boolean;
-  }>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('LlamaCppRn');

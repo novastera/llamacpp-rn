@@ -17,8 +17,8 @@ Pod::Spec.new do |s|
   s.source_files = "ios/**/*.{h,m,mm}", 
                    "cpp/LlamaCppRnModule.h", 
                    "cpp/LlamaCppRnModule.cpp", 
-                   "cpp/ChatTemplates.h", 
-                   "cpp/ChatTemplates.cpp",
+                   "cpp/LlamaCppModel.h", 
+                   "cpp/LlamaCppModel.cpp", 
                    "cpp/SystemUtils.h",
                    "cpp/SystemUtils.cpp"
   
