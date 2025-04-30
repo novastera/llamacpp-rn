@@ -6,13 +6,10 @@
 // Include llama.cpp headers directly
 #include "llama.h"
 
-// We will implement our own template detection using the functions available in llama.h
-// instead of directly using llama_chat_detect_template which isn't exposed
-
 namespace facebook::react {
 
 LlamaCppModel::LlamaCppModel(llama_model* model, llama_context* ctx)
-    : model_(model), ctx_(ctx), should_stop_completion_(false) {
+    : model_(model), ctx_(ctx), should_stop_completion_(false), is_predicting_(false) {
 }
 
 LlamaCppModel::~LlamaCppModel() {
@@ -22,6 +19,10 @@ LlamaCppModel::~LlamaCppModel() {
 
 void LlamaCppModel::release() {
   std::lock_guard<std::mutex> lock(mutex_);
+  
+  // Reset flags
+  should_stop_completion_ = false;
+  is_predicting_ = false;
   
   if (ctx_) {
     llama_free(ctx_);
@@ -65,6 +66,10 @@ bool LlamaCppModel::shouldStopCompletion() const {
 
 void LlamaCppModel::setShouldStopCompletion(bool value) {
   should_stop_completion_ = value;
+  if (value) {
+    // Reset the predicting flag when stopping completion
+    is_predicting_ = false;
+  }
 }
 
 std::vector<int32_t> LlamaCppModel::tokenize(const std::string& text) {
@@ -74,14 +79,27 @@ std::vector<int32_t> LlamaCppModel::tokenize(const std::string& text) {
   
   std::vector<llama_token> tokens(text.size() + 4);
   const llama_vocab* vocab = llama_model_get_vocab(model_);
-  int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), true, true);
+  int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), false, false);
   
   if (n_tokens < 0) {
     n_tokens = 0; // Handle error case
   }
   
-  tokens.resize(n_tokens);
-  return std::vector<int32_t>(tokens.begin(), tokens.end());
+  // Add special tokens if needed
+  std::vector<llama_token> tokens_with_special;
+  llama_token bos_token = llama_token_bos(vocab);
+  
+  // Add BOS token if it's not already there
+  if (n_tokens > 0 && tokens[0] != bos_token) {
+    tokens_with_special.push_back(bos_token);
+  }
+  
+  // Add the regular tokens
+  for (int i = 0; i < n_tokens; i++) {
+    tokens_with_special.push_back(tokens[i]);
+  }
+  
+  return std::vector<int32_t>(tokens_with_special.begin(), tokens_with_special.end());
 }
 
 std::vector<float> LlamaCppModel::embedding(const std::string& text) {
@@ -92,11 +110,29 @@ std::vector<float> LlamaCppModel::embedding(const std::string& text) {
   // Tokenize the text
   std::vector<llama_token> tokens(text.size() + 4);
   const llama_vocab* vocab = llama_model_get_vocab(model_);
-  int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), true, true);
+  int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), false, false);
   
   if (n_tokens < 0) {
     n_tokens = 0; // Handle error case
   }
+  
+  // Add special tokens if needed
+  std::vector<llama_token> tokens_with_special;
+  llama_token bos_token = llama_token_bos(vocab);
+  
+  // Add BOS token if it's not already there
+  if (n_tokens > 0 && tokens[0] != bos_token) {
+    tokens_with_special.push_back(bos_token);
+  }
+  
+  // Add the regular tokens
+  for (int i = 0; i < n_tokens; i++) {
+    tokens_with_special.push_back(tokens[i]);
+  }
+  
+  // Update tokens and count for processing
+  tokens = std::move(tokens_with_special);
+  n_tokens = tokens.size();
   
   // Evaluate the prompt if we have tokens
   if (n_tokens > 0) {
@@ -129,7 +165,8 @@ std::vector<float> LlamaCppModel::embedding(const std::string& text) {
   return embeddings;
 }
 
-std::string LlamaCppModel::completion(const std::string& prompt, 
+// Then modify the function signature
+CompletionResult LlamaCppModel::completion(const std::string& prompt, 
                                      const std::vector<ChatMessage>& messages,
                                      float temperature, float top_p, int top_k, 
                                      int max_tokens,
@@ -144,442 +181,207 @@ std::string LlamaCppModel::completion(const std::string& prompt,
     throw std::runtime_error("Model or context not initialized");
   }
   
-  // We can't directly manipulate JSI objects here since we don't have access to the runtime
-  // We'll need to modify our approach to tool handling
+  // Start timing
+  auto start_time = std::chrono::high_resolution_clock::now();
   
-  // For JSI objects, we should extract necessary information in the JSI wrapper method
-  // and pass simple C++ data structures to this method
+  // Create result to return
+  CompletionResult result;
+  result.text = "";
   
-  // Determine text to process (either prompt or messages)
+  // Clear the KV cache if needed
+  bool is_first = llama_kv_self_used_cells(ctx_) == 0;
+  
   std::string input_text;
+  
   if (!prompt.empty()) {
+    // Use prompt directly if provided
     input_text = prompt;
   } else if (!messages.empty()) {
-    // Convert our ChatMessage to the llama.cpp chat message format
+    // Format chat messages with official template
     std::vector<llama_chat_message> llama_messages;
     
-    // Reserve space to avoid reallocations
-    llama_messages.reserve(messages.size());
-    
-    // Store C-style strings for role and content
-    std::vector<std::string> role_strings;
-    std::vector<std::string> content_strings;
-    role_strings.reserve(messages.size());
-    content_strings.reserve(messages.size());
-    
-    // Start collecting debug information
-    std::string debug_info = "Messages: ";
-    debug_info += std::to_string(messages.size()) + " total (";
-    
+    // Convert messages to llama.cpp format
     for (const auto& msg : messages) {
-      // Store strings to keep them alive
-      role_strings.push_back(msg.role);
-      content_strings.push_back(msg.content);
-      
-      debug_info += msg.role + ":" + std::to_string(msg.content.size()) + "b, ";
-      
-      // Create the message struct
-      llama_chat_message lcm = {};
-      lcm.role = role_strings.back().c_str();
-      lcm.content = content_strings.back().c_str();
-      
-      // Keep the message data alive
+      llama_chat_message lcm;
+      lcm.role = strdup(msg.role.c_str());
+      lcm.content = strdup(msg.content.c_str());
       llama_messages.push_back(lcm);
     }
     
-    debug_info += ")";
-    
-    // Apply the chat template 
-    bool add_generation_prompt = true;  // Add assistant prompt at the end
-    
-    // Use the template name provided by the user or get it from the model if not specified
-    const char* template_name_cstr = nullptr;
-    
-    if (template_name.empty()) {
-      // No template specified, use the model's default template
-      debug_info += " | Template: using model default";
-      template_name_cstr = nullptr; // nullptr will use the model's default template
+    // Get the template to use - use model's default if none specified
+    const char* tmpl = nullptr;
+    if (!template_name.empty()) {
+      tmpl = llama_model_chat_template(model_, template_name.c_str());
     } else {
-      // Use user-provided template
-      debug_info += " | Template: user-specified '" + template_name + "'";
-      template_name_cstr = template_name.c_str();
+      tmpl = llama_model_chat_template(model_, nullptr);
     }
     
-    // Handle tool setup if tools are provided
-    if (!tools.empty()) {
-      // Currently, tool calling in llama.cpp is handled through the chat template system
-      debug_info += " | Tools: " + std::to_string(tools.size()) + " provided";
-    }
+    // Allocate a buffer that can hold the formatted template
+    std::vector<char> formatted(llama_n_ctx(ctx_) * 4); // Plenty of space
     
-    // Estimate buffer size needed (twice the total message length plus some overhead)
-    size_t estimated_size = 0;
-    for (const auto& msg : messages) {
-      estimated_size += msg.content.size() * 2;
-    }
-    estimated_size = std::max(estimated_size, size_t(16384)); // At least 16KB
-    debug_info += " | Buffer: " + std::to_string(estimated_size) + "b initial";
+    // Apply the template and format the messages
+    int n_buf = llama_chat_apply_template(tmpl, llama_messages.data(), llama_messages.size(), true, formatted.data(), formatted.size());
     
-    // Create buffer for formatted chat
-    std::vector<char> chat_buf(estimated_size);
-    
-    // Apply the template
-    int32_t required_size;
-    
-    if (template_name_cstr == nullptr) {
-      // Use the model's default template
-      const char* default_template = llama_model_chat_template(model_, nullptr);
-      if (default_template) {
-        debug_info += ", using model's default template";
-        required_size = llama_chat_apply_template(
-                        default_template,
-                        llama_messages.data(),
-                        llama_messages.size(),
-                        add_generation_prompt,
-                        chat_buf.data(),
-                        chat_buf.size());
-      } else {
-        // If the model doesn't have a built-in template, try a default one
-        debug_info += ", model has no default template, trying chatml fallback";
-        const char* fallback_template = llama_model_chat_template(model_, "chatml");
-        debug_info += fallback_template ? ", found chatml template" : ", chatml template not found, using empty template";
-        required_size = llama_chat_apply_template(
-                        fallback_template ? fallback_template : "", 
-                        llama_messages.data(),
-                        llama_messages.size(),
-                        add_generation_prompt,
-                        chat_buf.data(),
-                        chat_buf.size());
-      }
-    } else {
-      // Use the specified template
-      const char* specified_template = llama_model_chat_template(model_, template_name_cstr);
-      if (specified_template) {
-        debug_info += ", using specified template: " + std::string(template_name_cstr);
-        required_size = llama_chat_apply_template(
-                        specified_template,
-                        llama_messages.data(),
-                        llama_messages.size(),
-                        add_generation_prompt,
-                        chat_buf.data(),
-                        chat_buf.size());
-      } else {
-        // Template name was specified but not found
-        debug_info += ", specified template '" + std::string(template_name_cstr) + "' not found";
-        throw std::runtime_error("Specified chat template '" + std::string(template_name_cstr) + "' not found");
-      }
-    }
-    
-    if (required_size < 0) {
-      throw std::runtime_error("Failed to apply chat template: error code " + std::to_string(required_size) + ". " + debug_info);
-    }
-    
-    // If the buffer wasn't big enough, resize and try again
-    if (static_cast<size_t>(required_size) > chat_buf.size()) {
-      chat_buf.resize(required_size + 1); // +1 for null terminator
-      debug_info += ", buffer resized to " + std::to_string(required_size + 1) + " bytes";
-      
-      if (template_name_cstr == nullptr) {
-        // Use the model's default template
-        const char* default_template = llama_model_chat_template(model_, nullptr);
-        if (default_template) {
-          required_size = llama_chat_apply_template(
-                          default_template,
-                          llama_messages.data(),
-                          llama_messages.size(),
-                          add_generation_prompt,
-                          chat_buf.data(),
-                          chat_buf.size());
+    // Check for errors
+    if (n_buf < 0) {
+      // Fall back to a simple format if the template fails
+      input_text = "";
+      for (const auto& msg : messages) {
+        if (msg.role == "system") {
+          input_text += "System: " + msg.content + "\n\n";
+        } else if (msg.role == "user") {
+          input_text += "User: " + msg.content + "\n\n";
+        } else if (msg.role == "assistant") {
+          input_text += "Assistant: " + msg.content + "\n\n";
         } else {
-          // If the model doesn't have a built-in template, try a default one
-          const char* fallback_template = llama_model_chat_template(model_, "chatml");
-          required_size = llama_chat_apply_template(
-                          fallback_template ? fallback_template : "", 
-                          llama_messages.data(),
-                          llama_messages.size(),
-                          add_generation_prompt,
-                          chat_buf.data(),
-                          chat_buf.size());
-        }
-      } else {
-        // Use the specified template
-        const char* specified_template = llama_model_chat_template(model_, template_name_cstr);
-        if (specified_template) {
-          required_size = llama_chat_apply_template(
-                          specified_template,
-                          llama_messages.data(),
-                          llama_messages.size(),
-                          add_generation_prompt,
-                          chat_buf.data(),
-                          chat_buf.size());
-        } else {
-          // Template name was specified but not found
-          throw std::runtime_error("Specified chat template '" + std::string(template_name_cstr) + "' not found");
+          input_text += msg.role + ": " + msg.content + "\n\n";
         }
       }
-      
-      if (required_size < 0) {
-        throw std::runtime_error("Failed to apply chat template with resized buffer");
-      }
+      input_text += "Assistant:";
+    } else {
+      // Use the correctly formatted template
+      input_text = std::string(formatted.data(), n_buf);
     }
     
-    // Convert to string
-    input_text = std::string(chat_buf.data(), required_size);
+    // Free allocated memory for messages
+    for (auto& msg : llama_messages) {
+      free(const_cast<char*>(msg.role));
+      free(const_cast<char*>(msg.content));
+    }
   } else {
     throw std::runtime_error("Either prompt or messages must be provided");
   }
   
-  // Create batch for the input tokens
+  // Tokenize the input
   const llama_vocab* vocab = llama_model_get_vocab(model_);
-  std::vector<llama_token> tokens(input_text.size() + 4);
   
-  int n_tokens = llama_tokenize(vocab, input_text.c_str(), input_text.length(), tokens.data(), tokens.size(), true, true);
-  
+  // First get the number of tokens needed
+  int n_tokens = llama_tokenize(vocab, input_text.c_str(), input_text.length(), nullptr, 0, is_first, true);
   if (n_tokens < 0) {
-    throw std::runtime_error("Failed to tokenize input: error code " + std::to_string(n_tokens) + 
-                             ". Input text length: " + std::to_string(input_text.length()));
+    n_tokens = -n_tokens; // Handle negative return value
   }
   
-  // Resize tokens vector to actual size
-  tokens.resize(n_tokens);
+  // Allocate space for tokens
+  std::vector<llama_token> tokens(n_tokens);
   
-  // Track timings
-  auto start_time = std::chrono::high_resolution_clock::now();
-  auto prompt_eval_start = start_time;
-  
-  // Feed the prompt to the model - following llama.cpp examples
-  int n_past = 0;
-  
-  // Create a proper batch following the examples pattern
-  llama_batch batch = llama_batch_init(n_tokens, 0, 1);
-  
-  // Add all tokens to the batch
-  for (int i = 0; i < n_tokens; i++) {
-    batch.token[i] = tokens[i];
-    batch.pos[i] = i;
-    batch.seq_id[i][0] = 0;  // Use sequence 0
-    batch.logits[i] = false; // Only need logits for the last token
+  // Do the actual tokenization
+  n_tokens = llama_tokenize(vocab, input_text.c_str(), input_text.length(), tokens.data(), tokens.size(), is_first, true);
+  if (n_tokens < 0) {
+    n_tokens = -n_tokens; // Handle negative return value
   }
   
-  // Only set logits for the last token as shown in the examples
-  if (n_tokens > 0) {
-    batch.logits[n_tokens - 1] = true;
+  // Prepare a batch for the prompt
+  llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
+  
+  // Process the prompt
+  if (llama_decode(ctx_, batch)) {
+    throw std::runtime_error("Failed to decode prompt");
   }
   
-  bool decode_success = false;
-  std::string debug_info = "Initial batch: " + std::to_string(n_tokens) + " tokens";
+  // Record prompt processing time
+  auto prompt_end_time = std::chrono::high_resolution_clock::now();
   
-  try {
-    // Try full batch decode first, following the examples
-    if (llama_decode(ctx_, batch) == 0) {
-      decode_success = true;
-      debug_info += " | Full batch decode succeeded";
-    }
-  } catch (...) {
-    // Catch any C++ exceptions
-    debug_info += " | Exception during full batch decode";
+  // Initialize token generation sampler
+  struct llama_sampler * sampler = nullptr;
+  
+  // Create the sampler chain
+  sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+  
+  // Add sampling methods
+  if (top_k > 0) {
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(top_k));
   }
   
-  // Free the initial batch before trying fallback
-  llama_batch_free(batch);
-  
-  // If full batch decode failed, try token-by-token fallback
-  if (!decode_success) {
-    // Reset context state to be safe
-    llama_kv_cache_clear(ctx_);
-    debug_info += " | Trying token-by-token approach";
-    
-    // Try token-by-token approach instead (for robustness)
-    for (int i = 0; i < n_tokens; i++) {
-      llama_batch single_batch = llama_batch_init(1, 0, 1);
-      single_batch.token[0] = tokens[i];
-      single_batch.pos[0] = i;
-      single_batch.seq_id[0][0] = 0;
-      single_batch.logits[0] = (i == n_tokens - 1); // Only get logits for last token
-      
-      if (llama_decode(ctx_, single_batch) != 0) {
-        llama_batch_free(single_batch);
-        throw std::runtime_error("Failed to decode prompt (token-by-token fallback also failed). Number of tokens: " + 
-                                std::to_string(n_tokens) + " | Failed at token " + std::to_string(i) + " | " + debug_info);
-      }
-      
-      llama_batch_free(single_batch);
-    }
-    
-    // If we get here, token-by-token approach worked
-    decode_success = true;
-    debug_info += " | Token-by-token approach succeeded";
+  if (top_p > 0.0f && top_p < 1.0f) {
+    // Add a minimum of tokens to keep to ensure we don't cut off everything
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(top_p, 1));
   }
   
-  if (!decode_success) {
-    throw std::runtime_error("Failed to decode prompt. Number of tokens: " + std::to_string(n_tokens) + " | " + debug_info);
+  if (temperature > 0.0f) {
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
   }
   
-  n_past = n_tokens;
+  // Finally add the distribution sampler
+  llama_sampler_chain_add(sampler, llama_sampler_init_dist(0)); // Fixed seed for now
   
-  auto prompt_eval_end = std::chrono::high_resolution_clock::now();
-  auto generation_start = prompt_eval_end;
+  // Generate tokens
+  llama_token new_token_id = 0;
+  int n_ctx = llama_n_ctx(ctx_);
+  int n_generated = 0;
   
-  // Setup for generation
-  std::string result_text;
-  bool completed = false;
-  int n_predict = 0;
-  llama_token id = 0;
-  
-  // Main generation loop
-  while (!completed && (max_tokens < 0 || n_predict < max_tokens)) {
-    // Check if we should stop completion
-    if (should_stop_completion_) {
-      should_stop_completion_ = false;
+  // Generate up to max_tokens tokens
+  while ((n_generated < max_tokens || max_tokens <= 0) && !should_stop_completion_) {
+    // Check if we have enough space in the context
+    if (llama_kv_self_used_cells(ctx_) + 1 >= n_ctx) {
       break;
     }
     
-    // Sample next token using logits from last eval
-    const float* logits = llama_get_logits(ctx_);
-    const int n_vocab = llama_vocab_n_tokens(vocab);
-
-    // Simple temperature/top-p/top-k sampling implementation
-    std::vector<std::pair<float, llama_token>> candidates;
-    candidates.reserve(n_vocab);
+    // Sample a token using our sampler
+    new_token_id = llama_sampler_sample(sampler, ctx_, -1);
     
-    // Create candidates
-    for (int i = 0; i < n_vocab; i++) {
-      candidates.push_back(std::make_pair(logits[i], i));
-    }
-    
-    // Apply temperature if specified
-    if (temperature > 0.0f) {
-      for (auto& candidate : candidates) {
-        candidate.first /= temperature;
-      }
-    }
-    
-    // Sort by logits in descending order
-    std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
-      return a.first > b.first;
-    });
-    
-    // Apply top-k if specified
-    if (top_k > 0 && top_k < (int)candidates.size()) {
-      candidates.resize(top_k);
-    }
-    
-    // Apply softmax
-    {
-      float max_logit = candidates[0].first;
-      float sum = 0.0f;
-      
-      for (auto& candidate : candidates) {
-        candidate.first = std::exp(candidate.first - max_logit);
-        sum += candidate.first;
-      }
-      
-      for (auto& candidate : candidates) {
-        candidate.first /= sum;
-      }
-    }
-    
-    // Apply top-p if specified (cumulative probability)
-    if (top_p > 0.0f && top_p < 1.0f) {
-      float cumulative_prob = 0.0f;
-      
-      for (size_t i = 0; i < candidates.size(); i++) {
-        cumulative_prob += candidates[i].first;
-        
-        if (cumulative_prob >= top_p) {
-          candidates.resize(i + 1);
-          break;
-        }
-      }
-      
-      // Renormalize probabilities
-      float sum = 0.0f;
-      for (auto& candidate : candidates) {
-        sum += candidate.first;
-      }
-      
-      for (auto& candidate : candidates) {
-        candidate.first /= sum;
-      }
-    }
-    
-    // Sample from the distribution
-    float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
-    float cdf = 0.0f;
-    
-    id = candidates[0].second; // In case we don't sample anything
-    for (const auto& candidate : candidates) {
-      cdf += candidate.first;
-      if (r < cdf) {
-        id = candidate.second;
-        break;
-      }
-    }
-    
-    // Check for end condition
-    if (id == llama_token_eos(vocab)) {
-      completed = true;
+    // Check for end of generation
+    if (new_token_id == llama_vocab_eos(vocab)) {
       break;
     }
     
-    // Check for stop sequences (simple implementation)
-    bool is_stop_sequence = false;
+    // Convert token to text
+    char token_str[8] = {0};
+    int n_chars = llama_token_to_piece(vocab, new_token_id, token_str, sizeof(token_str) - 1, false, true);
+    if (n_chars < 0) n_chars = 0;
+    token_str[n_chars] = '\0';
     
-    // Convert token to string
-    char token_str[8];
-    int token_str_len = llama_token_to_piece(vocab, id, token_str, sizeof(token_str) - 1, 0, true);
-    if (token_str_len < 0) {
-      token_str_len = 0;
-    }
-    token_str[token_str_len] = '\0';
+    // Add to result
+    std::string token_text(token_str);
+    result.text += token_text;
     
-    // Append to result text
-    result_text += token_str;
-    
-    // Check stop sequences after appending
-    for (const auto& stop_seq : stop_sequences) {
-      if (result_text.size() >= stop_seq.size() && 
-          result_text.substr(result_text.size() - stop_seq.size()) == stop_seq) {
-        is_stop_sequence = true;
-        // Remove the stop sequence from the result
-        result_text = result_text.substr(0, result_text.size() - stop_seq.size());
-        break;
-      }
-    }
-    
-    if (is_stop_sequence) {
-      completed = true;
-      break;
-    }
-    
-    // Call the partial callback if provided
+    // Call partial callback if provided
     if (partialCallback && rt) {
-      // Pass the token to the callback
       partialCallback(*rt, token_str);
     }
     
-    n_predict++;
+    // Check for stop sequences
+    bool should_stop = false;
+    for (const auto& stop_seq : stop_sequences) {
+      if (result.text.size() >= stop_seq.size() && 
+          result.text.substr(result.text.size() - stop_seq.size()) == stop_seq) {
+        // Remove the stop sequence from the result
+        result.text = result.text.substr(0, result.text.size() - stop_seq.size());
+        should_stop = true;
+        break;
+      }
+    }
     
-    // Prepare next batch - following the examples style
-    llama_batch next_batch = llama_batch_init(1, 0, 1);
-    next_batch.token[0] = id;
-    next_batch.pos[0] = n_past;
-    next_batch.seq_id[0][0] = 0;
-    next_batch.logits[0] = true;  // We need logits for the next token
-    
-    // Decode next token
-    if (llama_decode(ctx_, next_batch) != 0) {
-      llama_batch_free(next_batch);
+    if (should_stop) {
       break;
     }
     
-    // Free batch resources
-    llama_batch_free(next_batch);
+    // Accept the token
+    llama_sampler_accept(sampler, new_token_id);
     
-    // Advance context
-    n_past += 1;
+    // Continue decoding with new token
+    batch = llama_batch_get_one(&new_token_id, 1);
+    if (llama_decode(ctx_, batch)) {
+      break;
+    }
+    
+    n_generated++;
   }
   
-  return result_text;
+  // Calculate time taken
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto prompt_duration = std::chrono::duration<double, std::milli>(prompt_end_time - start_time).count();
+  auto generation_duration = std::chrono::duration<double, std::milli>(end_time - prompt_end_time).count();
+  
+  // Clean up
+  llama_sampler_free(sampler);
+  
+  // Update result
+  result.prompt_tokens = n_tokens;
+  result.generated_tokens = n_generated;
+  result.prompt_duration_ms = prompt_duration;
+  result.generation_duration_ms = generation_duration;
+  
+  return result;
 }
 
 // JSI wrapper functions
@@ -611,18 +413,37 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     throw jsi::JSError(rt, "completion requires an options object");
   }
   
+  // Check if model is already predicting
+  if (is_predicting_) {
+    throw jsi::JSError(rt, "Model is currently busy with another prediction");
+  }
+  
   jsi::Object options = args[0].getObject(rt);
   
   try {
+    // Set the predicting flag
+    is_predicting_ = true;
+    
     // Process input - either prompt or messages
     std::string prompt;
     std::vector<ChatMessage> chat_messages;
     
+    // Create a detailed debug string
+    std::string debug_info = "Debug info from completionJsi:\n";
+    debug_info += "Model pointer valid: " + std::string(model_ ? "yes" : "no") + "\n";
+    debug_info += "Context pointer valid: " + std::string(ctx_ ? "yes" : "no") + "\n";
+    
+    // Log input type
     if (options.hasProperty(rt, "prompt") && options.getProperty(rt, "prompt").isString()) {
+      debug_info += "Input type: prompt\n";
       prompt = options.getProperty(rt, "prompt").getString(rt).utf8(rt);
+      debug_info += "Prompt length: " + std::to_string(prompt.length()) + " chars\n";
     } else if (options.hasProperty(rt, "messages") && options.getProperty(rt, "messages").isObject()) {
+      debug_info += "Input type: messages\n";
+      
       // Get messages array
       jsi::Array messages = options.getProperty(rt, "messages").getObject(rt).asArray(rt);
+      debug_info += "Messages count: " + std::to_string(messages.size(rt)) + "\n";
       
       // Convert to chat messages
       for (size_t i = 0; i < messages.size(rt); i++) {
@@ -631,10 +452,13 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
         ChatMessage chat_msg;
         if (msg.hasProperty(rt, "role")) {
           chat_msg.role = msg.getProperty(rt, "role").getString(rt).utf8(rt);
+          debug_info += "Message " + std::to_string(i) + " role: " + chat_msg.role + "\n";
         }
         
         if (msg.hasProperty(rt, "content")) {
           chat_msg.content = msg.getProperty(rt, "content").getString(rt).utf8(rt);
+          debug_info += "Message " + std::to_string(i) + " content length: " + 
+                        std::to_string(chat_msg.content.length()) + " chars\n";
         }
         
         if (msg.hasProperty(rt, "name")) {
@@ -644,7 +468,8 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
         chat_messages.push_back(chat_msg);
       }
     } else {
-      throw jsi::JSError(rt, "completion requires either 'prompt' or 'messages'");
+      debug_info += "Error: neither prompt nor messages provided\n";
+      throw jsi::JSError(rt, "completion requires either 'prompt' or 'messages'\n" + debug_info);
     }
     
     // Extract parameters
@@ -661,23 +486,28 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     // Get temperature 
     if (options.hasProperty(rt, "temperature")) {
       temperature = (float)options.getProperty(rt, "temperature").asNumber();
+      debug_info += "Temperature: " + std::to_string(temperature) + "\n";
     }
     
     // Get top_p
     if (options.hasProperty(rt, "top_p")) {
       top_p = (float)options.getProperty(rt, "top_p").asNumber();
+      debug_info += "Top-p: " + std::to_string(top_p) + "\n";
     }
     
     // Get top_k
     if (options.hasProperty(rt, "top_k")) {
       top_k = (int)options.getProperty(rt, "top_k").asNumber();
+      debug_info += "Top-k: " + std::to_string(top_k) + "\n";
     }
     
     // Get token limit
     if (options.hasProperty(rt, "max_tokens")) {
       max_tokens = (int)options.getProperty(rt, "max_tokens").asNumber();
+      debug_info += "Max tokens: " + std::to_string(max_tokens) + "\n";
     } else if (options.hasProperty(rt, "n_predict")) {
       max_tokens = (int)options.getProperty(rt, "n_predict").asNumber();
+      debug_info += "N predict: " + std::to_string(max_tokens) + "\n";
     }
     
     // Get stop sequences
@@ -687,27 +517,34 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
       for (size_t i = 0; i < stopArray.size(rt); i++) {
         std::string stop_str = stopArray.getValueAtIndex(rt, i).getString(rt).utf8(rt);
         stop_sequences.push_back(stop_str);
+        debug_info += "Stop sequence " + std::to_string(i) + ": '" + stop_str + "'\n";
       }
     }
     
     // Get chat template name (if specified)
     if (options.hasProperty(rt, "chat_template") && options.getProperty(rt, "chat_template").isString()) {
       template_name = options.getProperty(rt, "chat_template").getString(rt).utf8(rt);
+      debug_info += "Template name: '" + template_name + "'\n";
+    } else {
+      debug_info += "No template name specified\n";
     }
     
     // Get jinja flag
     if (options.hasProperty(rt, "jinja") && options.getProperty(rt, "jinja").isBool()) {
       jinja = options.getProperty(rt, "jinja").getBool();
+      debug_info += "Jinja: " + std::string(jinja ? "true" : "false") + "\n";
     }
     
     // Get tool choice
     if (options.hasProperty(rt, "tool_choice") && options.getProperty(rt, "tool_choice").isString()) {
       tool_choice = options.getProperty(rt, "tool_choice").getString(rt).utf8(rt);
+      debug_info += "Tool choice: '" + tool_choice + "'\n";
     }
     
     // Get tools
     if (options.hasProperty(rt, "tools") && options.getProperty(rt, "tools").isObject()) {
       jsi::Array toolsArray = options.getProperty(rt, "tools").getObject(rt).asArray(rt);
+      debug_info += "Tools count: " + std::to_string(toolsArray.size(rt)) + "\n";
       
       for (size_t i = 0; i < toolsArray.size(rt); i++) {
         jsi::Object jsiTool = toolsArray.getValueAtIndex(rt, i).getObject(rt);
@@ -718,6 +555,7 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     // Check for a partial callback
     std::function<void(jsi::Runtime&, const char*)> partialCallback = nullptr;
     if (count > 1 && args[1].isObject() && args[1].getObject(rt).isFunction(rt)) {
+      debug_info += "Partial callback provided\n";
       // Create a shared copy of the callback function
       auto jsCallback = std::make_shared<jsi::Function>(args[1].getObject(rt).getFunction(rt));
       
@@ -738,13 +576,18 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     auto start_time = std::chrono::high_resolution_clock::now();
     
     // Get completion
-    std::string result_text;
+    CompletionResult result;
     try {
-      result_text = completion(prompt, chat_messages, temperature, top_p, top_k, max_tokens, stop_sequences, template_name, jinja, tool_choice, tools, partialCallback, &rt);
+      debug_info += "Calling completion method...\n";
+      result = completion(prompt, chat_messages, temperature, top_p, top_k, max_tokens, stop_sequences, template_name, jinja, tool_choice, tools, partialCallback, &rt);
+      debug_info += "Completion method returned successfully\n";
     } catch (const std::exception& e) {
+      debug_info += "Exception in completion method: " + std::string(e.what()) + "\n";
+      
       // Create a detailed error object
       jsi::Object errorObj(rt);
-      errorObj.setProperty(rt, "message", jsi::String::createFromUtf8(rt, e.what()));
+      errorObj.setProperty(rt, "message", jsi::String::createFromUtf8(rt, "Failed to complete: " + std::string(e.what())));
+      errorObj.setProperty(rt, "debug_info", jsi::String::createFromUtf8(rt, debug_info));
       
       // Add detailed diagnostics
       jsi::Object diagObj(rt);
@@ -778,10 +621,10 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     
     // Create result object
     jsi::Object result_obj(rt);
-    result_obj.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result_text));
+    result_obj.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.text));
     
     // Check for tool calls
-    std::vector<ToolCall> toolCalls = parseToolCalls(result_text);
+    std::vector<ToolCall> toolCalls = parseToolCalls(result.text);
     if (!toolCalls.empty()) {
       jsi::Array toolCallsArray(rt, toolCalls.size());
       for (size_t i = 0; i < toolCalls.size(); i++) {
@@ -793,19 +636,26 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     // Add basic timing info
     jsi::Object timings(rt);
     timings.setProperty(rt, "total_ms", jsi::Value(total_ms));
-    timings.setProperty(rt, "prompt_n", jsi::Value(0));  // Placeholder
-    timings.setProperty(rt, "prompt_ms", jsi::Value(0)); // Placeholder
-    timings.setProperty(rt, "predicted_n", jsi::Value(0));  // Placeholder
-    timings.setProperty(rt, "predicted_ms", jsi::Value(0)); // Placeholder
+    timings.setProperty(rt, "prompt_n", jsi::Value(result.prompt_tokens));
+    timings.setProperty(rt, "prompt_ms", jsi::Value(result.prompt_duration_ms));
+    timings.setProperty(rt, "predicted_n", jsi::Value(result.generated_tokens));
+    timings.setProperty(rt, "predicted_ms", jsi::Value(result.generation_duration_ms));
     
     result_obj.setProperty(rt, "timings", timings);
-    result_obj.setProperty(rt, "tokens_predicted", jsi::Value(0)); // Placeholder
+    result_obj.setProperty(rt, "tokens_predicted", jsi::Value(result.generated_tokens));
+    
+    // Reset prediction flag
+    is_predicting_ = false;
     
     return result_obj;
   } catch (const jsi::JSError& e) {
+    // Reset prediction flag
+    is_predicting_ = false;
     // Re-throw JSError objects without wrapping
     throw e;
   } catch (const std::exception& e) {
+    // Reset prediction flag
+    is_predicting_ = false;
     // Create a basic error message for other exceptions
     throw jsi::JSError(rt, "Completion error: " + std::string(e.what()));
   }
@@ -838,55 +688,6 @@ jsi::Value LlamaCppModel::releaseJsi(jsi::Runtime& rt, const jsi::Value* args, s
   try {
     release();
     return jsi::Value(true);
-  } catch (const std::exception& e) {
-    throw jsi::JSError(rt, e.what());
-  }
-}
-
-jsi::Value LlamaCppModel::detectTemplateJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count) {
-  if (count < 1 || !args[0].isObject()) {
-    throw jsi::JSError(rt, "detectTemplate requires a messages array");
-  }
-  
-  try {
-    if (!model_) {
-      return jsi::String::createFromUtf8(rt, "chatml"); // Default if no model is loaded
-    }
-    
-    // First, check if model has a built-in template
-    const char* default_template = llama_model_chat_template(model_, nullptr);
-    if (default_template) {
-      // Model has a default template, return a special identifier
-      return jsi::String::createFromUtf8(rt, "auto");
-    }
-    
-    // If no built-in template is available, return the default
-    return jsi::String::createFromUtf8(rt, "chatml");
-  } catch (const std::exception& e) {
-    throw jsi::JSError(rt, e.what());
-  }
-}
-
-// Function to get all built-in chat templates
-jsi::Value LlamaCppModel::getBuiltinTemplatesJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count) {
-  try {
-    // Use llama.cpp's API to get built-in templates
-    const int max_templates = 50;
-    const char* templates[max_templates] = {nullptr};
-    
-    int n_templates = llama_chat_builtin_templates(templates, max_templates);
-    
-    // Create array to return the template names
-    jsi::Array result(rt, n_templates);
-    for (int i = 0; i < n_templates; i++) {
-      if (templates[i]) {
-        result.setValueAtIndex(rt, i, jsi::String::createFromUtf8(rt, templates[i]));
-      } else {
-        result.setValueAtIndex(rt, i, jsi::String::createFromUtf8(rt, ""));
-      }
-    }
-    
-    return result;
   } catch (const std::exception& e) {
     throw jsi::JSError(rt, e.what());
   }
@@ -1188,32 +989,124 @@ std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text) {
   return toolCalls;
 }
 
-// Function to get the content of a specific template
-jsi::Value LlamaCppModel::getTemplateContentJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count) {
+// Function to test token-by-token processing in a simplified manner
+jsi::Value LlamaCppModel::testProcessTokensJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count) {
   try {
-    if (!model_) {
-      throw jsi::JSError(rt, "Model not loaded");
+    if (!model_ || !ctx_) {
+      throw std::runtime_error("Model or context not initialized");
     }
     
-    // Get template name from args or use null for default
-    const char* template_name = nullptr;
+    // Get the text to test
+    std::string text;
     if (count > 0 && args[0].isString()) {
-      std::string name = args[0].getString(rt).utf8(rt);
-      if (name != "auto" && name != "default") {
-        template_name = name.c_str();
-      }
-    }
-    
-    // Get the template content
-    const char* template_content = llama_model_chat_template(model_, template_name);
-    
-    if (template_content) {
-      return jsi::String::createFromUtf8(rt, template_content);
+      text = args[0].getString(rt).utf8(rt);
     } else {
-      return jsi::Value::null();
+      text = "Hello, world!"; // Default test text
     }
+    
+    // Tokenize the text
+    std::vector<llama_token> tokens;
+    const llama_vocab* vocab = llama_model_get_vocab(model_);
+    
+    // Create a buffer for tokenization
+    tokens.resize(text.size() + 4);
+    int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), false, false);
+    
+    if (n_tokens < 0) {
+      throw std::runtime_error("Tokenization failed: " + std::to_string(n_tokens));
+    }
+    
+    // Add special tokens if needed
+    std::vector<llama_token> tokens_with_special;
+    llama_token bos_token = llama_token_bos(vocab);
+    
+    // Add BOS token if it's not already there
+    if (n_tokens > 0 && tokens[0] != bos_token) {
+      tokens_with_special.push_back(bos_token);
+    }
+    
+    // Add the regular tokens
+    for (int i = 0; i < n_tokens; i++) {
+      tokens_with_special.push_back(tokens[i]);
+    }
+    
+    // Update tokens and count
+    tokens = std::move(tokens_with_special);
+    n_tokens = tokens.size();
+    
+    // Create result object
+    jsi::Object result(rt);
+    
+    // Add tokens to result
+    jsi::Array tokensArray(rt, n_tokens);
+    for (int i = 0; i < n_tokens; i++) {
+      tokensArray.setValueAtIndex(rt, i, jsi::Value((double)tokens[i]));
+    }
+    result.setProperty(rt, "tokens", tokensArray);
+    
+    // Clear KV cache
+    llama_kv_self_clear(ctx_);
+    
+    // Process each token individually for testing
+    bool success = true;
+    std::string errorMessage;
+    jsi::Array processResults(rt, n_tokens);
+    
+    for (int i = 0; i < n_tokens; i++) {
+      // Create a batch with a single token
+      llama_batch batch = llama_batch_init(1, 0, 1);
+      batch.token[0] = tokens[i];
+      batch.pos[0] = i;
+      batch.seq_id[0][0] = 0;
+      batch.logits[0] = true;
+      
+      // Process the token and capture result
+      jsi::Object tokenResult(rt);
+      tokenResult.setProperty(rt, "index", jsi::Value(i));
+      tokenResult.setProperty(rt, "id", jsi::Value((double)tokens[i]));
+      
+      // Try to get token text
+      char token_str[8] = {0};
+      int token_str_len = llama_token_to_piece(vocab, tokens[i], token_str, sizeof(token_str) - 1, 0, true);
+      if (token_str_len > 0) {
+        token_str[token_str_len] = '\0';
+        tokenResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, token_str));
+      } else {
+        tokenResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, "<error>"));
+      }
+      
+      // Process the token
+      int decode_result = llama_decode(ctx_, batch);
+      
+      tokenResult.setProperty(rt, "success", jsi::Value(decode_result == 0));
+      tokenResult.setProperty(rt, "result", jsi::Value(decode_result));
+      
+      if (decode_result != 0) {
+        success = false;
+        errorMessage = "Failed at token " + std::to_string(i) + " (ID: " + std::to_string(tokens[i]) + ")";
+        tokenResult.setProperty(rt, "error", jsi::String::createFromUtf8(rt, errorMessage));
+      }
+      
+      processResults.setValueAtIndex(rt, i, tokenResult);
+      
+      // Free batch resources
+      llama_batch_free(batch);
+    }
+    
+    // Add overall results
+    result.setProperty(rt, "success", jsi::Value(success));
+    result.setProperty(rt, "processResults", processResults);
+    
+    if (!success) {
+      result.setProperty(rt, "error", jsi::String::createFromUtf8(rt, errorMessage));
+    }
+    
+    return result;
   } catch (const std::exception& e) {
-    throw jsi::JSError(rt, e.what());
+    jsi::Object error(rt);
+    error.setProperty(rt, "success", jsi::Value(false));
+    error.setProperty(rt, "error", jsi::String::createFromUtf8(rt, e.what()));
+    return error;
   }
 }
 

@@ -178,8 +178,14 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
       contextParams.n_ctx = (int)params.getProperty(runtime, "n_ctx").asNumber();
     }
     
+    // Set batch size with a conservative default for mobile
     if (params.hasProperty(runtime, "n_batch")) {
       contextParams.n_batch = (int)params.getProperty(runtime, "n_batch").asNumber();
+    } else {
+      // Use a conservative batch size for mobile devices (default in llama.cpp is 512)
+      // For small models like 1B, 128 is usually sufficient and safer
+      contextParams.n_batch = 128;
+      std::cout << "Using conservative default batch size for mobile: " << contextParams.n_batch << std::endl;
     }
     
     // Get thread count
@@ -292,23 +298,13 @@ jsi::Object LlamaCppRn::createModelObject(jsi::Runtime& runtime, llama_model* mo
       })
   );
   
-  // Add detectTemplate method
-  result.setProperty(runtime, "detectTemplate", 
+  // Add testProcessTokens method (for debugging)
+  result.setProperty(runtime, "testProcessTokens", 
     jsi::Function::createFromHostFunction(runtime, 
-      jsi::PropNameID::forAscii(runtime, "detectTemplate"), 
-      1,  // takes messages array
+      jsi::PropNameID::forAscii(runtime, "testProcessTokens"), 
+      1,  // takes text to test
       [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
-        return llamaModel->detectTemplateJsi(rt, args, count);
-      })
-  );
-  
-  // Add getBuiltinTemplates method
-  result.setProperty(runtime, "getBuiltinTemplates", 
-    jsi::Function::createFromHostFunction(runtime, 
-      jsi::PropNameID::forAscii(runtime, "getBuiltinTemplates"), 
-      0,  // takes no arguments
-      [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
-        return llamaModel->getBuiltinTemplatesJsi(rt, args, count);
+        return llamaModel->testProcessTokensJsi(rt, args, count);
       })
   );
   

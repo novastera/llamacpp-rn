@@ -58,11 +58,11 @@ export default function ModelChatTest() {
       console.log('Initializing model with optimal settings...');
       const modelInstance = await LlamaCppRn.initLlama({
         model: modelPath,
-        n_ctx: 2048,
-        n_batch: 256,  // Reduced from 512 to avoid memory issues
-        n_gpu_layers: 0, // Use 0 GPU layers on simulator to avoid issues
-        use_mlock: true, // Keep model in RAM and prevent swapping to disk
-        n_threads: 4,  // Explicitly set thread count to 4 for stability
+        n_ctx: 2048,       // Context size of 2048 is sufficient for most interactions
+        n_batch: 128,      // Smaller batch size for better stability
+        n_gpu_layers: 0,   // Force CPU only for reliability
+        use_mlock: true,   // Keep model in RAM and prevent swapping to disk
+        n_threads: 4,      // Explicitly set thread count to 4 for stability
       });
       
       console.log('Model initialized successfully');
@@ -71,7 +71,7 @@ export default function ModelChatTest() {
       // Store initialization notes
       setModelInfo((prev: any) => ({
         ...prev,
-        initNotes: ['Model initialized with optimal settings']
+        initNotes: ['Model initialized with conservative settings (CPU-only)']
       }));
       
     } catch (err) {
@@ -171,16 +171,16 @@ export default function ModelChatTest() {
       console.log('Testing basic completion with a simple prompt');
       
       // Use a very simple prompt with minimal parameters
-      const testPrompt = input || "The capital of France is";
+      const testPrompt = input || "Complete this sentence: The sky is";
       console.log('Test prompt:', testPrompt);
       
-      // Use minimal parameters
+      // Use minimal parameters with safer defaults
       const response = await model.completion({
         prompt: testPrompt,  // Use prompt instead of messages
-        temperature: 0.0,    // Deterministic to reduce variability
-        top_p: 1.0,          // No filtering
-        top_k: 0,            // No filtering
-        max_tokens: 10,      // Just need a few tokens
+        temperature: 0.1,    // Very low temperature for more stability
+        top_p: 0.9,          // More conservative filtering 
+        top_k: 40,           // Standard filtering
+        max_tokens: 20,      // Increased for better results
       });
       
       console.log('Basic completion result:', response.text);
@@ -210,13 +210,12 @@ export default function ModelChatTest() {
       // Generate completion
       const response = await model.completion({
         messages: formattedMessages,
-        temperature: 0.5,     // Lower temperature for more stability
-        top_p: 0.9,           // Slightly more conservative top_p
-        top_k: 30,            // Lower top_k
-        max_tokens: 200,      // Reduced max tokens for initial test
-        stop: ["</s>", "<|im_end|>"]
+        temperature: 0.3,     // Lower temperature for more stability
+        top_p: 0.85,          // More conservative top_p
+        top_k: 40,            // Standard top_k value
+        max_tokens: 100,      // Reduced max tokens for better stability
+        stop: ["</s>", "<|im_end|>", "<|eot_id|>"] // Include <|eot_id|> for better compatibility
       });
-      
       // Add the response to messages
       const assistantMessage: Message = { 
         role: 'assistant', 
@@ -263,88 +262,77 @@ export default function ModelChatTest() {
       console.log('Bundle directory:', bundleDir);
       console.log('Documents directory:', documentsDir);
       
-      // Always prioritize the specific 1B model
-      const llamaModelName = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
-      const documentsModelPath = `${documentsDir}${llamaModelName}`;
+      // Try both models, but prioritize Mistral which is more stable
+      const modelNames = [
+        'Mistral-7B-Instruct-v0.3.Q4_K_M.gguf', // Prioritize Mistral for better stability
+        'Llama-3.2-1B-Instruct-Q4_K_M.gguf'     // Fallback to Llama
+      ];
       
-      // First check if the model exists in the documents directory
-      const documentsModelExists = await FileSystem.getInfoAsync(documentsModelPath);
-      if (documentsModelExists.exists) {
-        console.log('Found Llama 1B model in documents directory:', documentsModelPath);
-        return documentsModelPath;
-      }
-      
-      // Check in example/assets folder directly (used during development)
-      try {
-        // Try checking in the assets directory from the example project
-        const localAssetsPath = '../assets/Llama-3.2-1B-Instruct-Q4_K_M.gguf';
-        console.log('Checking for model in local assets:', localAssetsPath);
-        await FileSystem.downloadAsync(
-          localAssetsPath,
-          documentsModelPath
-        ).catch(err => console.log('Download error (expected):', err.message));
-      } catch (e) {
-        console.log('Local assets check failed (expected):', e);
-      }
-      
-      // Check documents directory again in case download succeeded
-      const checkAgain = await FileSystem.getInfoAsync(documentsModelPath);
-      if (checkAgain.exists) {
-        console.log('Found model in documents directory after download attempt');
-        return documentsModelPath;
-      }
-      
-      // Try to find the model in various locations
-      const possibleModelPaths = [
-        // Check in bundle root
-        `${bundleDir}${llamaModelName}`,
+      // Try each model in our preferred order
+      for (const modelName of modelNames) {
+        console.log(`Looking for ${modelName}...`);
+        const documentsModelPath = `${documentsDir}${modelName}`;
         
-        // Check in assets directory - handle error directly here
-        bundleDir && `${bundleDir}assets/${llamaModelName}`,
+        // First check if the model exists in the documents directory
+        const documentsModelExists = await FileSystem.getInfoAsync(documentsModelPath);
+        if (documentsModelExists.exists) {
+          console.log(`Found ${modelName} in documents directory:`, documentsModelPath);
+          return documentsModelPath;
+        }
         
-        // Check in example/assets
-        `${bundleDir}example/assets/${llamaModelName}`,
-      ].filter(Boolean) as string[]; // Remove any undefined entries
-      
-      // Log all paths we're checking
-      console.log('Checking possible model paths:', possibleModelPaths);
-      
-      // Check each specific path
-      for (const path of possibleModelPaths) {
-        try {
-          const info = await FileSystem.getInfoAsync(path);
-          if (info.exists) {
-            console.log('Found Llama 1B model at:', path);
-            
-            // Copy to documents directory for reliability
-            try {
-              console.log(`Copying model from ${path} to ${documentsModelPath}...`);
-              await FileSystem.copyAsync({
-                from: path,
-                to: documentsModelPath
-              });
+        // Try to find the model in various locations
+        const possibleModelPaths = [
+          // Check in bundle root
+          `${bundleDir}${modelName}`,
+          
+          // Check in assets directory
+          bundleDir && `${bundleDir}assets/${modelName}`,
+          
+          // Check in example/assets
+          `${bundleDir}example/assets/${modelName}`,
+        ].filter(Boolean) as string[]; // Remove any undefined entries
+        
+        // Log all paths we're checking
+        console.log('Checking possible model paths:', possibleModelPaths);
+        
+        // Check each specific path
+        for (const path of possibleModelPaths) {
+          try {
+            const info = await FileSystem.getInfoAsync(path);
+            if (info.exists) {
+              console.log(`Found ${modelName} at:`, path);
               
-              // Verify the copy
-              const copiedInfo = await FileSystem.getInfoAsync(documentsModelPath);
-              if (copiedInfo.exists) {
-                console.log('Successfully copied model to documents directory');
-                return documentsModelPath;
+              // Copy to documents directory for reliability
+              try {
+                console.log(`Copying model from ${path} to ${documentsModelPath}...`);
+                await FileSystem.copyAsync({
+                  from: path,
+                  to: documentsModelPath
+                });
+                
+                // Verify the copy
+                const copiedInfo = await FileSystem.getInfoAsync(documentsModelPath);
+                if (copiedInfo.exists) {
+                  console.log('Successfully copied model to documents directory');
+                  return documentsModelPath;
+                }
+              } catch (copyError) {
+                console.error('Error copying model to documents directory:', copyError);
+                // Continue with the original path if copy fails
+                return path;
               }
-            } catch (copyError) {
-              console.error('Error copying model to documents directory:', copyError);
-              // Continue with the original path if copy fails
+              
               return path;
             }
-            
-            return path;
+          } catch (pathError) {
+            console.log(`Error checking path ${path}:`, pathError);
+            // Continue to next path
           }
-        } catch (pathError) {
-          console.log(`Error checking path ${path}:`, pathError);
-          // Continue to next path
         }
       }
       
-      console.log('Specific Llama model not found, looking for any GGUF file...');
+      // If we get here, neither of our preferred models was found, so look for any GGUF file
+      console.log('Specific models not found, looking for any GGUF file...');
       
       // Try to find any GGUF model as backup
       let allGgufFiles: string[] = [];

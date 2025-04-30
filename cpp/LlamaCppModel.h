@@ -21,6 +21,15 @@ struct ChatMessage {
   std::string name;
 };
 
+// Structure for completion results
+struct CompletionResult {
+  std::string text;
+  int prompt_tokens;
+  int generated_tokens;
+  double prompt_duration_ms;
+  double generation_duration_ms;
+};
+
 // Structure to represent a function parameter for tool calling
 struct FunctionParameter {
   std::string name;
@@ -57,7 +66,7 @@ public:
 
   // Model operations
   std::vector<int32_t> tokenize(const std::string& text);
-  std::string completion(const std::string& prompt, const std::vector<ChatMessage>& messages, 
+  CompletionResult completion(const std::string& prompt, const std::vector<ChatMessage>& messages, 
                          float temperature, float top_p, int top_k, int max_tokens, 
                          const std::vector<std::string>& stop_sequences,
                          const std::string& template_name = "",
@@ -75,9 +84,7 @@ public:
   jsi::Value completionJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
   jsi::Value embeddingJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
   jsi::Value releaseJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
-  jsi::Value detectTemplateJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
-  jsi::Value getBuiltinTemplatesJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
-  jsi::Value getTemplateContentJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
+  jsi::Value testProcessTokensJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
 
   // Model info
   int32_t getVocabSize() const;
@@ -86,6 +93,10 @@ public:
 
   bool shouldStopCompletion() const;
   void setShouldStopCompletion(bool value);
+  
+  // Check if model is currently busy with prediction
+  bool isPredicting() const { return is_predicting_; }
+  void setIsPredicting(bool value) { is_predicting_ = value; }
 
   // Helper to parse tool calls from model output
   std::vector<ToolCall> parseToolCalls(const std::string& text);
@@ -101,6 +112,7 @@ private:
   llama_context* ctx_;
   std::mutex mutex_;
   bool should_stop_completion_ = false;
+  bool is_predicting_ = false;
 };
 
 } // namespace facebook::react 
