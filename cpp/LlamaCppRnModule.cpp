@@ -158,6 +158,15 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
       modelParams.use_mlock = true;
     }
     
+    // Load the model
+    std::cout << "Loading model from path: " << modelPath << std::endl;
+    llama_model* model = llama_model_load_from_file(modelPath.c_str(), modelParams);
+    if (!model) {
+      std::string errorMsg = "Failed to load model: " + modelPath;
+      std::cout << "Error: " << errorMsg << std::endl;
+      throw std::runtime_error(errorMsg);
+    }
+    
     // Check if GPU is supported
     bool gpuSupported = llama_supports_gpu_offload();
     if (params.hasProperty(runtime, "n_gpu_layers")) {
@@ -170,16 +179,7 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
       }
     } else {
       // User didn't specify - use optimal GPU layers if supported
-      modelParams.n_gpu_layers = gpuSupported ? SystemUtils::getOptimalGpuLayers() : 0;
-    }
-    
-    // Load the model
-    std::cout << "Loading model from path: " << modelPath << std::endl;
-    llama_model* model = llama_model_load_from_file(modelPath.c_str(), modelParams);
-    if (!model) {
-      std::string errorMsg = "Failed to load model: " + modelPath;
-      std::cout << "Error: " << errorMsg << std::endl;
-      throw std::runtime_error(errorMsg);
+      modelParams.n_gpu_layers = gpuSupported ? SystemUtils::getOptimalGpuLayers(model) : 0;
     }
     
     // Create context params

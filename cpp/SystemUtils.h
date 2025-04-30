@@ -2,6 +2,7 @@
 
 #include <string>
 #include <thread>
+#include "llama.h"
 
 namespace facebook::react {
 
@@ -27,10 +28,15 @@ public:
      * Should only be called if llama_supports_gpu_offload() returns true.
      * The calculation takes into account:
      * - Available GPU memory
-     * - Model size
+     * - Model size and parameters
      * - Platform-specific optimizations
+     * - Current quantization method
+     * 
+     * @param model Pointer to an already loaded llama model
+     * @return Optimal number of GPU layers (0 if GPU not supported)
      */
-    static int getOptimalGpuLayers();
+    static int getOptimalGpuLayers(struct llama_model* model);
+
 };
 
 } // namespace facebook::react 
