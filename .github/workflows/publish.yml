@@ -8,88 +8,120 @@ on:
         required: false
         default: ''
         type: string
+      skip_tests:
+        description: 'Skip example app integration tests'
+        required: false
+        default: false
+        type: boolean
+      run_native_build:
+        description: 'Rebuild native code before publishing'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
-  build-and-publish:
+  verify-integration-tests:
+    runs-on: ubuntu-latest
+    if: ${{ inputs.skip_tests == false }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Check Example Test Results
+        id: check_tests
+        run: |
+          # Get the latest Example App Test workflow run on the current branch
+          status=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${{ github.repository }}/actions/workflows/example-test.yml/runs?branch=${{ github.ref_name }}&status=success&per_page=1" \
+            --jq '.workflow_runs[0].conclusion')
+          
+          if [ "$status" = "success" ]; then
+            echo "✅ Example App Integration tests passed on this branch"
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Example App Integration tests have not been run successfully on this branch"
+            echo "status=failure" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  
+  publish:
+    needs: [verify-integration-tests]
+    if: ${{ always() && (needs.verify-integration-tests.result == 'success' || inputs.skip_tests == true) }}
     runs-on: macos-latest
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
-          submodules: recursive
-        
+          submodules: false
+      
+      - name: Run CI and Native Build if needed
+        if: ${{ inputs.run_native_build == true }}
+        uses: github/workflow-dispatch@v1
+        with:
+          workflow: CI and Native Build
+          ref: ${{ github.ref }}
+          wait-for-completion: true
+      
+      - name: Get Latest Complete Artifact
+        if: ${{ inputs.run_native_build == true }}
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          workflow: 'CI and Native Build'
+          branch: ${{ github.ref_name }}
+          name: llamacpp-rn-complete
+          path: .
+          workflow_conclusion: success
+      
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
       
-      - name: Set up JDK
-        uses: actions/setup-java@v3
-        with:
-          distribution: 'zulu'
-          java-version: '17'
+      - name: Install Dependencies
+        if: ${{ inputs.run_native_build == false }}
+        run: npm ci
       
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v2
-          
-      - name: Install Android NDK
+      - name: Initialize llama.cpp repository (if needed)
+        if: ${{ inputs.run_native_build == false }}
         run: |
-          sdkmanager --install "ndk;23.1.7779620"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/23.1.7779620" >> $GITHUB_ENV
-          
-      - name: Initialize llama.cpp repository
-        run: bash scripts/llama_cpp_version.sh init
+          if [ ! -d "cpp/llama.cpp" ]; then
+            chmod +x scripts/llama_cpp_version.sh
+            scripts/llama_cpp_version.sh init
+          fi
       
-      - name: Set up iOS XCFramework
+      - name: Set up iOS XCFramework (if needed)
+        if: ${{ inputs.run_native_build == false }}
         run: |
-          # Try to download iOS XCFramework
-          bash scripts/download_prebuilt.sh ios || {
-            echo "Will build from source for iOS"
-            # When using build from source, ensure SYCL is disabled
-            export LLAMACPPRN_BUILD_FROM_SOURCE=true
-          }
+          if [ ! -d "ios/libs/llamacpp.xcframework" ]; then
+            chmod +x scripts/download_prebuilt.sh
+            scripts/download_prebuilt.sh ios
+          fi
           
-          # Ensure iOS directories exist regardless
+          # Ensure iOS directories exist
           mkdir -p ios/framework ios/include
           
-          # Copy iOS include files needed for build
-          if [ ! -f "ios/include/llama.h" ]; then
-            mkdir -p ios/include
+          # Copy iOS include files if needed
+          if [ ! -f "ios/include/llama.h" ] && [ -d "cpp/llama.cpp" ]; then
             cp cpp/llama.cpp/include/llama.h ios/include/
             cp cpp/llama.cpp/include/llama-cpp.h ios/include/
           fi
       
-      - name: Build Android libraries
-        run: |
-          # Create the jniLibs directories
-          mkdir -p android/src/main/jniLibs/arm64-v8a
-          mkdir -p android/src/main/jniLibs/x86_64
-          mkdir -p android/src/main/cpp/include
-          
-          # Ensure OpenCL headers are available
-          cp -r cpp/llama.cpp/extra/OpenCL-Headers android/src/main/cpp/opencl
-          
-          # Copy header files
-          cp cpp/llama.cpp/include/llama.h android/src/main/cpp/include/
-          cp cpp/llama.cpp/include/llama-cpp.h android/src/main/cpp/include/
-          
-          # Build with Gradle - this will compile the llama.cpp library for Android
-          cd android && ./gradlew assembleRelease
-      
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-        
-      - name: Build package
-        run: yarn prepare
+      - name: Build TypeScript Files
+        if: ${{ inputs.run_native_build == false }}
+        run: npm run prepare
       
       - name: Publish to NPM
         run: |
           if [ -n "${{ inputs.version }}" ]; then
-            yarn publish --new-version ${{ inputs.version }} --access public
+            npm publish --new-version ${{ inputs.version }} --access public
           else
-            yarn release
+            npm run release
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} 

@@ -1,0 +1,27 @@
+# Build outputs
+lib/
+build/
+dist/
+
+# Dependencies
+node_modules/
+
+# Native code
+cpp/
+ios/
+android/
+*.cpp
+*.h
+*.mm
+*.m
+*.java
+*.kt
+
+# Examples
+example/
+
+# Scripts
+scripts/
+
+# Prebuilt binaries
+prebuilt/ 
