@@ -77,41 +77,19 @@ jobs:
 
       - name: Install Android NDK and Dependencies
         run: |
-          # Use build_android.sh to install NDK and setup dependencies
-          scripts/build_android.sh --install-ndk --install-deps
+          # Make scripts executable
+          chmod +x scripts/*.sh
           
-          # Verify OpenCL dependencies have been properly setup
-          if [ ! -d "third_party/OpenCL-Headers" ]; then
-            echo "⚠️ OpenCL Headers not installed correctly. Installing manually..."
-            mkdir -p third_party/OpenCL-Headers
-            git clone --depth 1 https://github.com/KhronosGroup/OpenCL-Headers.git third_party/OpenCL-Headers
-          fi
+          # Install NDK first
+          scripts/build_android.sh --install-ndk
+ 
+          # Then use our dedicated script for external dependency setup
+          scripts/build_android_external.sh
           
-          if [ ! -d "third_party/opencl/include/CL" ]; then
-            echo "⚠️ OpenCL include directory not set up correctly. Creating manually..."
-            mkdir -p third_party/opencl/include
-            cp -r third_party/OpenCL-Headers/CL third_party/opencl/include/
-          fi
-          
-          # Ensure we have architecture-specific OpenCL libraries
-          mkdir -p third_party/opencl/lib/arm64-v8a
-          mkdir -p third_party/opencl/lib/x86_64
-          
-          # Create stub libraries for each architecture
-          if [ ! -f "third_party/opencl/lib/arm64-v8a/libOpenCL.so" ]; then
-            echo "⚠️ Creating stub libOpenCL.so for arm64-v8a..."
-            touch third_party/opencl/lib/arm64-v8a/libOpenCL.so
-          fi
-          
-          if [ ! -f "third_party/opencl/lib/x86_64/libOpenCL.so" ]; then
-            echo "⚠️ Creating stub libOpenCL.so for x86_64..."
-            touch third_party/opencl/lib/x86_64/libOpenCL.so
-          fi
-      
-      - name: Build Android Libraries with OpenCL Support
+      - name: Build Android Libraries with GPU support
         run: |
           # Execute the build script with GPU support
-          echo "Building Android libraries with OpenCL support..."
+          echo "Building Android libraries with OpenCL and Vulkan support..."
           scripts/build_android.sh --abi=all
           
           # Verify libraries were built successfully
@@ -136,6 +114,57 @@ jobs:
             if [ ! -s "android/src/main/jniLibs/x86_64/libllama.so" ]; then
               echo "⚠️ x86_64 library is empty"
               exit 1
+            fi
+          fi
+      
+      - name: Verify GPU Backends in built library
+        run: |
+          # Check for OpenCL and Vulkan symbols in the built library
+          echo "Checking for GPU backend symbols in the built library..."
+          
+          # Check for OpenCL symbols in ARM64 library
+          echo "Checking arm64-v8a library:"
+          if nm -D android/src/main/jniLibs/arm64-v8a/libllama.so | grep -i "opencl"; then
+            echo "✅ OpenCL symbols found in arm64-v8a library"
+          else
+            echo "⚠️ No OpenCL symbols found in arm64-v8a library"
+          fi
+          
+          # Check for Vulkan symbols in ARM64 library - need to check both "vulkan" and "vk_" prefixes
+          if nm -D android/src/main/jniLibs/arm64-v8a/libllama.so | grep -i -E "vulkan|vk_|ggml.*vulkan"; then
+            echo "✅ Vulkan symbols found in arm64-v8a library"
+          else
+            echo "⚠️ No Vulkan symbols found in arm64-v8a library"
+            echo "Checking for Vulkan compiler flags in the binary..."
+            
+            # Check if Vulkan defines are in the binary
+            if strings android/src/main/jniLibs/arm64-v8a/libllama.so | grep -i -E "GGML_VULKAN|VK_USE_PLATFORM"; then
+              echo "✅ Vulkan compilation flags found in arm64-v8a binary"
+            else
+              echo "❌ No Vulkan compilation flags found in arm64-v8a binary"
+            fi
+          fi
+          
+          # Check for OpenCL symbols in x86_64 library
+          echo "Checking x86_64 library:"
+          if nm -D android/src/main/jniLibs/x86_64/libllama.so | grep -i "opencl"; then
+            echo "✅ OpenCL symbols found in x86_64 library"
+          else
+            echo "⚠️ No OpenCL symbols found in x86_64 library"
+          fi
+          
+          # Check for Vulkan symbols in x86_64 library - need to check both "vulkan" and "vk_" prefixes
+          if nm -D android/src/main/jniLibs/x86_64/libllama.so | grep -i -E "vulkan|vk_|ggml.*vulkan"; then
+            echo "✅ Vulkan symbols found in x86_64 library"
+          else
+            echo "⚠️ No Vulkan symbols found in x86_64 library"
+            echo "Checking for Vulkan compiler flags in the binary..."
+            
+            # Check if Vulkan defines are in the binary
+            if strings android/src/main/jniLibs/x86_64/libllama.so | grep -i -E "GGML_VULKAN|VK_USE_PLATFORM"; then
+              echo "✅ Vulkan compilation flags found in x86_64 binary"
+            else
+              echo "❌ No Vulkan compilation flags found in x86_64 binary"
             fi
           fi
       

@@ -1,3 +1,10 @@
+###############################################################
+# ⚠️ TEMPORARILY DISABLED WORKFLOW ⚠️
+# This workflow is currently disabled during development and 
+# restructuring. The workflow will be re-enabled once the
+# example app and integration tests are updated.
+###############################################################
+
 name: Example App Test
 
 on:
@@ -23,9 +30,22 @@ on:
       - 'scripts/**'
       - 'example/**'
 
+# WORKFLOW TEMPORARILY DISABLED
 # Only run this workflow when the previous ones were successful or on specific PR events
 jobs:
+  check-if-enabled:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Workflow Disabled
+        run: |
+          echo "This workflow is currently disabled for maintenance"
+          echo "Skipping all example app tests"
+          exit 0
+    # This false condition ensures no other jobs will run
+    if: ${{ false }}
+  
   check-previous-workflows:
+    needs: check-if-enabled
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
