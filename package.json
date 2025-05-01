@@ -102,7 +102,7 @@
     "react-native": ">=0.76.0"
   },
   "engines": {
-    "node": ">= 16.0.0"
+    "node": ">= 20.0.0"
   },
   "jest": {
     "preset": "react-native",

@@ -126,15 +126,7 @@ int SystemUtils::getOptimalGpuLayers(struct llama_model* model) {
     
     // Clamp to total layers and ensure we don't go below 1
     int optimal_layers = std::max(1, std::min(possible_layers, n_layer));
-    
-    std::cout << "Mobile GPU optimization:" << std::endl
-              << "- Total device memory: " << (total_memory / (1024 * 1024)) << " MB" << std::endl
-              << "- Total model layers: " << n_layer << std::endl
-              << "- Estimated bytes per layer: " << (bytes_per_layer / (1024 * 1024)) << " MB" << std::endl
-              << "- Estimated available GPU memory: " << (available_vram / (1024 * 1024)) << " MB" << std::endl
-              << "- Target GPU memory usage (80%): " << (target_vram / (1024 * 1024)) << " MB" << std::endl
-              << "- Optimal GPU layers: " << optimal_layers << " of " << n_layer << std::endl;
-    
+       
     return optimal_layers;
 }
 

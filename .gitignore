@@ -57,6 +57,9 @@ yarn-error.log
 dist/
 web-build/
 
+# Build output
+/lib/
+
 # Testing
 coverage/
 
@@ -100,6 +103,6 @@ CURSOR_RULES.md
 /android/src/main/jniLibs/armeabi-v7a/libllama.so
 /android/src/main/jniLibs/x86/libllama.so
 /android/src/main/jniLibs/x86_64/libllama.so
-
+cpp/llama.cpp
 # Allow prebuilt binaries in prebuilt/ directory for npm packaging
 !/prebuilt/

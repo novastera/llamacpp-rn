@@ -262,10 +262,10 @@ export default function ModelChatTest() {
       console.log('Bundle directory:', bundleDir);
       console.log('Documents directory:', documentsDir);
       
-      // Try both models, but prioritize Mistral which is more stable
+      // Try both models, but prioritize Llama-3.2-1B over Mistral
       const modelNames = [
-        'Mistral-7B-Instruct-v0.3.Q4_K_M.gguf', // Prioritize Mistral for better stability
-        'Llama-3.2-1B-Instruct-Q4_K_M.gguf'     // Fallback to Llama
+        'Llama-3.2-1B-Instruct-Q4_K_M.gguf',     // Now prioritizing Llama-3.2-1B
+        'Mistral-7B-Instruct-v0.3.Q4_K_M.gguf'   // Mistral as fallback
       ];
       
       // Try each model in our preferred order

@@ -4,16 +4,11 @@
 #include <ReactCommon/TurboModule.h>
 #include <memory>
 #include <string>
-#include <unordered_map>
-#include <atomic>
 #include <mutex>
-#include <thread>
-#include <vector>
 
 // Forward declarations for C++ only
 struct llama_model;
 struct llama_context;
-struct llama_vocabulary;
 
 using namespace facebook;
 
@@ -42,17 +37,11 @@ public:
 private:
   // Helper methods
   jsi::Object createModelObject(jsi::Runtime& runtime, llama_model* model, llama_context* ctx);
-  bool detectGpuCapabilities();
-  bool enableGpu(bool enable);
-  bool isGpuEnabled();
   std::string normalizeFilePath(const std::string& path);
 
 private:
   // Module state
-  bool m_gpuEnabled = false;
-  std::atomic<bool> m_shouldStopCompletion{false};
   std::mutex mutex_;
-  std::unordered_map<std::string, std::shared_ptr<jsi::Object>> modelInfoCache_;
 };
 
 } // namespace facebook::react 

@@ -2,7 +2,6 @@
 #include <jsi/jsi.h>
 #include <functional>
 #include <future>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -147,12 +146,9 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
     }
     
     // Load the model
-    std::cout << "Loading model from path: " << modelPath << std::endl;
     llama_model* model = llama_model_load_from_file(modelPath.c_str(), modelParams);
     if (!model) {
-      std::string errorMsg = "Failed to load model: " + modelPath;
-      std::cout << "Error: " << errorMsg << std::endl;
-      throw std::runtime_error(errorMsg);
+      throw std::runtime_error("Failed to load model: " + modelPath);
     }
     
     // Check if GPU is supported
@@ -161,8 +157,7 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
       // User specified GPU layers
       modelParams.n_gpu_layers = (int)params.getProperty(runtime, "n_gpu_layers").asNumber();
       if (modelParams.n_gpu_layers > 0 && !gpuSupported) {
-        // GPU not supported - silently fall back to CPU
-        std::cout << "Warning: GPU layers requested but GPU is not supported. Using CPU only." << std::endl;
+        // Fall back to CPU silently
         modelParams.n_gpu_layers = 0;
       }
     } else {
@@ -182,32 +177,23 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
     if (params.hasProperty(runtime, "n_batch")) {
       contextParams.n_batch = (int)params.getProperty(runtime, "n_batch").asNumber();
     } else {
-      // Use a conservative batch size for mobile devices (default in llama.cpp is 512)
-      // For small models like 1B, 128 is usually sufficient and safer
+      // Use a conservative batch size for mobile devices
       contextParams.n_batch = 128;
-      std::cout << "Using conservative default batch size for mobile: " << contextParams.n_batch << std::endl;
     }
     
     // Get thread count
     if (params.hasProperty(runtime, "n_threads")) {
       contextParams.n_threads = (int)params.getProperty(runtime, "n_threads").asNumber();
-      std::cout << "Using user-specified thread count: " << contextParams.n_threads << std::endl;
     } else {
       contextParams.n_threads = SystemUtils::getOptimalThreadCount();
-      std::cout << "Using optimal thread count: " << contextParams.n_threads << std::endl;
     }
     
     // Create context
-    std::cout << "Creating llama context with n_ctx=" << contextParams.n_ctx << ", n_batch=" << contextParams.n_batch << ", n_threads=" << contextParams.n_threads << std::endl;
     llama_context* ctx = llama_init_from_model(model, contextParams);
     if (!ctx) {
-      std::string errorMsg = "Failed to create context";
-      std::cout << "Error: " << errorMsg << std::endl;
       llama_model_free(model);
-      throw std::runtime_error(errorMsg);
+      throw std::runtime_error("Failed to create context");
     }
-    
-    std::cout << "Context created successfully" << std::endl;
     
     // Create and return the model object
     auto result = createModelObject(runtime, model, ctx);

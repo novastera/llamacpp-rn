@@ -1,6 +1,5 @@
 #include "LlamaCppModel.h"
 #include <chrono>
-#include <iostream>
 #include <stdexcept>
 
 // Include llama.cpp headers directly
@@ -428,22 +427,12 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     std::string prompt;
     std::vector<ChatMessage> chat_messages;
     
-    // Create a detailed debug string
-    std::string debug_info = "Debug info from completionJsi:\n";
-    debug_info += "Model pointer valid: " + std::string(model_ ? "yes" : "no") + "\n";
-    debug_info += "Context pointer valid: " + std::string(ctx_ ? "yes" : "no") + "\n";
-    
-    // Log input type
+    // Get input type
     if (options.hasProperty(rt, "prompt") && options.getProperty(rt, "prompt").isString()) {
-      debug_info += "Input type: prompt\n";
       prompt = options.getProperty(rt, "prompt").getString(rt).utf8(rt);
-      debug_info += "Prompt length: " + std::to_string(prompt.length()) + " chars\n";
     } else if (options.hasProperty(rt, "messages") && options.getProperty(rt, "messages").isObject()) {
-      debug_info += "Input type: messages\n";
-      
       // Get messages array
       jsi::Array messages = options.getProperty(rt, "messages").getObject(rt).asArray(rt);
-      debug_info += "Messages count: " + std::to_string(messages.size(rt)) + "\n";
       
       // Convert to chat messages
       for (size_t i = 0; i < messages.size(rt); i++) {
@@ -452,13 +441,10 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
         ChatMessage chat_msg;
         if (msg.hasProperty(rt, "role")) {
           chat_msg.role = msg.getProperty(rt, "role").getString(rt).utf8(rt);
-          debug_info += "Message " + std::to_string(i) + " role: " + chat_msg.role + "\n";
         }
         
         if (msg.hasProperty(rt, "content")) {
           chat_msg.content = msg.getProperty(rt, "content").getString(rt).utf8(rt);
-          debug_info += "Message " + std::to_string(i) + " content length: " + 
-                        std::to_string(chat_msg.content.length()) + " chars\n";
         }
         
         if (msg.hasProperty(rt, "name")) {
@@ -468,8 +454,7 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
         chat_messages.push_back(chat_msg);
       }
     } else {
-      debug_info += "Error: neither prompt nor messages provided\n";
-      throw jsi::JSError(rt, "completion requires either 'prompt' or 'messages'\n" + debug_info);
+      throw jsi::JSError(rt, "completion requires either 'prompt' or 'messages'");
     }
     
     // Extract parameters
@@ -486,28 +471,23 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     // Get temperature 
     if (options.hasProperty(rt, "temperature")) {
       temperature = (float)options.getProperty(rt, "temperature").asNumber();
-      debug_info += "Temperature: " + std::to_string(temperature) + "\n";
     }
     
     // Get top_p
     if (options.hasProperty(rt, "top_p")) {
       top_p = (float)options.getProperty(rt, "top_p").asNumber();
-      debug_info += "Top-p: " + std::to_string(top_p) + "\n";
     }
     
     // Get top_k
     if (options.hasProperty(rt, "top_k")) {
       top_k = (int)options.getProperty(rt, "top_k").asNumber();
-      debug_info += "Top-k: " + std::to_string(top_k) + "\n";
     }
     
     // Get token limit
     if (options.hasProperty(rt, "max_tokens")) {
       max_tokens = (int)options.getProperty(rt, "max_tokens").asNumber();
-      debug_info += "Max tokens: " + std::to_string(max_tokens) + "\n";
     } else if (options.hasProperty(rt, "n_predict")) {
       max_tokens = (int)options.getProperty(rt, "n_predict").asNumber();
-      debug_info += "N predict: " + std::to_string(max_tokens) + "\n";
     }
     
     // Get stop sequences
@@ -517,34 +497,27 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
       for (size_t i = 0; i < stopArray.size(rt); i++) {
         std::string stop_str = stopArray.getValueAtIndex(rt, i).getString(rt).utf8(rt);
         stop_sequences.push_back(stop_str);
-        debug_info += "Stop sequence " + std::to_string(i) + ": '" + stop_str + "'\n";
       }
     }
     
     // Get chat template name (if specified)
     if (options.hasProperty(rt, "chat_template") && options.getProperty(rt, "chat_template").isString()) {
       template_name = options.getProperty(rt, "chat_template").getString(rt).utf8(rt);
-      debug_info += "Template name: '" + template_name + "'\n";
-    } else {
-      debug_info += "No template name specified\n";
     }
     
     // Get jinja flag
     if (options.hasProperty(rt, "jinja") && options.getProperty(rt, "jinja").isBool()) {
       jinja = options.getProperty(rt, "jinja").getBool();
-      debug_info += "Jinja: " + std::string(jinja ? "true" : "false") + "\n";
     }
     
     // Get tool choice
     if (options.hasProperty(rt, "tool_choice") && options.getProperty(rt, "tool_choice").isString()) {
       tool_choice = options.getProperty(rt, "tool_choice").getString(rt).utf8(rt);
-      debug_info += "Tool choice: '" + tool_choice + "'\n";
     }
     
     // Get tools
     if (options.hasProperty(rt, "tools") && options.getProperty(rt, "tools").isObject()) {
       jsi::Array toolsArray = options.getProperty(rt, "tools").getObject(rt).asArray(rt);
-      debug_info += "Tools count: " + std::to_string(toolsArray.size(rt)) + "\n";
       
       for (size_t i = 0; i < toolsArray.size(rt); i++) {
         jsi::Object jsiTool = toolsArray.getValueAtIndex(rt, i).getObject(rt);
@@ -555,7 +528,6 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     // Check for a partial callback
     std::function<void(jsi::Runtime&, const char*)> partialCallback = nullptr;
     if (count > 1 && args[1].isObject() && args[1].getObject(rt).isFunction(rt)) {
-      debug_info += "Partial callback provided\n";
       // Create a shared copy of the callback function
       auto jsCallback = std::make_shared<jsi::Function>(args[1].getObject(rt).getFunction(rt));
       
@@ -578,59 +550,43 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     // Get completion
     CompletionResult result;
     try {
-      debug_info += "Calling completion method...\n";
       result = completion(prompt, chat_messages, temperature, top_p, top_k, max_tokens, stop_sequences, template_name, jinja, tool_choice, tools, partialCallback, &rt);
-      debug_info += "Completion method returned successfully\n";
     } catch (const std::exception& e) {
-      debug_info += "Exception in completion method: " + std::string(e.what()) + "\n";
-      
-      // Create a detailed error object
-      jsi::Object errorObj(rt);
-      errorObj.setProperty(rt, "message", jsi::String::createFromUtf8(rt, "Failed to complete: " + std::string(e.what())));
-      errorObj.setProperty(rt, "debug_info", jsi::String::createFromUtf8(rt, debug_info));
-      
-      // Add detailed diagnostics
-      jsi::Object diagObj(rt);
-      diagObj.setProperty(rt, "messages_count", jsi::Value((double)chat_messages.size()));
-      
-      // Include message roles
-      jsi::Array roles(rt, chat_messages.size());
-      for (size_t i = 0; i < chat_messages.size(); i++) {
-        roles.setValueAtIndex(rt, i, jsi::String::createFromUtf8(rt, chat_messages[i].role));
-      }
-      diagObj.setProperty(rt, "message_roles", roles);
-      
-      // Include parameter info
-      diagObj.setProperty(rt, "temperature", jsi::Value(temperature));
-      diagObj.setProperty(rt, "top_p", jsi::Value(top_p));
-      diagObj.setProperty(rt, "top_k", jsi::Value(top_k));
-      diagObj.setProperty(rt, "max_tokens", jsi::Value(max_tokens));
-      
-      if (!template_name.empty()) {
-        diagObj.setProperty(rt, "template_name", jsi::String::createFromUtf8(rt, template_name));
-      }
-      
-      errorObj.setProperty(rt, "diagnostics", diagObj);
-      
-      throw jsi::JSError(rt, std::move(errorObj));
+      // Create a basic error message
+      throw jsi::JSError(rt, std::string("Failed to complete: ") + e.what());
     }
     
     // Calculate time taken
     auto end_time = std::chrono::high_resolution_clock::now();
     double total_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
     
+    // Parse tool calls first and extract cleaned text
+    std::string cleanedText;
+    std::vector<ToolCall> toolCalls = parseToolCalls(result.text, &cleanedText);
+    
+    // Determine if there's actual text content or just tool calls
+    bool hasToolCalls = !toolCalls.empty();
+    bool hasText = !cleanedText.empty();
+    
     // Create result object
     jsi::Object result_obj(rt);
-    result_obj.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.text));
     
-    // Check for tool calls
-    std::vector<ToolCall> toolCalls = parseToolCalls(result.text);
-    if (!toolCalls.empty()) {
+    // Set text property (null if there's no meaningful text)
+    if (hasText) {
+      result_obj.setProperty(rt, "text", jsi::String::createFromUtf8(rt, cleanedText));
+    } else {
+      result_obj.setProperty(rt, "text", jsi::Value::null());
+    }
+    
+    // Always include tool_calls property
+    if (hasToolCalls) {
       jsi::Array toolCallsArray(rt, toolCalls.size());
       for (size_t i = 0; i < toolCalls.size(); i++) {
         toolCallsArray.setValueAtIndex(rt, i, convertToolCallToJsiObject(rt, toolCalls[i]));
       }
       result_obj.setProperty(rt, "tool_calls", toolCallsArray);
+    } else {
+      result_obj.setProperty(rt, "tool_calls", jsi::Value::null());
     }
     
     // Add basic timing info
@@ -789,30 +745,34 @@ jsi::Object LlamaCppModel::convertToolCallToJsiObject(jsi::Runtime& rt, const To
 }
 
 // Helper to parse tool calls from model output
-std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text) {
+std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text, std::string* remainingText) {
   std::vector<ToolCall> toolCalls;
+  std::string processedText = text;
   
   // Basic implementation for extracting tool calls from model output
   // In a production environment, you'd want a more robust parser
   
   // Look for JSON blocks that might contain tool calls
   size_t pos = 0;
-  while ((pos = text.find("```json", pos)) != std::string::npos) {
+  bool hasTextContent = false;
+  
+  while ((pos = processedText.find("```json", pos)) != std::string::npos) {
     // Found a JSON code block
-    size_t start = text.find("{", pos);
+    size_t blockStart = pos;
+    size_t start = processedText.find("{", pos);
     if (start == std::string::npos) {
       pos += 7; // Move past ```json
       continue;
     }
     
     // Find the closing code block
-    size_t end = text.find("```", start);
+    size_t end = processedText.find("```", start);
     if (end == std::string::npos) {
       // Try to find the closing brace if no code block end marker
       int depth = 0;
-      for (size_t i = start; i < text.length(); i++) {
-        if (text[i] == '{') depth++;
-        else if (text[i] == '}') {
+      for (size_t i = start; i < processedText.length(); i++) {
+        if (processedText[i] == '{') depth++;
+        else if (processedText[i] == '}') {
           depth--;
           if (depth == 0) {
             end = i + 1;
@@ -827,7 +787,7 @@ std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text) {
       }
     } else {
       // Adjust end to point to the last character of the JSON
-      size_t jsonEnd = text.rfind("}", end);
+      size_t jsonEnd = processedText.rfind("}", end);
       if (jsonEnd != std::string::npos && jsonEnd > start) {
         end = jsonEnd + 1;
       } else {
@@ -837,7 +797,7 @@ std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text) {
     }
     
     // Extract the JSON content
-    std::string jsonContent = text.substr(start, end - start);
+    std::string jsonContent = processedText.substr(start, end - start);
     
     // Check if it contains "name" and "arguments" properties
     if (jsonContent.find("\"name\"") != std::string::npos && 
@@ -893,6 +853,28 @@ std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text) {
             toolCall.arguments = "{}";
           }
           toolCalls.push_back(toolCall);
+          
+          // Remove the tool call from the text
+          size_t blockEnd = processedText.find("```", end) + 3;
+          if (blockEnd == std::string::npos) {
+            blockEnd = end;
+          }
+          
+          // Check if there's content before/after this tool call
+          if (blockStart > 0) {
+            hasTextContent = true;
+          }
+          
+          if (blockEnd < processedText.length()) {
+            hasTextContent = true;
+          }
+          
+          // Remove this block from the processed text
+          processedText.erase(blockStart, blockEnd - blockStart);
+          
+          // Adjust position to account for the removed text
+          pos = blockStart;
+          continue;
         }
       }
     }
@@ -903,9 +885,10 @@ std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text) {
   // If no tool calls found in code blocks, try the simple approach
   if (toolCalls.empty()) {
     pos = 0;
-    while ((pos = text.find("\"name\":", pos)) != std::string::npos) {
+    while ((pos = processedText.find("\"name\":", pos)) != std::string::npos) {
       // Found a potential tool call
-      size_t start = text.rfind("{", pos);
+      size_t blockStart = pos;
+      size_t start = processedText.rfind("{", pos);
       if (start == std::string::npos) {
         pos += 7; // Move past "name":
         continue;
@@ -915,9 +898,9 @@ std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text) {
       int depth = 1;
       size_t end = start + 1;
       
-      while (depth > 0 && end < text.length()) {
-        if (text[end] == '{') depth++;
-        else if (text[end] == '}') depth--;
+      while (depth > 0 && end < processedText.length()) {
+        if (processedText[end] == '{') depth++;
+        else if (processedText[end] == '}') depth--;
         end++;
       }
       
@@ -927,7 +910,7 @@ std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text) {
       }
       
       // Extract the tool call JSON
-      std::string toolCallJson = text.substr(start, end - start);
+      std::string toolCallJson = processedText.substr(start, end - start);
       
       // Create a basic tool call
       ToolCall toolCall;
@@ -979,10 +962,40 @@ std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text) {
             toolCall.arguments = "{}";
           }
           toolCalls.push_back(toolCall);
+          
+          // Remove the tool call from the text
+          // Check if there's content before/after this tool call
+          if (start > 0) {
+            hasTextContent = true;
+          }
+          
+          if (end < processedText.length()) {
+            hasTextContent = true;
+          }
+          
+          // Remove this block from the processed text
+          processedText.erase(start, end - start);
+          
+          // Adjust position to account for the removed text
+          pos = start;
+          continue;
         }
       }
       
       pos = end;
+    }
+  }
+  
+  // Clean up the remaining text
+  if (remainingText != nullptr) {
+    // Trim whitespace
+    size_t first = processedText.find_first_not_of(" \t\n\r");
+    size_t last = processedText.find_last_not_of(" \t\n\r");
+    
+    if (first != std::string::npos && last != std::string::npos) {
+      *remainingText = processedText.substr(first, last - first + 1);
+    } else {
+      *remainingText = "";
     }
   }
   

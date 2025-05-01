@@ -99,7 +99,7 @@ public:
   void setIsPredicting(bool value) { is_predicting_ = value; }
 
   // Helper to parse tool calls from model output
-  std::vector<ToolCall> parseToolCalls(const std::string& text);
+  std::vector<ToolCall> parseToolCalls(const std::string& text, std::string* remainingText = nullptr);
   
   // Helper to convert JSI tool objects to our Tool structure
   static Tool convertJsiToolToTool(jsi::Runtime& rt, const jsi::Object& jsiTool);
