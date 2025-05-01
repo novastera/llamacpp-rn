@@ -9,6 +9,7 @@ This library was greatly inspired by [llama.rn](https://github.com/mybigday/llam
 - Run Llama-based models directly on device using React Native
 - Fast native C++ implementation using TurboModules and JSI
 - Metal/GPU acceleration on iOS
+- OpenCL and Vulkan GPU acceleration on Android
 - Simple JavaScript API
 - Chat completion with prompt templates
 - Embeddings generation
@@ -21,6 +22,7 @@ Given the wide diversity of mobile devices, LlamaCppRn takes an opinionated appr
 
 - **Thread Count**: If `n_threads` is not provided, the library attempts to select a reasonable thread count based on the device's CPU cores.
 - **GPU Layers**: If `n_gpu_layers` is not specified, the library makes a best-effort estimate based on the device's capabilities and model parameters.
+- **Android GPU Acceleration**: The library automatically detects and prioritizes OpenCL over Vulkan for GPU acceleration on Android devices.
 - **User Control**: When you explicitly provide values for `n_threads` or `n_gpu_layers`, your values always take precedence.
 - **Graceful Fallback**: If GPU acceleration is requested but not available, the library silently falls back to CPU-only mode.
 
@@ -37,6 +39,33 @@ When running on iOS simulators, the library may detect GPU support but fail when
 const context = await initLlama({
   model: 'path/to/model.gguf',
   n_gpu_layers: 0, // Force CPU-only mode on simulators
+  // other parameters...
+});
+```
+
+### Android GPU Acceleration
+
+Android devices have varying GPU capabilities. The library supports both OpenCL and Vulkan:
+
+- OpenCL is prioritized and used when available (most common on Mali, Adreno, and PowerVR GPUs)
+- Vulkan is used as a fallback when OpenCL is not available
+- The library automatically detects which technologies are supported at runtime
+- For optimal performance, target Android 10+ (API level 29+)
+
+For debugging GPU issues on Android, you can explicitly control the acceleration:
+
+```typescript
+// Force CPU-only mode:
+const context = await initLlama({
+  model: 'path/to/model.gguf',
+  n_gpu_layers: 0,
+  // other parameters...
+});
+
+// Force a specific number of GPU layers:
+const context = await initLlama({
+  model: 'path/to/model.gguf',
+  n_gpu_layers: 24,  // Use up to 24 GPU layers
   // other parameters...
 });
 ```

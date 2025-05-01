@@ -34,6 +34,8 @@ public:
         try {
             LOGI("Checking for GPU acceleration capabilities...");
             
+            bool hasGPUAccel = false;
+            
             #if defined(LLAMACPPRN_OPENCL_ENABLED) && LLAMACPPRN_OPENCL_ENABLED == 1
                 // Check if OpenCL is available and supported
                 LOGI("OpenCL support is enabled in build");
@@ -43,15 +45,36 @@ public:
                 
                 if (hasOpenCL) {
                     LOGI("OpenCL is available on this device");
-                    return true;
+                    hasGPUAccel = true;
                 } else {
-                    LOGW("OpenCL is not available on this device, using CPU only");
-                    return false;
+                    LOGW("OpenCL is not available on this device");
                 }
             #else
-                LOGI("OpenCL support is not enabled in build, using CPU only");
-                return false;
+                LOGI("OpenCL support is not enabled in build");
             #endif
+            
+            #if defined(LLAMACPPRN_VULKAN_ENABLED) && LLAMACPPRN_VULKAN_ENABLED == 1
+                // Check if Vulkan is available and supported
+                LOGI("Vulkan support is enabled in build");
+                
+                // Try to load the Vulkan library dynamically
+                bool hasVulkan = tryLoadVulkanLibrary();
+                
+                if (hasVulkan) {
+                    LOGI("Vulkan is available on this device");
+                    hasGPUAccel = true;
+                } else {
+                    LOGW("Vulkan is not available on this device");
+                }
+            #else
+                LOGI("Vulkan support is not enabled in build");
+            #endif
+            
+            if (!hasGPUAccel) {
+                LOGI("No GPU acceleration available, using CPU only");
+            }
+            
+            return hasGPUAccel;
         } catch (const std::exception& e) {
             LOGE("Error detecting GPU capabilities: %s", e.what());
             return false;
@@ -120,6 +143,30 @@ private:
         return false;
     }
     
+    static bool tryLoadVulkanLibrary() {
+        // Common paths for Vulkan libraries on Android devices
+        const char* potentialPaths[] = {
+            "/system/vendor/lib64/libvulkan.so",
+            "/system/lib64/libvulkan.so",
+            "/vendor/lib64/libvulkan.so"
+        };
+        
+        void* handle = nullptr;
+        
+        // Try to load the Vulkan library from various potential locations
+        for (const char* path : potentialPaths) {
+            handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL);
+            if (handle) {
+                LOGI("Successfully loaded Vulkan from: %s", path);
+                dlclose(handle);  // We just want to check if it's loadable
+                return true;
+            }
+        }
+        
+        LOGW("Could not find a loadable Vulkan library on this device");
+        return false;
+    }
+    
     static void checkGPUCapabilities() {
         LOGI("GPU capabilities:");
         
@@ -130,10 +177,22 @@ private:
             if (hasOpenCL) {
                 // In a real implementation, we could query more detailed GPU information
                 // This would require initializing OpenCL and querying device properties
-                LOGI("- GPU acceleration will be available for compatible models");
+                LOGI("- GPU acceleration with OpenCL will be available for compatible models");
             }
         #else
             LOGI("- OpenCL support: Not compiled in this build");
+        #endif
+        
+        #if defined(LLAMACPPRN_VULKAN_ENABLED) && LLAMACPPRN_VULKAN_ENABLED == 1
+            bool hasVulkan = tryLoadVulkanLibrary();
+            LOGI("- Vulkan support: %s", hasVulkan ? "Available" : "Not available");
+            
+            if (hasVulkan) {
+                // In a real implementation, we could query more detailed Vulkan information
+                LOGI("- GPU acceleration with Vulkan will be available for compatible models");
+            }
+        #else
+            LOGI("- Vulkan support: Not compiled in this build");
         #endif
         
         // Check for other acceleration options

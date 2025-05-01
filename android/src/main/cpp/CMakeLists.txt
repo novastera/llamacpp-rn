@@ -13,6 +13,9 @@ add_definitions(-DRCT_NEW_ARCH_ENABLED=1)
 # Option to enable OpenCL support
 option(LLAMACPPRN_OPENCL "Enable OpenCL GPU acceleration for compatible devices" ON)
 
+# Option to enable Vulkan support
+option(LLAMACPPRN_VULKAN "Enable Vulkan GPU acceleration for compatible devices" ON)
+
 # We always build from source for Android now
 set(rnllamaBuildFromSource "true")
 
@@ -81,6 +84,54 @@ else()
     set(LLAMA_CLBLAST OFF CACHE BOOL "llama.cpp: use CLBlast" FORCE)
 endif()
 
+# Try to find device Vulkan library
+if(LLAMACPPRN_VULKAN AND (${ANDROID_ABI} STREQUAL "arm64-v8a" OR ${ANDROID_ABI} STREQUAL "x86_64"))
+    message(STATUS "Looking for device Vulkan libraries...")
+    
+    # Common locations for Vulkan libraries on Android devices
+    set(DEVICE_VULKAN_LIB_PATHS
+        "/system/vendor/lib64/libvulkan.so"
+        "/system/lib64/libvulkan.so"
+        "/vendor/lib64/libvulkan.so"
+        "/vendor/lib64/hw/vulkan.*.so"  # Some devices use this format
+    )
+    
+    # Cache the preferred Vulkan library path (if found)
+    foreach(DEVICE_VULKAN_PATH ${DEVICE_VULKAN_LIB_PATHS})
+        if(EXISTS "${DEVICE_VULKAN_PATH}")
+            set(DEVICE_VULKAN_FOUND TRUE)
+            set(DEVICE_VULKAN_LIB_PATH "${DEVICE_VULKAN_PATH}")
+            message(STATUS "Found device Vulkan library: ${DEVICE_VULKAN_LIB_PATH}")
+            break()
+        endif()
+    endforeach()
+    
+    # Set up Vulkan header paths - check locations
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vulkan")
+        # CI/CD environment might have copied headers here
+        set(VULKAN_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/vulkan")
+        message(STATUS "Using local Vulkan headers for CI/CD build")
+    elseif(EXISTS "${LLAMA_CPP_DIR}/extra/Vulkan-Headers")
+        # Development environment - use headers from llama.cpp extras
+        set(VULKAN_INCLUDE_DIRS "${LLAMA_CPP_DIR}/extra/Vulkan-Headers/include")
+        message(STATUS "Using llama.cpp Vulkan headers")
+    else
+        # Try to use NDK Vulkan headers
+        set(VULKAN_INCLUDE_DIRS "${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include")
+        message(STATUS "Using NDK Vulkan headers")
+    endif()
+    
+    # Enable Vulkan for llama.cpp with Android platform flag
+    set(GGML_VULKAN ON CACHE BOOL "llama.cpp: use Vulkan" FORCE)
+    set(GGML_VULKAN_CHECK_RESULTS ON CACHE BOOL "llama.cpp: validate Vulkan results" FORCE)
+    set(VK_USE_PLATFORM_ANDROID_KHR ON CACHE BOOL "Use Android Vulkan platform" FORCE)
+    
+    message(STATUS "Configured Vulkan support - will detect at runtime")
+else()
+    message(STATUS "Vulkan disabled or unsupported architecture")
+    set(GGML_VULKAN OFF CACHE BOOL "llama.cpp: use Vulkan" FORCE)
+endif()
+
 # Optimizations for ARM64
 if(${ANDROID_ABI} STREQUAL "arm64-v8a")
     # Enable ARM-specific optimizations
@@ -120,6 +171,19 @@ if(LLAMACPPRN_OPENCL AND ${ANDROID_ABI} STREQUAL "arm64-v8a")
     add_definitions(-DLLAMACPPRN_OPENCL_ENABLED=1)
 else()
     add_definitions(-DLLAMACPPRN_OPENCL_ENABLED=0)
+endif()
+
+# Add Vulkan includes if enabled
+if(LLAMACPPRN_VULKAN AND (${ANDROID_ABI} STREQUAL "arm64-v8a" OR ${ANDROID_ABI} STREQUAL "x86_64"))
+    include_directories(
+        ${VULKAN_INCLUDE_DIRS}
+    )
+    
+    # Add definition to enable Vulkan-specific code
+    add_definitions(-DLLAMACPPRN_VULKAN_ENABLED=1)
+    add_definitions(-DVK_USE_PLATFORM_ANDROID_KHR=1)
+else()
+    add_definitions(-DLLAMACPPRN_VULKAN_ENABLED=0)
 endif()
 
 # Build our native module
