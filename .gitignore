@@ -90,6 +90,7 @@ CURSOR_RULES.md
 .llamacpp-temp
 
 # Downloaded frameworks and builds
+ios/libs/build-apple/
 /ios/libs/llamacpp.xcframework/
 /ios/framework/build-apple/
 /ios/framework/build/

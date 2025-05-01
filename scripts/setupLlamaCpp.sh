@@ -109,8 +109,12 @@ else
   if [ -d "$PACKAGED_ANDROID_LIBS" ] && [ -d "$PACKAGED_ANDROID_LIBS/includes" ]; then
     echo -e "${GREEN}Using pre-packaged Android binaries...${NC}"
     
-    # Copy includes
-    cp -R "$PACKAGED_ANDROID_LIBS/includes/"* "android/src/main/cpp/includes/"
+    # Copy includes if there are files to copy
+    if [ "$(ls -A "$PACKAGED_ANDROID_LIBS/includes/" 2>/dev/null)" ]; then
+      cp -R "$PACKAGED_ANDROID_LIBS/includes/"* "android/src/main/cpp/includes/"
+    else
+      echo -e "${YELLOW}Warning: includes directory is empty. No header files to copy.${NC}"
+    fi
     
     # Copy libs for each architecture
     if [ -f "$PACKAGED_ANDROID_LIBS/arm64-v8a/libllama.so" ]; then
