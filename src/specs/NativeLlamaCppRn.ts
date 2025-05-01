@@ -2,14 +2,14 @@ import type { TurboModule } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
 
 export interface LlamaContextType {
-  // This will be a native object reference that maps to 
+  // This will be a native object reference that maps to
   // a pointer to the llama_context C++ object
 }
 
 export interface LlamaModelParams {
   // Model loading parameters
   model: string;               // path to the model file
-  model_alias?: string;        // alias for the model name 
+  model_alias?: string;        // alias for the model name
   n_ctx?: number;              // context size (default: 512)
   n_batch?: number;            // batch size (default: 512)
   n_threads?: number;          // number of threads (default: number of physical CPU cores)
@@ -32,12 +32,12 @@ export interface LlamaCompletionParams {
   n_predict?: number;          // max tokens to predict (default: -1, infinite)
   stop?: string[];             // stop sequences
   chat_template?: string;      // optional chat template name to use
-  
+
   // Tool calling parameters
   jinja?: boolean;             // Enable Jinja template parser
   tool_choice?: string | 'auto' | 'none'; // Tool choice mode
   tools?: LlamaTool[];         // Available tools
-  
+
   // Advanced parameters
   frequency_penalty?: number;  // frequency penalty (default: 0.0)
   presence_penalty?: number;   // presence penalty (default: 0.0)
@@ -47,7 +47,7 @@ export interface LlamaCompletionParams {
   penalize_nl?: boolean;       // penalize newlines (default: true)
   seed?: number;               // RNG seed (default: -1, random)
   logit_bias?: Record<number, number>; // token biases for sampling
-  
+
   // JSON response format parameters
   response_format?: {
     type: 'json_object';
@@ -106,10 +106,10 @@ export interface LlamaContextMethods {
 export interface Spec extends TurboModule {
   // Initialize a Llama context with the given model parameters
   initLlama(params: LlamaModelParams): Promise<LlamaContextType & LlamaContextMethods>;
-  
+
   // Load model info without creating a full context
   loadLlamaModelInfo(modelPath: string): Promise<{
-    n_params: number; 
+    n_params: number;
     n_vocab: number;
     n_context: number;
     n_embd: number;

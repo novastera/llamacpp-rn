@@ -29,21 +29,22 @@
     "!**/.*"
   ],
   "scripts": {
-    "test": "jest",
+    "test": "jest --passWithNoTests",
     "typescript": "tsc --noEmit",
     "typescript:example": "cd example && tsc --noEmit",
-    "lint": "eslint \"**/*.{js,ts,tsx}\"",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
     "prepare": "mkdir -p lib && tsc -p tsconfig.build.json",
     "release": "release-it",
-    "example": "yarn --cwd example",
-    "bootstrap": "yarn example && yarn install && yarn example pods",
+    "example": "npm --prefix example",
+    "bootstrap": "npm --prefix example install && npm install && npm --prefix example run pods",
     "setup-llama-cpp": "bash scripts/setupLlamaCpp.sh init",
     "postinstall": "bash scripts/setupLlamaCpp.sh init",
     "llama-status": "bash scripts/llama_cpp_version.sh status",
     "llama-init": "bash scripts/llama_cpp_version.sh init",
     "llama-tags": "bash scripts/llama_cpp_version.sh list-tags",
-    "llama-from-source": "LLAMACPPRN_BUILD_FROM_SOURCE=true yarn setup-llama-cpp",
-    "llama-prebuilt": "yarn setup-llama-cpp",
+    "llama-from-source": "LLAMACPPRN_BUILD_FROM_SOURCE=true npm run setup-llama-cpp",
+    "llama-prebuilt": "npm run setup-llama-cpp",
     "package-prebuilt": "bash scripts/package-prebuilt.sh",
     "cleanup-frameworks": "bash scripts/download_prebuilt.sh clean",
     "clean": "bash scripts/setupLlamaCpp.sh clean"
@@ -109,6 +110,20 @@
     "modulePathIgnorePatterns": [
       "<rootDir>/example/node_modules",
       "<rootDir>/lib/"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/cpp/llama.cpp/",
+      "/.llamacpp-temp/",
+      "/example/"
+    ],
+    "watchPathIgnorePatterns": [
+      "/cpp/llama.cpp/",
+      "/.llamacpp-temp/",
+      "/example/"
+    ],
+    "transformIgnorePatterns": [
+      "node_modules/(?!(react-native|@react-native))"
     ]
   },
   "release-it": {

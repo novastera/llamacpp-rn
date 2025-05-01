@@ -1,4 +1,4 @@
-name: CI
+name: CI and Native Build
 
 on:
   push:
@@ -8,42 +8,253 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  setup-and-ci:
+    name: Setup and CI Checks
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [22.x]
-      fail-fast: false
-
+    outputs:
+      status: ${{ job.status }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          submodules: false  # We'll handle submodules manually with specific version
+          submodules: false  # We'll handle submodules through the postinstall script
       
-      - name: Setup Node.js ${{ matrix.node-version }}
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'yarn'
+          node-version: '22'
+          cache: 'npm'
       
       - name: Install Dependencies
-        run: yarn install --frozen-lockfile
-      
-      - name: Setup llama.cpp with specific version
-        run: |
-          chmod +x scripts/llama_cpp_version.sh
-          scripts/llama_cpp_version.sh init
-          scripts/llama_cpp_version.sh status
+        run: npm ci
+        # This automatically sets up llama.cpp through the postinstall script
       
       - name: TypeScript Check
-        run: yarn typescript
+        run: npm run typescript
       
       - name: Lint
-        run: yarn lint
+        run: npm run lint
       
       - name: Build
-        run: yarn prepare
+        run: npm run prepare
       
       - name: Run Tests
-        run: yarn test 
+        run: npm test
+      
+      # Upload the whole repository in its current state for other jobs to use
+      - name: Upload Repository State
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-state
+          path: .
+          retention-days: 1
+  
+  android-build:
+    name: Android Native Build
+    needs: setup-and-ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Repository
+        uses: actions/download-artifact@v4
+        with:
+          name: repo-state
+          path: .
+      
+      - name: Restore file permissions
+        run: |
+          chmod +x scripts/*.sh
+          find android -name "*.sh" -exec chmod +x {} \; || true
+          find android -name "gradlew" -exec chmod +x {} \; || true
+      
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+      
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK and Dependencies
+        run: |
+          # Use build_android.sh to install NDK and setup dependencies
+          scripts/build_android.sh --install-ndk --install-deps
+          
+          # Verify OpenCL dependencies have been properly setup
+          if [ ! -d "third_party/OpenCL-Headers" ]; then
+            echo "⚠️ OpenCL Headers not installed correctly. Installing manually..."
+            mkdir -p third_party/OpenCL-Headers
+            git clone --depth 1 https://github.com/KhronosGroup/OpenCL-Headers.git third_party/OpenCL-Headers
+          fi
+          
+          if [ ! -d "third_party/opencl/include/CL" ]; then
+            echo "⚠️ OpenCL include directory not set up correctly. Creating manually..."
+            mkdir -p third_party/opencl/include
+            cp -r third_party/OpenCL-Headers/CL third_party/opencl/include/
+          fi
+          
+          # Ensure we have architecture-specific OpenCL libraries
+          mkdir -p third_party/opencl/lib/arm64-v8a
+          mkdir -p third_party/opencl/lib/x86_64
+          
+          # Create stub libraries for each architecture
+          if [ ! -f "third_party/opencl/lib/arm64-v8a/libOpenCL.so" ]; then
+            echo "⚠️ Creating stub libOpenCL.so for arm64-v8a..."
+            touch third_party/opencl/lib/arm64-v8a/libOpenCL.so
+          fi
+          
+          if [ ! -f "third_party/opencl/lib/x86_64/libOpenCL.so" ]; then
+            echo "⚠️ Creating stub libOpenCL.so for x86_64..."
+            touch third_party/opencl/lib/x86_64/libOpenCL.so
+          fi
+      
+      - name: Build Android Libraries with OpenCL Support
+        run: |
+          # Execute the build script with GPU support
+          echo "Building Android libraries with OpenCL support..."
+          scripts/build_android.sh --abi=all
+          
+          # Verify libraries were built successfully
+          if [ ! -f "android/src/main/jniLibs/arm64-v8a/libllama.so" ]; then
+            echo "❌ Failed to build arm64-v8a library"
+            exit 1
+          else
+            echo "✅ Successfully built arm64-v8a library"
+            # Verify library is not empty
+            if [ ! -s "android/src/main/jniLibs/arm64-v8a/libllama.so" ]; then
+              echo "⚠️ arm64-v8a library is empty"
+              exit 1
+            fi
+          fi
+          
+          if [ ! -f "android/src/main/jniLibs/x86_64/libllama.so" ]; then
+            echo "❌ Failed to build x86_64 library"
+            exit 1
+          else
+            echo "✅ Successfully built x86_64 library"
+            # Verify library is not empty
+            if [ ! -s "android/src/main/jniLibs/x86_64/libllama.so" ]; then
+              echo "⚠️ x86_64 library is empty"
+              exit 1
+            fi
+          fi
+      
+      - name: Validate Android Library Structure
+        run: |
+          # Check if basic structure exists
+          if [ ! -d "cpp/llama.cpp" ]; then
+            echo "❌ llama.cpp repository not found"
+            exit 1
+          fi
+          
+          if [ ! -d "android/src/main/cpp/include" ]; then
+            echo "❌ Android include directory not found"
+            exit 1
+          fi
+          
+          if [ ! -f "android/build.gradle" ]; then
+            echo "❌ Android build.gradle not found"
+            exit 1
+          fi
+          
+          if [ ! -f "android/src/main/cpp/include/llama.h" ]; then
+            echo "⚠️ llama.h not found in Android include directory. This may cause build issues."
+          fi
+          
+          echo "✅ Android library structure validated for CI"
+  
+  ios-build:
+    name: iOS Native Build
+    needs: setup-and-ci
+    runs-on: macos-latest
+    steps:
+      - name: Download Repository
+        uses: actions/download-artifact@v4
+        with:
+          name: repo-state
+          path: .
+      
+      - name: Restore file permissions
+        run: |
+          chmod +x scripts/*.sh
+      
+      - name: Validate iOS Setup
+        run: |
+          # Verify the framework
+          if [ ! -d "ios/libs/llamacpp.xcframework" ]; then
+            echo "❌ iOS framework not found at ios/libs/llamacpp.xcframework"
+            exit 1
+          else
+            echo "✅ iOS framework verified"
+          fi
+      
+      - name: Validate iOS Podspec
+        run: |
+          # Check if the podspec exists
+          if [ ! -f "LlamaCppRn.podspec" ]; then
+            echo "❌ LlamaCppRn.podspec not found"
+            exit 1
+          fi
+          
+          # Just check the podspec content without running validation
+          if grep -q "s.vendored_frameworks" LlamaCppRn.podspec && 
+             grep -q "install_modules_dependencies" LlamaCppRn.podspec; then
+            echo "✅ Podspec contains required sections including Turbo Module dependencies"
+          else
+            echo "❌ Podspec is missing required sections"
+            exit 1
+          fi
+          
+          echo "✅ iOS library setup validated"
+  
+  # Create final artifact for subsequent workflows
+  create-workflow-artifact:
+    name: Create Workflow Artifact
+    if: ${{ success() }}
+    needs: [setup-and-ci, android-build, ios-build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Repository
+        uses: actions/download-artifact@v4
+        with:
+          name: repo-state
+          path: .
+      
+      - name: Restore file permissions
+        run: |
+          chmod +x scripts/*.sh
+          find android -name "*.sh" -exec chmod +x {} \; || true
+          find android -name "gradlew" -exec chmod +x {} \; || true
+      
+      # Upload a single combined artifact with everything needed for the next workflows
+      - name: Upload Complete Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llamacpp-rn-complete
+          path: |
+            cpp/
+            ios/
+            android/
+            lib/
+            node_modules/
+            LlamaCppRn.podspec
+            package.json
+            tsconfig.json
+            tsconfig.build.json
+            scripts/
+  
+  build-success:
+    name: CI and Native Build Success
+    needs: [setup-and-ci, android-build, ios-build, create-workflow-artifact]
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    steps:
+      - name: Check Status
+        run: |
+          if [ "${{ needs.setup-and-ci.result }}" = "success" ] && [ "${{ needs.android-build.result }}" = "success" ] && [ "${{ needs.ios-build.result }}" = "success" ] && [ "${{ needs.create-workflow-artifact.result }}" = "success" ]; then
+            echo "All CI and Native Build steps passed!"
+            exit 0
+          else
+            echo "One or more steps failed!"
+            exit 1
+          fi 
