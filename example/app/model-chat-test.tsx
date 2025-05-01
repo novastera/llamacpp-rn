@@ -130,38 +130,6 @@ export default function ModelChatTest() {
     }
   };
   
-  // Test template detection
-  const testTemplateDetection = async () => {
-    if (!model) return;
-    setTestResult(null);
-    
-    try {
-      console.log('Testing template detection');
-      const template = await model.detectTemplate(messages);
-      console.log('Template detection result:', template);
-      setTestResult(`Detected template: ${template}`);
-    } catch (err) {
-      console.error('Template detection error:', err);
-      setTestResult(`Template Detection Error: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  };
-  
-  // Test get built-in templates
-  const testBuiltinTemplates = async () => {
-    if (!model) return;
-    setTestResult(null);
-    
-    try {
-      console.log('Getting built-in templates');
-      const templates = await model.getBuiltinTemplates();
-      console.log('Built-in templates:', templates);
-      setTestResult(`Built-in templates (${templates.length}): ${templates.join(', ')}`);
-    } catch (err) {
-      console.error('Get built-in templates error:', err);
-      setTestResult(`Get Built-in Templates Error: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  };
-  
   // Test basic completion with a simple prompt
   const testBasicCompletion = async () => {
     if (!model) return;
@@ -472,18 +440,6 @@ export default function ModelChatTest() {
                 onPress={testTokenizer}
               >
                 <Text style={styles.testButtonText}>Test Tokenizer</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.testButton} 
-                onPress={testTemplateDetection}
-              >
-                <Text style={styles.testButtonText}>Test Template</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.testButton} 
-                onPress={testBuiltinTemplates}
-              >
-                <Text style={styles.testButtonText}>Test Built-in Templates</Text>
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.testButton} 
