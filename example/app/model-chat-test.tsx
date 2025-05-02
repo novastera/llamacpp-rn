@@ -17,8 +17,9 @@ import * as FileSystem from 'expo-file-system';
 const LlamaCppRn = require('@novastera-oss/llamacpp-rn');
 
 interface Message {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
+  name?: string;
 }
 
 export default function ModelChatTest() {
@@ -32,8 +33,55 @@ export default function ModelChatTest() {
   const [generating, setGenerating] = React.useState(false);
   const [modelInfo, setModelInfo] = React.useState<any>(null);
   const [testResult, setTestResult] = React.useState<string | null>(null);
+  const [toolMode, setToolMode] = React.useState(false);
+  const [streamingTokens, setStreamingTokens] = React.useState<string[]>([]);
   
   const scrollViewRef = React.useRef<ScrollView>(null);
+  
+  // Define tool for weather function
+  const weatherTool = {
+    type: 'function',
+    function: {
+      name: 'weather',
+      description: 'Gets the weather from a specific city',
+      parameters: {
+        type: 'object',
+        properties: {
+          city: {
+            type: 'string',
+            description: 'The city for the weather.',
+          },
+        },
+        required: ['city'],
+      },
+    },
+  };
+
+  // Weather system prompt
+  const weatherSystemPrompt = 'You are a helpful assistant that can give the weather in a specific city. If the user asks for weather and a city is not provided, you must ask which city they want. If the city is provided make the call to the weather tool.';
+  
+  // Reset to default mode
+  const resetChat = () => {
+    setMessages([
+      { role: 'system', content: toolMode ? weatherSystemPrompt : 'You are a helpful AI assistant.' }
+    ]);
+    setTestResult(null);
+  };
+  
+  // Toggle tool mode
+  const toggleToolMode = () => {
+    const newMode = !toolMode;
+    setToolMode(newMode);
+    
+    // Update system prompt based on mode
+    setMessages([
+      { role: 'system', content: newMode ? weatherSystemPrompt : 'You are a helpful AI assistant.' }
+    ]);
+    
+    setTestResult(newMode 
+      ? 'Tool mode activated. Ask about the weather in a city.' 
+      : 'Normal chat mode activated.');
+  };
   
   // Find and initialize model
   const initializeModel = async () => {
@@ -55,14 +103,19 @@ export default function ModelChatTest() {
       console.log('Model info:', info);
       
       // Initialize with optimal settings - the C++ module will handle GPU fallback gracefully
-      console.log('Initializing model with optimal settings...');
-      const modelInstance = await LlamaCppRn.initLlama({
+      console.log('Initializing model with optimal settings...', {
         model: modelPath,
-        n_ctx: 2048,       // Context size of 2048 is sufficient for most interactions
+        n_ctx: 512,       // Context size of 2048 is sufficient for most interactions
         n_batch: 128,      // Smaller batch size for better stability
         n_gpu_layers: 0,   // Force CPU only for reliability
         use_mlock: true,   // Keep model in RAM and prevent swapping to disk
-        n_threads: 4,      // Explicitly set thread count to 4 for stability
+      });
+      const modelInstance = await LlamaCppRn.initLlama({
+        model: modelPath,
+        n_ctx: 512,       // Context size of 2048 is sufficient for most interactions
+        n_batch: 128,      // Smaller batch size for better stability
+        n_gpu_layers: 0,   // Force CPU only for reliability
+        use_mlock: true,   // Keep model in RAM and prevent swapping to disk
       });
       
       console.log('Model initialized successfully');
@@ -149,6 +202,7 @@ export default function ModelChatTest() {
         top_p: 0.9,          // More conservative filtering 
         top_k: 40,           // Standard filtering
         max_tokens: 20,      // Increased for better results
+        n_gpu_layers: 0,
       });
       
       console.log('Basic completion result:', response.text);
@@ -159,6 +213,87 @@ export default function ModelChatTest() {
     }
   };
   
+  // Test streaming functionality
+  const testStreaming = async () => {
+    if (!model) return;
+    setTestResult(null);
+    setStreamingTokens([]);
+    setGenerating(true);
+    
+    try {
+      console.log('Testing streaming with simple prompt');
+      const testPrompt = "Generate a short paragraph about streaming tokens";
+      
+      // Run a simple completion with streaming
+      const response = await model.completion({
+        prompt: testPrompt,
+        temperature: 0.3,    
+        top_p: 0.9,         
+        top_k: 40,         
+        max_tokens: 50,
+        n_gpu_layers: 0,
+      },
+      // Add streaming callback function
+      (data: { token: string }) => {
+        handleStreamingToken(data.token);
+      });
+      
+      setTestResult(`Streaming test complete. Generated: "${response.text}"`);
+    } catch (err) {
+      console.error('Streaming test error:', err);
+      setTestResult(`Streaming Test Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setGenerating(false);
+    }
+  };
+  
+  // Handle tool call
+  const handleToolCall = async (toolCall: any) => {
+    console.log('Tool call received:', toolCall);
+    
+    try {
+      if (toolCall.function.name === 'weather') {
+        // Parse the arguments
+        const args = JSON.parse(toolCall.function.arguments);
+        const city = args.city;
+        
+        // Simulate weather data
+        const weatherData = {
+          city,
+          temperature: Math.floor(Math.random() * 30) + 5, // 5-35°C
+          condition: ['Sunny', 'Cloudy', 'Rainy', 'Partly cloudy', 'Stormy'][Math.floor(Math.random() * 5)],
+          humidity: Math.floor(Math.random() * 60) + 30, // 30-90%
+        };
+        
+        // Create tool message
+        const toolMessage: Message = {
+          role: 'tool',
+          content: JSON.stringify(weatherData),
+          name: 'weather'
+        };
+        
+        // Add the tool response to messages
+        setMessages(prev => [...prev, toolMessage]);
+        
+        // Continue the conversation with the tool response
+        return toolMessage;
+      }
+      
+      throw new Error(`Unknown tool: ${toolCall.function.name}`);
+    } catch (err) {
+      console.error('Error handling tool call:', err);
+      const errorMessage: Message = {
+        role: 'tool',
+        content: JSON.stringify({ error: `Error processing tool call: ${err}` }),
+        name: toolCall.function.name
+      };
+      
+      // Add the error message to messages
+      setMessages(prev => [...prev, errorMessage]);
+      return errorMessage;
+    }
+  };
+
   // Send a message to the model
   const sendMessage = async () => {
     if (!model || !input.trim()) return;
@@ -168,28 +303,110 @@ export default function ModelChatTest() {
     setInput('');
     setGenerating(true);
     setError(null); // Clear any previous errors
+    setStreamingTokens([]); // Clear previous streaming tokens
     
     try {
       // Prepare the messages for completion
       const formattedMessages = [...messages, userMessage];
       
       console.log('Starting completion with', formattedMessages.length, 'messages');
+      // Log message structure for debugging
+      formattedMessages.forEach((msg, i) => {
+        console.log(`Message ${i}: role=${msg.role}, content=${msg.content.substring(0, 50)}${msg.content.length > 50 ? '...' : ''}`);
+      });
       
-      // Generate completion
-      const response = await model.completion({
+      // Prepare completion options with careful defaults
+      const completionOptions: any = {
         messages: formattedMessages,
         temperature: 0.3,     // Lower temperature for more stability
         top_p: 0.85,          // More conservative top_p
         top_k: 40,            // Standard top_k value
-        max_tokens: 100,      // Reduced max tokens for better stability
-        stop: ["</s>", "<|im_end|>", "<|eot_id|>"] // Include <|eot_id|> for better compatibility
-      });
-      // Add the response to messages
-      const assistantMessage: Message = { 
-        role: 'assistant', 
-        content: response.text || 'Sorry, I couldn\'t generate a response.' 
+        max_tokens: 200,      // Increased max tokens for better responses with tools
+        stop: ["</s>", "<|im_end|>", "<|eot_id|>"], // Include <|eot_id|> for better compatibility
+        n_gpu_layers: 0,
       };
-      setMessages(prev => [...prev, assistantMessage]);
+      
+      // Ensure system message exists at the beginning
+      if (formattedMessages.length > 0 && formattedMessages[0].role !== 'system') {
+        console.log('No system message found, adding default system message');
+        completionOptions.system_prompt = 'You are a helpful AI assistant.';
+      }
+      
+      // Add tools and jinja flag if in tool mode
+      if (toolMode) {
+        console.log('Tool mode enabled, adding weather tool');
+        completionOptions.tools = [weatherTool];
+        completionOptions.jinja = true;
+        completionOptions.tool_choice = "auto";
+      }
+      
+      console.log('Completion options:', JSON.stringify(completionOptions, null, 2));
+      
+      // Generate completion with streaming token callback
+      console.log('Calling model.completion...');
+      const response = await model.completion(
+        completionOptions,
+        // Add streaming callback function
+        (data: { token: string }) => {
+          handleStreamingToken(data.token);
+        }
+      );
+      
+      console.log('Completion response:', response);
+      
+      // Check if we have tool calls
+      if (response.tool_calls && response.tool_calls.length > 0) {
+        console.log('Tool calls detected:', response.tool_calls);
+        
+        // Add assistant message with the tool call request
+        const assistantMessage: Message = { 
+          role: 'assistant', 
+          content: response.text || 'I need to use a tool to answer that.'
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+        
+        // Handle each tool call sequentially
+        const toolResponses = [];
+        for (const toolCall of response.tool_calls) {
+          console.log('Processing tool call:', toolCall);
+          const toolResponse = await handleToolCall(toolCall);
+          toolResponses.push(toolResponse);
+        }
+        
+        // Now get a follow-up response from the model with the tool results
+        const allMessages = [
+          ...messages, 
+          userMessage, 
+          assistantMessage,
+          ...toolResponses
+        ];
+        
+        console.log('Getting final response with tool results. Message count:', allMessages.length);
+        
+        // Get the final response
+        const finalResponse = await model.completion({
+          ...completionOptions,
+          messages: allMessages,
+        },
+        // Add streaming callback function for final response
+        (data: { token: string }) => {
+          handleStreamingToken(data.token);
+        });
+        
+        // Add the final assistant response
+        const finalMessage: Message = { 
+          role: 'assistant', 
+          content: finalResponse.text || 'I couldn\'t process the tool response.'
+        };
+        setMessages(prev => [...prev, finalMessage]);
+      } else {
+        // Standard response without tool calls
+        const assistantMessage: Message = { 
+          role: 'assistant', 
+          content: response.text || 'Sorry, I couldn\'t generate a response.' 
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+      }
     } catch (err) {
       console.error('Completion error:', err);
       
@@ -198,20 +415,38 @@ export default function ModelChatTest() {
       let diagnostics = '';
       
       // Check if there are detailed diagnostics in the error object
-      if (err && typeof err === 'object' && 'diagnostics' in err) {
-        const diag = (err as any).diagnostics;
+      if (err && typeof err === 'object') {
+        console.log('Error object keys:', Object.keys(err));
+        
+        // Try to extract any useful properties
         try {
-          // Format diagnostics as a list
-          diagnostics = '\n\nDiagnostics:\n';
-          if (diag.messages_count) diagnostics += `- Messages: ${diag.messages_count}\n`;
-          if (diag.message_roles) diagnostics += `- Roles: ${diag.message_roles.join(', ')}\n`;
-          if (diag.temperature) diagnostics += `- Temperature: ${diag.temperature}\n`;
-          if (diag.top_p) diagnostics += `- Top_p: ${diag.top_p}\n`;
-          if (diag.top_k) diagnostics += `- Top_k: ${diag.top_k}\n`;
-          if (diag.max_tokens) diagnostics += `- Max tokens: ${diag.max_tokens}\n`;
-          if (diag.template_name) diagnostics += `- Template: ${diag.template_name}\n`;
+          const diagnosticEntries = [];
+          for (const [key, value] of Object.entries(err)) {
+            if (key !== 'message' && key !== 'stack') {
+              diagnosticEntries.push(`- ${key}: ${JSON.stringify(value)}`);
+            }
+          }
+          
+          if (diagnosticEntries.length > 0) {
+            diagnostics = '\n\nDiagnostics:\n' + diagnosticEntries.join('\n');
+          }
+          
+          // Special handling for diagnostics property if it exists
+          if ('diagnostics' in err) {
+            const diag = (err as any).diagnostics;
+            // Format diagnostics as a list
+            diagnostics += '\n\nDetailed Diagnostics:\n';
+            if (diag.messages_count) diagnostics += `- Messages: ${diag.messages_count}\n`;
+            if (diag.message_roles) diagnostics += `- Roles: ${diag.message_roles.join(', ')}\n`;
+            if (diag.temperature) diagnostics += `- Temperature: ${diag.temperature}\n`;
+            if (diag.top_p) diagnostics += `- Top_p: ${diag.top_p}\n`;
+            if (diag.top_k) diagnostics += `- Top_k: ${diag.top_k}\n`;
+            if (diag.max_tokens) diagnostics += `- Max tokens: ${diag.max_tokens}\n`;
+            if (diag.template_name) diagnostics += `- Template: ${diag.template_name}\n`;
+          }
         } catch (e) {
-          diagnostics = '\n\nDiagnostics available but could not be formatted.';
+          console.error('Error extracting diagnostics:', e);
+          diagnostics = '\n\nError data available but could not be formatted.';
         }
       }
       
@@ -375,6 +610,40 @@ export default function ModelChatTest() {
     }, 100);
   }, [messages]);
   
+  // Format tool response JSON for display
+  const formatToolResponse = (content: string): string => {
+    try {
+      // Try to parse as JSON for better display
+      const data = JSON.parse(content);
+      
+      // Format weather data specially
+      if (data.city && data.temperature !== undefined) {
+        return `Weather in ${data.city}:\n• Temperature: ${data.temperature}°C\n• Condition: ${data.condition}\n• Humidity: ${data.humidity}%`;
+      }
+      
+      // Format other JSON responses
+      return Object.entries(data)
+        .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+        .join('\n');
+    } catch (e) {
+      // If not valid JSON, return as is
+      return content;
+    }
+  };
+  
+  // Handle streaming token callback
+  const handleStreamingToken = (token: string) => {
+    console.log('Token received:', token);
+    setStreamingTokens(prev => {
+      const newTokens = [...prev, token];
+      // Keep only the last 10 tokens to avoid overwhelming the UI
+      if (newTokens.length > 10) {
+        return newTokens.slice(newTokens.length - 10);
+      }
+      return newTokens;
+    });
+  };
+  
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Model Chat Test</Text>
@@ -436,6 +705,20 @@ export default function ModelChatTest() {
             </Text>
             <View style={styles.headerButtons}>
               <TouchableOpacity 
+                style={[styles.testButton, toolMode && styles.activeToolButton]} 
+                onPress={toggleToolMode}
+              >
+                <Text style={styles.testButtonText}>
+                  {toolMode ? 'Tool Mode ✓' : 'Tool Mode'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.testButton} 
+                onPress={resetChat}
+              >
+                <Text style={styles.testButtonText}>Reset Chat</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
                 style={styles.testButton} 
                 onPress={testTokenizer}
               >
@@ -446,6 +729,12 @@ export default function ModelChatTest() {
                 onPress={testBasicCompletion}
               >
                 <Text style={styles.testButtonText}>Test Basic Completion</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.testButton} 
+                onPress={testStreaming}
+              >
+                <Text style={styles.testButtonText}>Test Streaming</Text>
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.unloadButton} 
@@ -462,6 +751,20 @@ export default function ModelChatTest() {
             </View>
           )}
           
+          {toolMode && (
+            <View style={styles.toolModeContainer}>
+              <Text style={styles.toolModeText}>
+                <Text style={styles.toolModeHighlight}>Tool Mode Active:</Text> Ask about the weather in a city
+              </Text>
+              <TouchableOpacity
+                style={styles.exampleButton}
+                onPress={() => setInput("What's the weather in New York?")}
+              >
+                <Text style={styles.exampleButtonText}>Try Example</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          
           <ScrollView 
             style={styles.messagesContainer}
             ref={scrollViewRef}
@@ -472,15 +775,36 @@ export default function ModelChatTest() {
                 key={index}
                 style={[
                   styles.message,
-                  msg.role === 'user' ? styles.userMessage : styles.assistantMessage
+                  msg.role === 'user' ? styles.userMessage : 
+                  msg.role === 'assistant' ? styles.assistantMessage :
+                  styles.toolMessage
                 ]}
               >
-                <Text style={styles.messageText}>{msg.content}</Text>
+                {msg.role === 'tool' && (
+                  <Text style={styles.toolName}>
+                    {msg.name || 'Tool Response'}
+                  </Text>
+                )}
+                <Text style={styles.messageText}>
+                  {msg.role === 'tool' ? formatToolResponse(msg.content) : msg.content}
+                </Text>
               </View>
             ))}
             {generating && (
               <View style={[styles.message, styles.assistantMessage]}>
                 <ActivityIndicator size="small" color="#333" />
+                {streamingTokens.length > 0 && (
+                  <View style={styles.streamingContainer}>
+                    <Text style={styles.streamingTitle}>Latest tokens:</Text>
+                    <Text style={styles.streamingTokens}>
+                      {streamingTokens.map((token, i) => (
+                        <Text key={i} style={styles.streamingToken}>
+                          {token.replace(/\n/g, '⏎')}
+                        </Text>
+                      )).reverse()}
+                    </Text>
+                  </View>
+                )}
               </View>
             )}
           </ScrollView>
@@ -701,5 +1025,66 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 16,
     color: '#333',
+  },
+  activeToolButton: {
+    backgroundColor: '#28a745',
+  },
+  toolMessage: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#f0f0f0',
+  },
+  toolName: {
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  toolModeContainer: {
+    marginVertical: 10,
+    padding: 10,
+    backgroundColor: '#e9ecef',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  toolModeText: {
+    color: '#212529',
+    fontSize: 14,
+    flex: 1,
+  },
+  toolModeHighlight: {
+    fontWeight: 'bold',
+  },
+  exampleButton: {
+    backgroundColor: '#007bff',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 4,
+    marginLeft: 10,
+  },
+  exampleButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 11,
+  },
+  streamingContainer: {
+    marginTop: 10,
+    padding: 10,
+    backgroundColor: '#e9ecef',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+  },
+  streamingTitle: {
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  streamingTokens: {
+    color: '#212529',
+    fontSize: 14,
+  },
+  streamingToken: {
+    marginBottom: 4,
   },
 }); 

@@ -383,7 +383,7 @@ export default function LlamaTest() {
       };
       
       // Call the conversion function
-      const result = await LlamaCppRn.jsonSchemaToGbnf(schema);
+      const result = await LlamaCppRn.jsonSchemaToGbnf({schema: JSON.stringify(schema)});
       console.log('Schema conversion result:', result);
       
       setSchemaResult(result);

@@ -20,14 +20,31 @@ Pod::Spec.new do |s|
                    "cpp/LlamaCppModel.h", 
                    "cpp/LlamaCppModel.cpp", 
                    "cpp/SystemUtils.h",
-                   "cpp/SystemUtils.cpp"
-  
+                   "cpp/SystemUtils.cpp",
+                   "cpp/llama.cpp/common/common.h",
+                   "cpp/llama.cpp/common/build-info.cpp",
+                   "cpp/llama.cpp/common/json-schema-to-grammar.cpp",
+                   "cpp/llama.cpp/common/json-schema-to-grammar.h",
+                   "cpp/llama.cpp/common/common.cpp",
+                   "cpp/llama.cpp/common/chat.cpp",
+                   "cpp/llama.cpp/common/chat.h",
+                   "cpp/llama.cpp/common/log.cpp",
+                   "cpp/llama.cpp/common/log.h",
+                   "cpp/llama.cpp/common/sampling.cpp",
+                   "cpp/llama.cpp/common/sampling.h",
+                   "cpp/llama.cpp/common/minja/chat-template.hpp",
+                   "cpp/llama.cpp/common/minja/minja.hpp",
+                   "cpp/llama.cpp/llama.cpp",
+                   "cpp/llama.cpp/common/json.hpp",
+                   "cpp/llama.cpp/common/speculative.cpp",
+                   "cpp/llama.cpp/common/speculative.h"
+                   
   # Include llama.cpp headers for compilation
   s.preserve_paths = "ios/include/**/*.h", "ios/framework/**/*"
   
   # Use the prebuilt framework
   s.vendored_frameworks = "ios/framework/build-apple/llama.xcframework"
-  
+
   # Compiler settings
   s.pod_target_xcconfig = {
     "HEADER_SEARCH_PATHS" => "\"$(PODS_TARGET_SRCROOT)/ios/include\" \"$(PODS_TARGET_SRCROOT)/cpp\" \"$(PODS_ROOT)/boost\" \"$(PODS_ROOT)/Headers/Public/React-bridging\" \"$(PODS_ROOT)/Headers/Public/React\"",
@@ -36,7 +53,13 @@ Pod::Spec.new do |s|
     "GCC_OPTIMIZATION_LEVEL" => "3", # Maximum optimization
     "SWIFT_OPTIMIZATION_LEVEL" => "-O",
     "ENABLE_BITCODE" => "NO",
-    "DEFINES_MODULE" => "YES"
+    "DEFINES_MODULE" => "YES",
+    "OTHER_LDFLAGS" => "$(inherited)"
+  }
+
+  # Add user_target_xcconfig to propagate linker flags
+  s.user_target_xcconfig = {
+    "OTHER_LDFLAGS" => "$(inherited)"
   }
 
   # React Native dependencies (new architecture)

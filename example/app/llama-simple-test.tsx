@@ -36,7 +36,7 @@ export default function LlamaSimpleTest() {
         required: ['name']
       };
       
-      const result = await LlamaCppRn.jsonSchemaToGbnf(simpleSchema);
+      const result = await LlamaCppRn.jsonSchemaToGbnf({schema: JSON.stringify(simpleSchema)});
       console.log('Schema conversion result:', result);
       
       // Add this result to moduleInfo

@@ -96,6 +96,7 @@ ios/libs/build-apple/
 /ios/framework/build/
 /ios/libs/temp_framework.zip
 /ios/includes/
+/ios/include/*.h
 /android/libs/
 /android/build/
 /android/.cxx/
@@ -106,4 +107,4 @@ ios/libs/build-apple/
 /android/src/main/jniLibs/x86_64/libllama.so
 cpp/llama.cpp
 # Allow prebuilt binaries in prebuilt/ directory for npm packaging
-!/prebuilt/
+/prebuilt/

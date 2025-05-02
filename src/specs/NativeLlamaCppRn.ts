@@ -36,44 +36,31 @@ export interface LlamaModelParams {
 export interface LlamaCompletionParams {
   // Basic completion parameters
   prompt?: string;             // text prompt
-  system_prompt?: string;      // system prompt for chat mode
+  system_prompt?: string;      // system prompt for chat mode (alternative to including it in messages)
   messages?: LlamaMessage[];   // chat messages
   temperature?: number;        // sampling temperature (default: 0.8)
   top_p?: number;              // top-p sampling (default: 0.95)
   top_k?: number;              // top-k sampling (default: 40)
-  min_p?: number;              // min-p sampling (default: 0.05)
-  typical_p?: number;          // locally typical sampling (default: 1.0)
   n_predict?: number;          // max tokens to predict (default: -1, infinite)
-  n_keep?: number;             // number of tokens to keep from initial prompt
+  max_tokens?: number;         // alias for n_predict
   stop?: string[];             // stop sequences
   stream?: boolean;            // stream tokens as they're generated (default: true)
-  tfs_z?: number;              // tail free sampling value (default: 1.0)
+  
+  // Chat parameters
   chat_template?: string;      // optional chat template name to use
-  cache_prompt?: boolean;      // cache the prompt for faster reuse
 
   // Tool calling parameters
   jinja?: boolean;             // Enable Jinja template parser
   tool_choice?: string | 'auto' | 'none'; // Tool choice mode
   tools?: LlamaTool[];         // Available tools
 
-  // Advanced parameters
-  frequency_penalty?: number;  // frequency penalty (default: 0.0)
-  presence_penalty?: number;   // presence penalty (default: 0.0)
+  // Advanced parameters (matching llama.cpp server)
   repeat_penalty?: number;     // repetition penalty (default: 1.1)
   repeat_last_n?: number;      // last n tokens to consider for repetition penalty (default: 64)
-  penalize_nl?: boolean;       // penalize newlines (default: true)
-  mirostat?: number;           // use Mirostat sampling (default: 0)
-  mirostat_tau?: number;       // Mirostat target entropy (default: 5.0)
-  mirostat_eta?: number;       // Mirostat learning rate (default: 0.1)
+  frequency_penalty?: number;  // frequency penalty (default: 0.0)
+  presence_penalty?: number;   // presence penalty (default: 0.0)
   seed?: number;               // RNG seed (default: -1, random)
-  ignore_eos?: boolean;        // ignore end of sequence token (default: false)
-  logit_bias?: Record<number, number>; // token biases for sampling
-
-  // JSON response format parameters
-  response_format?: {
-    type: 'json_object';
-    json_schema?: Record<string, any>;
-  };
+  grammar?: string;            // GBNF grammar for structured output
 }
 
 export interface LlamaMessage {

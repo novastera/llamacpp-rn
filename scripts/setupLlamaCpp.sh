@@ -3,7 +3,7 @@
 # It prioritizes pre-packaged binaries, then tries prebuilt downloads, then builds from source
 
 set -e
-
+# android/app/src/main/jniLibs/
 # Define color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -46,7 +46,7 @@ chmod +x "$SCRIPT_DIR/download_prebuilt.sh"
 chmod +x "$SCRIPT_DIR/llama_cpp_version.sh"
 
 # Setup directories
-mkdir -p "ios/includes"
+mkdir -p "ios/include"
 mkdir -p "ios/libs"
 mkdir -p "ios/framework/build-apple"
 mkdir -p "android/src/main/cpp/includes"
@@ -90,15 +90,11 @@ else
     cp -R "$PACKAGED_IOS_FRAMEWORK" "ios/libs/llamacpp.xcframework"
     cp -R "$PACKAGED_IOS_FRAMEWORK" "ios/framework/build-apple/llama.xcframework"
     
-    # Copy headers
+    # Copy only essential headers
     if [ -d "$PACKAGED_IOS_FRAMEWORK/ios-arm64/llama.framework/Headers" ]; then
-      cp -R "$PACKAGED_IOS_FRAMEWORK/ios-arm64/llama.framework/Headers/"* "ios/includes/"
+      cp -n "$PACKAGED_IOS_FRAMEWORK/ios-arm64/llama.framework/Headers/llama-cpp.h" "ios/include/" 2>/dev/null || true
     elif [ -d "$PACKAGED_IOS_FRAMEWORK/ios-arm64_x86_64-simulator/llama.framework/Headers" ]; then
-      cp -R "$PACKAGED_IOS_FRAMEWORK/ios-arm64_x86_64-simulator/llama.framework/Headers/"* "ios/includes/"
-    elif [ -d "$PACKAGED_IOS_FRAMEWORK/xros-arm64/llama.framework/Headers" ]; then
-      cp -R "$PACKAGED_IOS_FRAMEWORK/xros-arm64/llama.framework/Headers/"* "ios/includes/"
-    elif [ -d "$PACKAGED_IOS_FRAMEWORK/macos-arm64_x86_64/llama.framework/Versions/A/Headers" ]; then
-      cp -R "$PACKAGED_IOS_FRAMEWORK/macos-arm64_x86_64/llama.framework/Versions/A/Headers/"* "ios/includes/"
+      cp -n "$PACKAGED_IOS_FRAMEWORK/ios-arm64_x86_64-simulator/llama.framework/Headers/llama-cpp.h" "ios/include/" 2>/dev/null || true
     fi
     
     IOS_SETUP_DONE=true
@@ -162,15 +158,15 @@ else
       fi
       
       echo -e "${YELLOW}Setting up iOS include files...${NC}"
-      # Try to find headers in any available slices
+      # Try to find headers in any available slices - only copy essential headers
       if [ -d "ios/libs/llamacpp.xcframework/ios-arm64/llama.framework/Headers" ]; then
-        cp -R "ios/libs/llamacpp.xcframework/ios-arm64/llama.framework/Headers/"* "ios/includes/"
+        cp -n "ios/libs/llamacpp.xcframework/ios-arm64/llama.framework/Headers/llama-cpp.h" "ios/include/" 2>/dev/null || true
       elif [ -d "ios/libs/llamacpp.xcframework/ios-arm64_x86_64-simulator/llama.framework/Headers" ]; then
-        cp -R "ios/libs/llamacpp.xcframework/ios-arm64_x86_64-simulator/llama.framework/Headers/"* "ios/includes/"
+        cp -n "ios/libs/llamacpp.xcframework/ios-arm64_x86_64-simulator/llama.framework/Headers/llama-cpp.h" "ios/include/" 2>/dev/null || true
       elif [ -d "ios/libs/llamacpp.xcframework/xros-arm64/llama.framework/Headers" ]; then
-        cp -R "ios/libs/llamacpp.xcframework/xros-arm64/llama.framework/Headers/"* "ios/includes/"
+        cp -n "ios/libs/llamacpp.xcframework/xros-arm64/llama.framework/Headers/llama-cpp.h" "ios/include/" 2>/dev/null || true
       elif [ -d "ios/libs/llamacpp.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Headers" ]; then
-        cp -R "ios/libs/llamacpp.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Headers/"* "ios/includes/"
+        cp -n "ios/libs/llamacpp.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Headers/llama-cpp.h" "ios/include/" 2>/dev/null || true
       fi
       
       IOS_SETUP_DONE=true

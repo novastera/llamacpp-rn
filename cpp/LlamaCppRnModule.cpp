@@ -10,6 +10,10 @@
 #include "SystemUtils.h"
 #include "LlamaCppModel.h"
 
+// Include the llama.cpp common headers
+#include "json-schema-to-grammar.h"
+#include "chat.h"
+
 #if defined(__ANDROID__) || defined(__linux__)
 #include <unistd.h>
 #endif
@@ -35,6 +39,24 @@ static jsi::Value __hostFunction_LlamaCppRnSpecLoadLlamaModelInfo(
   return static_cast<LlamaCppRn *>(&turboModule)->loadLlamaModelInfo(rt, args[0].getString(rt));
 }
 
+/**
+ * Converts a JSON Schema to GBNF (Grammar BNF) for constrained generation
+ * 
+ * @param args - An object with a "schema" property that contains the JSON Schema as a string
+ * Example:
+ * {
+ *   schema: JSON.stringify({
+ *     type: "object",
+ *     properties: {
+ *       name: { type: "string" },
+ *       age: { type: "number" }
+ *     },
+ *     required: ["name"]
+ *   })
+ * }
+ * 
+ * @returns A string containing the GBNF grammar
+ */
 static jsi::Value __hostFunction_LlamaCppRnSpecJsonSchemaToGbnf(
     jsi::Runtime &rt, TurboModule &turboModule, const jsi::Value *args, size_t count) {
   return static_cast<LlamaCppRn *>(&turboModule)->jsonSchemaToGbnf(rt, args[0].getObject(rt));
@@ -140,381 +162,175 @@ jsi::Value LlamaCppRn::loadLlamaModelInfo(jsi::Runtime &runtime, jsi::String mod
   }
 }
 
-jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
+jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
   std::lock_guard<std::mutex> lock(mutex_);
   
   try {
-    // Check if model param exists
-    if (!params.hasProperty(runtime, "model")) {
-      throw std::runtime_error("Missing required parameter: model");
+    // Get model path - required
+    if (!options.hasProperty(runtime, "model")) {
+      throw std::runtime_error("model path is required");
     }
     
-    std::string modelPath = normalizeFilePath(params.getProperty(runtime, "model").asString(runtime).utf8(runtime));
+    // Load dynamic backends if needed
+    ggml_backend_load_all();
     
-    // Initialize llama backend
-    llama_backend_init();
+    std::string model_path = options.getProperty(runtime, "model").asString(runtime).utf8(runtime);
     
-    // The following model and context parameters aim to be compatible with llama.cpp server (server.cpp)
-    // See: https://github.com/ggml-org/llama.cpp/tree/master/examples/server
+    // Setup parameters from options (or use defaults if not supplied)
+    struct llama_model_params model_params = llama_model_default_params();
     
-    // Create model params
-    llama_model_params modelParams = llama_model_default_params();
-    
-    // Get optional parameters
-    if (params.hasProperty(runtime, "use_mlock") && params.getProperty(runtime, "use_mlock").asBool()) {
-      modelParams.use_mlock = true;
-    }
-    
-    // Memory mapping
-    if (params.hasProperty(runtime, "mmap")) {
-      modelParams.use_mmap = params.getProperty(runtime, "mmap").asBool();
-    }
-    
-    // Vocabulary only
-    if (params.hasProperty(runtime, "vocab_only")) {
-      modelParams.vocab_only = params.getProperty(runtime, "vocab_only").asBool();
-    }
-    
-    // Check if GPU is supported
+    // Set n_gpu_layers
+    int n_gpu_layers = 0;
     bool gpuSupported = llama_supports_gpu_offload();
-    if (params.hasProperty(runtime, "n_gpu_layers")) {
-      // User specified GPU layers
-      modelParams.n_gpu_layers = (int)params.getProperty(runtime, "n_gpu_layers").asNumber();
-      if (modelParams.n_gpu_layers > 0 && !gpuSupported) {
-        // Fall back to CPU silently
-        modelParams.n_gpu_layers = 0;
-      }
-    } else {
-      modelParams.n_gpu_layers = 0;
+    if (options.hasProperty(runtime, "n_gpu_layers") && gpuSupported) {
+      n_gpu_layers = options.getProperty(runtime, "n_gpu_layers").asNumber();
     }
+    model_params.n_gpu_layers = n_gpu_layers;
+    
+    // Set use_mlock
+    bool use_mlock = false;
+    if (options.hasProperty(runtime, "use_mlock")) {
+      use_mlock = options.getProperty(runtime, "use_mlock").asBool();
+    }
+    model_params.use_mlock = use_mlock;
+    
+    // Create inference parameters
+    llama_context_params ctx_params = llama_context_default_params();
+    
+    // Set n_ctx - default to a reasonable context length
+    int n_ctx = 2048;
+    if (options.hasProperty(runtime, "n_ctx")) {
+      n_ctx = options.getProperty(runtime, "n_ctx").asNumber();
+    }
+    ctx_params.n_ctx = n_ctx;
+    
+    // Set n_batch - how many tokens to process at once
+    int n_batch = 512;
+    if (options.hasProperty(runtime, "n_batch")) {
+      n_batch = options.getProperty(runtime, "n_batch").asNumber();
+    }
+    ctx_params.n_batch = n_batch;
+    
+    // Set number of threads
+    int n_threads = 0; // 0 = auto
+    if (options.hasProperty(runtime, "n_threads")) {
+      n_threads = options.getProperty(runtime, "n_threads").asNumber();
+    }
+    ctx_params.n_threads = n_threads;
+    
+    // Initialize seed for reproducibility or randomness
+    int seed = -1; // -1 = random
+    if (options.hasProperty(runtime, "seed")) {
+      seed = options.getProperty(runtime, "seed").asNumber();
+    }
+    // The seed should not be assigned to ctx_params directly
+    // It will be passed to the sampling parameters in the LlamaCppModel
     
     // Load the model
-    llama_model* model = llama_model_load_from_file(modelPath.c_str(), modelParams);
+    fprintf(stderr, "Loading model: %s\n", model_path.c_str());
+    fprintf(stderr, "Parameters: n_gpu_layers=%d, use_mlock=%d, n_ctx=%d, n_batch=%d, n_threads=%d, seed=%d\n",
+            n_gpu_layers, use_mlock, n_ctx, n_batch, n_threads, seed);
+    
+    // Use the non-deprecated function
+    llama_model* model = llama_model_load_from_file(model_path.c_str(), model_params);
     if (!model) {
-      throw std::runtime_error("Failed to load model: " + modelPath);
+      fprintf(stderr, "Failed to load model: %s\n", model_path.c_str());
+      throw std::runtime_error("failed to load model");
     }
     
-    // Create context params
-    llama_context_params contextParams = llama_context_default_params();
-    
-    // Get optional context parameters
-    // Context size
-    if (params.hasProperty(runtime, "n_ctx")) {
-      contextParams.n_ctx = (int)params.getProperty(runtime, "n_ctx").asNumber();
-    }
-    
-    // Batch size
-    if (params.hasProperty(runtime, "n_batch")) {
-      contextParams.n_batch = (int)params.getProperty(runtime, "n_batch").asNumber();
-    } else {
-      // Use a conservative batch size for mobile devices
-      contextParams.n_batch = 128;
-    }
-    
-    // Thread count
-    if (params.hasProperty(runtime, "n_threads")) {
-      contextParams.n_threads = (int)params.getProperty(runtime, "n_threads").asNumber();
-    } else {
-      contextParams.n_threads = SystemUtils::getOptimalThreadCount();
-    }
-    
-    // RoPE frequency scaling
-    if (params.hasProperty(runtime, "rope_freq_base")) {
-      contextParams.rope_freq_base = (float)params.getProperty(runtime, "rope_freq_base").asNumber();
-    }
-    
-    if (params.hasProperty(runtime, "rope_freq_scale")) {
-      contextParams.rope_freq_scale = (float)params.getProperty(runtime, "rope_freq_scale").asNumber();
-    }
-    
-    // LogitsAll parameter - needed for perplexity
-    if (params.hasProperty(runtime, "logits_all") && params.getProperty(runtime, "logits_all").asBool()) {
-      contextParams.logits_all = true;
-    }
-    
-    // Create context
-    llama_context* ctx = llama_init_from_model(model, contextParams);
+    // Initialize the context using the non-deprecated function
+    fprintf(stderr, "Initializing context (n_ctx=%d, n_batch=%d, n_threads=%d)\n", 
+            ctx_params.n_ctx, ctx_params.n_batch, ctx_params.n_threads);
+    llama_context* ctx = llama_init_from_model(model, ctx_params);
     if (!ctx) {
+      // Use the non-deprecated function
+      fprintf(stderr, "Failed to initialize context\n");
       llama_model_free(model);
-      throw std::runtime_error("Failed to create context");
+      throw std::runtime_error("failed to initialize context");
     }
     
-    // Create and return the model object
-    auto result = createModelObject(runtime, model, ctx);
+    fprintf(stderr, "Model loaded successfully with vocab size: %d\n", llama_vocab_n_tokens(llama_model_get_vocab(model)));
     
-    return result;
+    // Create the model object and return it
+    return createModelObject(runtime, model, ctx);
   } catch (const std::exception& e) {
-    jsi::Object error(runtime);
-    error.setProperty(runtime, "message", jsi::String::createFromUtf8(runtime, e.what()));
-    throw jsi::JSError(runtime, error.getProperty(runtime, "message").asString(runtime));
+    fprintf(stderr, "initLlama error: %s\n", e.what());
+    throw jsi::JSError(runtime, e.what());
   }
 }
 
+/**
+ * Converts a JSON Schema to GBNF (Grammar BNF) for constrained generation
+ * 
+ * @param runtime - The JavaScript runtime
+ * @param schema - An object with a "schema" property that contains the JSON Schema as a string
+ * Example:
+ * {
+ *   schema: JSON.stringify({
+ *     type: "object",
+ *     properties: {
+ *       name: { type: "string" },
+ *       age: { type: "number" }
+ *     },
+ *     required: ["name"]
+ *   })
+ * }
+ * 
+ * @returns A string containing the GBNF grammar
+ */
 jsi::Value LlamaCppRn::jsonSchemaToGbnf(jsi::Runtime &runtime, jsi::Object schema) {
   std::lock_guard<std::mutex> lock(mutex_);
   
   try {
-    std::ostringstream gbnf;
+    // Check if schema property exists
+    if (!schema.hasProperty(runtime, "schema")) {
+      throw std::runtime_error("Missing required parameter: schema");
+    }
+
+    // Get the schema property and verify it's a string
+    jsi::Value schemaValue = schema.getProperty(runtime, "schema");
+    if (!schemaValue.isString()) {
+      throw std::runtime_error("Schema must be a string");
+    }
+
+    // Parse the JSON schema
+    std::string jsonSchemaString = schemaValue.asString(runtime).utf8(runtime);
     
-    // Start with basic JSON grammar rules
-    gbnf << "# Base JSON grammar rules\n";
-    gbnf << "root ::= object\n\n";
-    
-    // Process the schema to add type-specific rules
-    if (schema.hasProperty(runtime, "type")) {
-      std::string type = schema.getProperty(runtime, "type").getString(runtime).utf8(runtime);
-      
-      if (type == "object") {
-        // Process object schema
-        gbnf << "# Object definition from schema\n";
-        gbnf << "object ::= \"{\" ws ";
-        
-        // Check if we have any properties
-        if (schema.hasProperty(runtime, "properties") && schema.getProperty(runtime, "properties").isObject()) {
-          jsi::Object properties = schema.getProperty(runtime, "properties").getObject(runtime);
-          std::vector<std::string> propNames;
-          std::vector<std::string> requiredProps;
-          
-          // Get required properties if specified
-          if (schema.hasProperty(runtime, "required") && schema.getProperty(runtime, "required").isObject()) {
-            jsi::Array required = schema.getProperty(runtime, "required").getObject(runtime).asArray(runtime);
-            for (size_t i = 0; i < required.size(runtime); i++) {
-              if (required.getValueAtIndex(runtime, i).isString()) {
-                requiredProps.push_back(required.getValueAtIndex(runtime, i).getString(runtime).utf8(runtime));
-              }
-            }
-          } else if (schema.hasProperty(runtime, "required")) {
-            // Alternative format where required is directly an array
-            jsi::Value requiredVal = schema.getProperty(runtime, "required");
-            if (requiredVal.isObject()) {
-              jsi::Array required = requiredVal.getObject(runtime).asArray(runtime);
-              for (size_t i = 0; i < required.size(runtime); i++) {
-                if (required.getValueAtIndex(runtime, i).isString()) {
-                  requiredProps.push_back(required.getValueAtIndex(runtime, i).getString(runtime).utf8(runtime));
-                }
-              }
-            }
-          }
-          
-          // Get property names (using jsi::Function.getPropertyNames is better but not available)
-          auto propNameIds = properties.getPropertyNames(runtime);
-          for (size_t i = 0; i < propNameIds.size(runtime); i++) {
-            std::string propName = propNameIds.getValueAtIndex(runtime, i).getString(runtime).utf8(runtime);
-            propNames.push_back(propName);
-          }
-          
-          // Generate property pairs
-          if (!propNames.empty()) {
-            size_t count = 0;
-            for (const auto& propName : propNames) {
-              bool isRequired = std::find(requiredProps.begin(), requiredProps.end(), propName) != requiredProps.end();
-              
-              // Property name, always quoted
-              gbnf << "\"\\\"" << propName << "\\\"\" ws \":\" ws ";
-              
-              // Property value - look up property type
-              jsi::Object propObj = properties.getProperty(runtime, propName.c_str()).getObject(runtime);
-              if (propObj.hasProperty(runtime, "type")) {
-                std::string propType = propObj.getProperty(runtime, "type").getString(runtime).utf8(runtime);
-                
-                if (propType == "string") {
-                  gbnf << "string";
-                } else if (propType == "number" || propType == "integer") {
-                  gbnf << "number";
-                } else if (propType == "boolean") {
-                  gbnf << "boolean";
-                } else if (propType == "array") {
-                  gbnf << "array";
-                } else if (propType == "object") {
-                  gbnf << "nested_object";
-                } else {
-                  gbnf << "value"; // Fallback
-                }
-              } else {
-                gbnf << "value"; // Fallback
-              }
-              
-              count++;
-              if (count < propNames.size()) {
-                gbnf << " ws \",\" ws ";
-              }
-            }
-          } else {
-            // If no properties defined, allow any string pairs
-            gbnf << "string_pair (ws \",\" ws string_pair)*";
-          }
-        } else {
-          // No properties specified, allow any string pairs
-          gbnf << "string_pair (ws \",\" ws string_pair)*";
-        }
-        
-        gbnf << " ws \"}\" ws\n\n";
-        
-        // Add nested object rule
-        gbnf << "nested_object ::= \"{\" ws (string_pair (ws \",\" ws string_pair)*)? ws \"}\" ws\n";
-        gbnf << "string_pair ::= string ws \":\" ws value\n\n";
-      } else if (type == "array") {
-        // Process array schema
-        gbnf << "# Array definition from schema\n";
-        
-        if (schema.hasProperty(runtime, "items") && schema.getProperty(runtime, "items").isObject()) {
-          jsi::Object items = schema.getProperty(runtime, "items").getObject(runtime);
-          
-          if (items.hasProperty(runtime, "type")) {
-            std::string itemType = items.getProperty(runtime, "type").getString(runtime).utf8(runtime);
-            
-            gbnf << "array ::= \"[\" ws ";
-            
-            if (itemType == "string") {
-              gbnf << "(string (ws \",\" ws string)*)? ";
-            } else if (itemType == "number" || itemType == "integer") {
-              gbnf << "(number (ws \",\" ws number)*)? ";
-            } else if (itemType == "boolean") {
-              gbnf << "(boolean (ws \",\" ws boolean)*)? ";
-            } else if (itemType == "object") {
-              gbnf << "(nested_object (ws \",\" ws nested_object)*)? ";
-            } else {
-              gbnf << "(value (ws \",\" ws value)*)? "; // Default
-            }
-            
-            gbnf << "ws \"]\" ws\n\n";
-          } else {
-            // Default array definition with any values
-            gbnf << "array ::= \"[\" ws (value (ws \",\" ws value)*)? ws \"]\" ws\n\n";
-          }
-        } else {
-          // Default array definition
-          gbnf << "array ::= \"[\" ws (value (ws \",\" ws value)*)? ws \"]\" ws\n\n";
-        }
-      }
+    // Handle empty schema
+    if (jsonSchemaString.empty()) {
+      throw std::runtime_error("Schema cannot be empty");
     }
     
-    // Add value and basic type definitions
-    gbnf << "# Basic value and type definitions\n";
-    gbnf << "value ::= object | array | string | number | boolean | null\n\n";
-    gbnf << "string ::= \"\\\"\" ([^\"\\\\] | (\"\\\\\\\\\") | (\\\"\\\\\\\"\\\"))* \"\\\"\"\n";
-    gbnf << "number ::= (\"-\"? ([0-9] | [1-9] [0-9]*)) (\".\" [0-9]+)? (([eE] [-+]? [0-9]+))?\n";
-    gbnf << "boolean ::= \"true\" | \"false\"\n";
-    gbnf << "null ::= \"null\"\n";
-    gbnf << "ws ::= [ \\t\\n\\r]*\n";
-    
-    // Ensure object is defined if it hasn't been defined by the schema
-    if (gbnf.str().find("object ::=") == std::string::npos) {
-      gbnf << "\n# Default object definition\n";
-      gbnf << "object ::= \"{\" ws (string_pair (ws \",\" ws string_pair)*)? ws \"}\" ws\n";
-      gbnf << "string_pair ::= string ws \":\" ws value\n";
+    // Verify the JSON is valid
+    try {
+      auto parsed_json = nlohmann::json::parse(jsonSchemaString);
+    } catch (const nlohmann::json::exception& e) {
+      throw std::runtime_error(std::string("Invalid JSON in schema: ") + e.what());
     }
     
-    // Debug print the generated grammar
-    std::string grammar = gbnf.str();
+    // Convert the JSON schema to a GBNF grammar
+    std::string gbnfGrammar;
+    try {
+      gbnfGrammar = json_schema_to_grammar(jsonSchemaString);
+    } catch (const std::exception& e) {
+      throw std::runtime_error(std::string("Failed to convert schema to grammar: ") + e.what());
+    }
     
-    return jsi::String::createFromUtf8(runtime, grammar);
+    // Return the GBNF grammar
+    return jsi::String::createFromUtf8(runtime, gbnfGrammar);
   } catch (const std::exception& e) {
-    jsi::Object error(runtime);
-    error.setProperty(runtime, "message", jsi::String::createFromUtf8(runtime, e.what()));
-    throw jsi::JSError(runtime, error.getProperty(runtime, "message").asString(runtime));
+    // Log the error and rethrow
+    fprintf(stderr, "jsonSchemaToGbnf error: %s\n", e.what());
+    throw jsi::JSError(runtime, e.what());
   }
 }
 
 jsi::Object LlamaCppRn::createModelObject(jsi::Runtime& runtime, llama_model* model, llama_context* ctx) {
-  // Create the LlamaCppModel instance to handle model operations
-  auto* llamaModel = new LlamaCppModel(model, ctx);
+  // Create a shared_ptr to a new LlamaCppModel instance
+  auto llamaModel = std::make_shared<LlamaCppModel>(model, ctx);
   
-  // Create object to represent the model
-  jsi::Object result(runtime);
-  
-  // Store a pointer to the model as a number
-  result.setProperty(runtime, "_model", jsi::Value((double)(uintptr_t)llamaModel));
-  
-  // Add basic model properties 
-  result.setProperty(runtime, "n_vocab", jsi::Value((double)llamaModel->getVocabSize()));
-  result.setProperty(runtime, "n_ctx", jsi::Value((double)llamaModel->getContextSize()));
-  result.setProperty(runtime, "n_embd", jsi::Value((double)llamaModel->getEmbeddingSize()));
-  
-  // Add tokenize method
-  result.setProperty(runtime, "tokenize", 
-    jsi::Function::createFromHostFunction(runtime, 
-      jsi::PropNameID::forAscii(runtime, "tokenize"), 
-      1,  // takes text to tokenize
-      [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
-        return llamaModel->tokenizeJsi(rt, args, count);
-      })
-  );
-  
-  // Add completion method
-  result.setProperty(runtime, "completion", 
-    jsi::Function::createFromHostFunction(runtime, 
-      jsi::PropNameID::forAscii(runtime, "completion"), 
-      1,  // takes completion options
-      [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
-        // Parse the completion parameters from the first argument
-        // Accepts parameters compatible with llama.cpp server API:
-        // https://github.com/ggml-org/llama.cpp/tree/master/examples/server
-        // Including: prompt, temperature, top_p, top_k, n_predict, stop,
-        // frequency_penalty, presence_penalty, repeat_penalty, etc.
-        return llamaModel->completionJsi(rt, args, count);
-      })
-  );
-  
-  // Add embedding method
-  result.setProperty(runtime, "embedding", 
-    jsi::Function::createFromHostFunction(runtime, 
-      jsi::PropNameID::forAscii(runtime, "embedding"), 
-      1,  // takes text to embed
-      [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
-        return llamaModel->embeddingJsi(rt, args, count);
-      })
-  );
-  
-  // Add testProcessTokens method (for debugging)
-  result.setProperty(runtime, "testProcessTokens", 
-    jsi::Function::createFromHostFunction(runtime, 
-      jsi::PropNameID::forAscii(runtime, "testProcessTokens"), 
-      1,  // takes text to test
-      [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
-        return llamaModel->testProcessTokensJsi(rt, args, count);
-      })
-  );
-  
-  // Add release method
-  result.setProperty(runtime, "release", 
-    jsi::Function::createFromHostFunction(runtime, 
-      jsi::PropNameID::forAscii(runtime, "release"), 
-      0,  // takes no arguments
-      [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
-        jsi::Value result = llamaModel->releaseJsi(rt, args, count);
-        delete llamaModel; // Free the model when release is called
-        return result;
-      })
-  );
-  
-  return result;
-}
-
-jsi::Value LlamaCppRn::getVocabSize(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count) {
-  try {
-    if (!thisValue.isObject()) {
-      throw std::runtime_error("Invalid model object");
-    }
-    
-    // Get model pointer
-    auto obj = thisValue.getObject(runtime);
-    if (!obj.hasProperty(runtime, "_model")) {
-      throw std::runtime_error("Invalid model object - no _model property");
-    }
-    
-    uintptr_t model_ptr = (uintptr_t)obj.getProperty(runtime, "_model").asNumber();
-    LlamaCppModel* llamaModel = (LlamaCppModel*)model_ptr;
-    
-    if (!llamaModel) {
-      throw std::runtime_error("No model loaded");
-    }
-    
-    // Get vocab size using the model
-    return jsi::Value((double)llamaModel->getVocabSize());
-  } catch (const std::exception& e) {
-    throw jsi::JSError(runtime, e.what());
-  }
+  // Create a host object from the LlamaCppModel instance
+  return jsi::Object::createFromHostObject(runtime, std::move(llamaModel));
 }
 
 } // namespace facebook::react 

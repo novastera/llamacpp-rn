@@ -20,7 +20,7 @@ echo -e "${YELLOW}Using tag: $LLAMA_CPP_TAG (from commit: $LLAMA_CPP_HASH)${NC}"
 
 # Directories for iOS
 IOS_DIR="ios/libs"
-IOS_INCLUDE_DIR="ios/includes"
+IOS_INCLUDE_DIR="ios/include"
 IOS_FRAMEWORK_DIR="ios/framework/build-apple"
 
 # Directories for Android
@@ -160,39 +160,6 @@ download_ios_framework() {
     return 1
   fi
   
-  # Find headers
-  echo -e "${YELLOW}Looking for header files...${NC}"
-  local header_path=""
-  
-  # Check various possible locations for headers - updating to match the actual structure
-  if [ -d "$IOS_DIR/llamacpp.xcframework/ios-arm64/llama.framework/Headers" ]; then
-    header_path="$IOS_DIR/llamacpp.xcframework/ios-arm64/llama.framework/Headers"
-  elif [ -d "$IOS_DIR/llamacpp.xcframework/ios-arm64_x86_64-simulator/llama.framework/Headers" ]; then
-    header_path="$IOS_DIR/llamacpp.xcframework/ios-arm64_x86_64-simulator/llama.framework/Headers"
-  elif [ -d "$IOS_DIR/llamacpp.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Headers" ]; then
-    header_path="$IOS_DIR/llamacpp.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Headers"
-  elif [ -d "$IOS_DIR/llamacpp.xcframework/tvos-arm64/llama.framework/Headers" ]; then
-    header_path="$IOS_DIR/llamacpp.xcframework/tvos-arm64/llama.framework/Headers"
-  elif [ -d "$IOS_DIR/llamacpp.xcframework/xros-arm64/llama.framework/Headers" ]; then
-    header_path="$IOS_DIR/llamacpp.xcframework/xros-arm64/llama.framework/Headers"
-  elif [ -d "$IOS_DIR/llamacpp.xcframework/ios-arm64/Headers" ]; then
-    header_path="$IOS_DIR/llamacpp.xcframework/ios-arm64/Headers"
-  elif [ -d "$IOS_DIR/llamacpp.xcframework/ios-arm64/llamacpp.framework/Headers" ]; then
-    header_path="$IOS_DIR/llamacpp.xcframework/ios-arm64/llamacpp.framework/Headers"
-  elif [ -d "$IOS_DIR/includes" ]; then
-    header_path="$IOS_DIR/includes"
-  fi
-  
-  if [ -z "$header_path" ]; then
-    echo -e "${RED}Error: Could not find Headers directory.${NC}"
-    echo -e "${YELLOW}Showing framework structure:${NC}"
-    find "$IOS_DIR/llamacpp.xcframework" -type d | sort
-    rm -f "$temp_zip"
-    return 1
-  fi
-  
-  echo -e "${YELLOW}Copying header files from $header_path...${NC}"
-  cp -R "$header_path/"* "$IOS_INCLUDE_DIR/"
   
   # Clean up
   rm -f "$temp_zip"

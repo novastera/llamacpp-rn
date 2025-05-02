@@ -15,7 +15,6 @@ This library was greatly inspired by [llama.rn](https://github.com/mybigday/llam
 - Embeddings generation
 - JSON mode with grammar constraints
 - **Opinionated defaults** for thread count and GPU layers
-- **Compatible with llama.cpp server API** for easy migration
 
 ## Compatibility with llama.cpp Server
 
@@ -23,9 +22,8 @@ This library is designed to be compatible with the [llama.cpp server](https://gi
 
 - Similar parameter naming and behavior
 - Support for most llama.cpp server options
-- Easy migration from server-based implementations
 
-If you're already using llama.cpp server in your projects, you can use similar parameters and expect similar behavior:
+If you're already using llama.cpp server in your projects, good for you :D
 
 ```typescript
 // Server-compatible initialization
@@ -34,8 +32,6 @@ const context = await initLlama({
   n_ctx: 2048,
   n_batch: 512,
   n_gpu_layers: 32,
-  main_gpu: 0,
-  tensor_split: [0.5, 0.5], // Split between multiple GPUs
   use_mlock: true
 });
 
