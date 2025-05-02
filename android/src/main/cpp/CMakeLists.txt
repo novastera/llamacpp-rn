@@ -153,6 +153,26 @@ find_package(fbjni REQUIRED CONFIG)
 # Source files
 file(GLOB_RECURSE LLAMACPPRN_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
+# Additional llama.cpp common files needed for json-schema-to-grammar and chat functionality
+set(LLAMA_CPP_COMMON_SOURCES
+    ${LLAMA_CPP_DIR}/common/json-schema-to-grammar.cpp
+    ${LLAMA_CPP_DIR}/common/common.cpp
+    ${LLAMA_CPP_DIR}/common/chat.cpp
+    ${LLAMA_CPP_DIR}/common/log.cpp
+    ${LLAMA_CPP_DIR}/common/sampling.cpp
+)
+
+# Set the source files for the library
+set(SOURCE_FILES
+    # Module implementation
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/LlamaCppRnModule.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/LlamaCppModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/SystemUtils.h
+    
+    # Add the common sources
+    ${LLAMA_CPP_COMMON_SOURCES}
+)
+
 # Include paths
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -191,9 +211,7 @@ add_library(llamacpprn SHARED
     # C++ sources
     ${LLAMACPPRN_SOURCES}
     # Shared C++ implementation with iOS
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/LlamaCppRnModule.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/LlamaCppModel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/SystemUtils.cpp
+    ${SOURCE_FILES}
 )
 
 # Link against dependencies

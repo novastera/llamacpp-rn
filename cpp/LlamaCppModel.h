@@ -1,36 +1,34 @@
 #pragma once
 
 #include <jsi/jsi.h>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
-#include <mutex>
+#include <unordered_map>
 #include <functional>
 
-// Forward declarations
+// Include all necessary common headers from llama.cpp
+#include "json-schema-to-grammar.h"
+#include "chat.h"
+#include "sampling.h"
+
+// Forward declarations for llama.cpp types
 struct llama_model;
 struct llama_context;
-struct llama_chat_message;
+struct common_sampler;
+struct common_speculative;
 
 namespace facebook::react {
 
-// Structure to represent a chat message within our model interaction
-// Note: This is different from the global ChatMessage struct in ChatTemplates.h
+// Chat message structure
 struct ChatMessage {
   std::string role;
   std::string content;
   std::string name;
 };
 
-// Structure for completion results
-struct CompletionResult {
-  std::string text;
-  int prompt_tokens;
-  int generated_tokens;
-  double prompt_duration_ms;
-  double generation_duration_ms;
-};
-
-// Structure to represent a function parameter for tool calling
+// Function parameter for tool calls
 struct FunctionParameter {
   std::string name;
   std::string type;
@@ -38,20 +36,20 @@ struct FunctionParameter {
   bool required;
 };
 
-// Structure to represent a function for tool calling
-struct ToolFunction {
+// Function definition for tool calls
+struct Function {
   std::string name;
   std::string description;
   std::vector<FunctionParameter> parameters;
 };
 
-// Structure to represent a tool
+// Tool for completion
 struct Tool {
   std::string type;
-  ToolFunction function;
+  Function function;
 };
 
-// Structure to represent a tool call in response
+// Tool call parsed from completion
 struct ToolCall {
   std::string id;
   std::string type;
@@ -59,61 +57,120 @@ struct ToolCall {
   std::string arguments;
 };
 
-class LlamaCppModel {
+// Options for completion
+struct CompletionOptions {
+  // Input - either prompt or messages
+  std::string prompt;
+  std::vector<ChatMessage> messages;
+  
+  // Sampling parameters
+  float temperature = 0.8f;
+  float top_p = 0.9f;
+  int top_k = 40;
+  float min_p = 0.05f;
+  float typical_p = 1.0f;
+  
+  // Generation control
+  int max_tokens = 512;
+  std::vector<std::string> stop_sequences;
+  
+  // Repetition penalties
+  float repeat_penalty = 1.1f;
+  int repeat_last_n = 64;
+  float frequency_penalty = 0.0f;
+  float presence_penalty = 0.0f;
+  
+  // Mirostat settings
+  int mirostat = 0;       // 0 = disabled, 1 = mirostat, 2 = mirostat 2.0
+  float mirostat_tau = 5.0f;
+  float mirostat_eta = 0.1f;
+  
+  // Miscellaneous
+  int seed = -1;
+  std::string template_name;
+  
+  // Tool related
+  std::vector<Tool> tools;
+  std::string tool_choice = "auto";
+  bool jinja = false;
+  std::string grammar;
+  
+  // Callbacks
+  std::function<void(jsi::Runtime&, const char*)> partial_callback;
+  jsi::Runtime* runtime = nullptr;
+};
+
+// Result from completion
+struct CompletionResult {
+  std::string text;
+  bool truncated;
+  std::string finish_reason;
+  
+  // Stats
+  int prompt_tokens;
+  int generated_tokens;
+  
+  // Timing
+  double prompt_duration_ms;
+  double generation_duration_ms;
+  double total_duration_ms;
+};
+
+// Main model class that wraps llama.cpp
+class LlamaCppModel : public jsi::HostObject {
 public:
   LlamaCppModel(llama_model* model, llama_context* ctx);
   ~LlamaCppModel();
-
-  // Model operations
-  std::vector<int32_t> tokenize(const std::string& text);
-  CompletionResult completion(const std::string& prompt, const std::vector<ChatMessage>& messages, 
-                         float temperature, float top_p, int top_k, int max_tokens, 
-                         const std::vector<std::string>& stop_sequences,
-                         const std::string& template_name = "",
-                         bool jinja = false,
-                         const std::string& tool_choice = "", 
-                         const std::vector<Tool>& tools = std::vector<Tool>(),
-                         const std::string& grammar = "",
-                         std::function<void(jsi::Runtime&, const char*)> partialCallback = nullptr,
-                         jsi::Runtime* rt = nullptr);
   
-  std::vector<float> embedding(const std::string& text);
+  // Implement HostObject methods
+  jsi::Value get(jsi::Runtime& rt, const jsi::PropNameID& name) override;
+  void set(jsi::Runtime& rt, const jsi::PropNameID& name, const jsi::Value& value) override;
+  std::vector<jsi::PropNameID> getPropertyNames(jsi::Runtime& rt) override;
+  
+  // Resource management
   void release();
-
-  // JSI function implementations
-  jsi::Value tokenizeJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
-  jsi::Value completionJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
-  jsi::Value embeddingJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
-  jsi::Value releaseJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
-  jsi::Value testProcessTokensJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
-
-  // Model info
+  
+  // Public methods
   int32_t getVocabSize() const;
   int32_t getContextSize() const;
   int32_t getEmbeddingSize() const;
-
+  
   bool shouldStopCompletion() const;
   void setShouldStopCompletion(bool value);
   
-  // Check if model is currently busy with prediction
-  bool isPredicting() const { return is_predicting_; }
-  void setIsPredicting(bool value) { is_predicting_ = value; }
-
-  // Helper to parse tool calls from model output
-  std::vector<ToolCall> parseToolCalls(const std::string& text, std::string* remainingText = nullptr);
+  std::vector<int32_t> tokenize(const std::string& text);
+  std::vector<float> embedding(const std::string& text);
   
-  // Helper to convert JSI tool objects to our Tool structure
-  static Tool convertJsiToolToTool(jsi::Runtime& rt, const jsi::Object& jsiTool);
+  // Main completion method
+  CompletionResult completion(const CompletionOptions& options);
   
-  // Helper to convert our ToolCall to JSI object
-  jsi::Object convertToolCallToJsiObject(jsi::Runtime& rt, const ToolCall& toolCall);
-
+  // JSI bindings
+  jsi::Value completionJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
+  jsi::Value tokenizeJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
+  jsi::Value embeddingJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
+  jsi::Value releaseJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
+  jsi::Value testProcessTokensJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
+  
 private:
+  // Core llama.cpp model and context
   llama_model* model_;
   llama_context* ctx_;
+  
+  // State management
   std::mutex mutex_;
-  bool should_stop_completion_ = false;
-  bool is_predicting_ = false;
+  bool should_stop_completion_;
+  bool is_predicting_;
+  
+  // Helper methods
+  void initHelpers();
+  std::vector<ToolCall> parseToolCalls(const std::string& text, std::string* remainingText);
+  
+  // Convert between JSI objects and our structs
+  Tool convertJsiToolToTool(jsi::Runtime& rt, const jsi::Object& jsiTool);
+  jsi::Object convertToolCallToJsiObject(jsi::Runtime& rt, const ToolCall& toolCall);
+  
+  // Convert options to sampling parameters
+  common_params_sampling convertToSamplingParams(const CompletionOptions& options);
 };
 
 } // namespace facebook::react 

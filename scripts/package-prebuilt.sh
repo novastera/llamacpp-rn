@@ -11,56 +11,86 @@ NC='\033[0m' # No Color
 
 # Get script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PACKAGE_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+PREBUILT_DIR="$ROOT_DIR/prebuilt"
+PREBUILT_IOS_DIR="$PREBUILT_DIR/ios"
+PREBUILT_ANDROID_DIR="$PREBUILT_DIR/android"
 
 echo -e "${YELLOW}Preparing prebuilt binaries for packaging...${NC}"
 
-# Ensure prebuilt directories exist
-mkdir -p "$PACKAGE_DIR/prebuilt/ios"
-mkdir -p "$PACKAGE_DIR/prebuilt/android/includes"
-mkdir -p "$PACKAGE_DIR/prebuilt/android/arm64-v8a"
-mkdir -p "$PACKAGE_DIR/prebuilt/android/armeabi-v7a"
-mkdir -p "$PACKAGE_DIR/prebuilt/android/x86"
-mkdir -p "$PACKAGE_DIR/prebuilt/android/x86_64"
+# Create prebuilt directories
+echo "Creating prebuilt directories..."
+mkdir -p "$PREBUILT_IOS_DIR"
+mkdir -p "$PREBUILT_ANDROID_DIR/arm64-v8a"
+mkdir -p "$PREBUILT_ANDROID_DIR/x86_64"
 
-# First, ensure we have the latest binaries
-"$SCRIPT_DIR/setupLlamaCpp.sh" init
-
-# Check if iOS framework exists
-if [ -d "$PACKAGE_DIR/ios/libs/llamacpp.xcframework" ]; then
-  echo -e "${YELLOW}Packaging iOS framework...${NC}"
-  rm -rf "$PACKAGE_DIR/prebuilt/ios/llamacpp.xcframework"
-  cp -R "$PACKAGE_DIR/ios/libs/llamacpp.xcframework" "$PACKAGE_DIR/prebuilt/ios/"
-  echo -e "${GREEN}iOS framework packaged successfully.${NC}"
+# Check if iOS framework exists and copy it
+if [ -d "$ROOT_DIR/ios/libs/llamacpp.xcframework" ]; then
+    echo "Packaging iOS xcframework..."
+    # Remove existing prebuilt framework if it exists
+    rm -rf "$PREBUILT_IOS_DIR/llamacpp.xcframework"
+    # Copy the framework
+    cp -R "$ROOT_DIR/ios/libs/llamacpp.xcframework" "$PREBUILT_IOS_DIR/"
+    echo "✅ iOS framework packaged successfully"
 else
-  echo -e "${RED}iOS framework not found. Run setupLlamaCpp.sh first.${NC}"
-  exit 1
+    echo "⚠️ iOS framework not found! Run scripts/build_ios.sh first."
 fi
 
-# Check if Android libraries exist
-ANDROID_INCLUDES="$PACKAGE_DIR/android/src/main/cpp/includes"
-ANDROID_LIBS="$PACKAGE_DIR/android/src/main/jniLibs"
-
-# Package Android includes if they exist
-if [ -d "$ANDROID_INCLUDES" ] && [ "$(ls -A "$ANDROID_INCLUDES")" ]; then
-  echo -e "${YELLOW}Packaging Android includes...${NC}"
-  cp -R "$ANDROID_INCLUDES/"* "$PACKAGE_DIR/prebuilt/android/includes/"
-  echo -e "${GREEN}Android includes packaged successfully.${NC}"
+# Check if Android libs exist and copy them
+if [ -d "$ROOT_DIR/android/src/main/jniLibs" ]; then
+    echo "Packaging Android libraries..."
+    
+    # arm64-v8a
+    if [ -f "$ROOT_DIR/android/src/main/jniLibs/arm64-v8a/libllama.so" ]; then
+        cp "$ROOT_DIR/android/src/main/jniLibs/arm64-v8a/libllama.so" "$PREBUILT_ANDROID_DIR/arm64-v8a/"
+        echo "✅ Android arm64-v8a library packaged successfully"
+    else
+        echo "⚠️ Android arm64-v8a library not found!"
+    fi
+    
+    # x86_64
+    if [ -f "$ROOT_DIR/android/src/main/jniLibs/x86_64/libllama.so" ]; then
+        cp "$ROOT_DIR/android/src/main/jniLibs/x86_64/libllama.so" "$PREBUILT_ANDROID_DIR/x86_64/"
+        echo "✅ Android x86_64 library packaged successfully"
+    else
+        echo "⚠️ Android x86_64 library not found!"
+    fi
 else
-  echo -e "${RED}Android includes not found. You'll need to build from source.${NC}"
+    echo "⚠️ Android libraries not found! Run scripts/build_android.sh first."
 fi
 
-# Package Android libraries for each architecture
-for arch in arm64-v8a armeabi-v7a x86 x86_64; do
-  if [ -f "$ANDROID_LIBS/$arch/libllama.so" ]; then
-    echo -e "${YELLOW}Packaging Android $arch library...${NC}"
-    cp "$ANDROID_LIBS/$arch/libllama.so" "$PACKAGE_DIR/prebuilt/android/$arch/"
-    echo -e "${GREEN}Android $arch library packaged successfully.${NC}"
-  else
-    echo -e "${RED}Android $arch library not found. You'll need to build Android from source.${NC}"
-  fi
-done
+# Create version file with commit info for tracking
+echo "Creating version info file..."
+LLAMA_CPP_DIR="$ROOT_DIR/cpp/llama.cpp"
+if [ -d "$LLAMA_CPP_DIR/.git" ]; then
+    cd "$LLAMA_CPP_DIR"
+    LLAMA_COMMIT=$(git rev-parse HEAD)
+    LLAMA_VERSION=$(git describe --tags --always)
+    cd "$ROOT_DIR"
+    if [ -d "$ROOT_DIR/.git" ]; then
+        PACKAGE_COMMIT=$(git rev-parse HEAD)
+        PACKAGE_VERSION=$(git describe --tags --always 2>/dev/null || echo "unknown")
+    else
+        PACKAGE_COMMIT="unknown"
+        PACKAGE_VERSION="unknown"
+    fi
+else
+    LLAMA_COMMIT="unknown"
+    LLAMA_VERSION="unknown"
+    PACKAGE_COMMIT="unknown"
+    PACKAGE_VERSION="unknown"
+fi
 
-echo -e "${GREEN}Prebuilt binaries prepared for packaging.${NC}"
-echo -e "${YELLOW}To include these in your npm package, commit these files to your repository.${NC}"
-echo -e "${YELLOW}They will be included in the npm package when you publish.${NC}" 
+cat > "$PREBUILT_DIR/version.json" << EOF
+{
+  "packageVersion": "$(node -e "console.log(require('$ROOT_DIR/package.json').version)")",
+  "packageCommit": "$PACKAGE_COMMIT",
+  "packageGitVersion": "$PACKAGE_VERSION",
+  "llamaCppVersion": "$LLAMA_VERSION",
+  "llamaCppCommit": "$LLAMA_COMMIT",
+  "buildDate": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+}
+EOF
+
+echo "✅ Prebuilt binaries packaged successfully!"
+echo "You can now publish your npm package with prebuilt binaries." 

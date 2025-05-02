@@ -31,9 +31,6 @@ public:
   jsi::Value loadLlamaModelInfo(jsi::Runtime &runtime, jsi::String modelPath);
   jsi::Value jsonSchemaToGbnf(jsi::Runtime &runtime, jsi::Object schema);
 
-  // Model methods 
-  jsi::Value getVocabSize(jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count);
-
 private:
   // Helper methods
   jsi::Object createModelObject(jsi::Runtime& runtime, llama_model* model, llama_context* ctx);

@@ -46,7 +46,7 @@ export default function LlamaSchemaTest() {
         required: ['name', 'email']
       };
       
-      const gbnf = await LlamaCppRn.jsonSchemaToGbnf(schema);
+      const gbnf = await LlamaCppRn.jsonSchemaToGbnf({schema: JSON.stringify(schema)});
       console.log('GBNF Result:', gbnf);
       setGbnfResult(gbnf);
     } catch (error: unknown) {

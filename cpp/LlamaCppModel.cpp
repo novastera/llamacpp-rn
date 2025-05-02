@@ -4,11 +4,21 @@
 
 // Include llama.cpp headers directly
 #include "llama.h"
+#include "chat.h"
+#include "json-schema-to-grammar.h"
+#include "sampling.h"
 
 namespace facebook::react {
 
 LlamaCppModel::LlamaCppModel(llama_model* model, llama_context* ctx)
     : model_(model), ctx_(ctx), should_stop_completion_(false), is_predicting_(false) {
+    
+    // Initialize helpers if needed
+    initHelpers();
+}
+
+void LlamaCppModel::initHelpers() {
+    // No longer need tool handler initialization
 }
 
 LlamaCppModel::~LlamaCppModel() {
@@ -72,33 +82,35 @@ void LlamaCppModel::setShouldStopCompletion(bool value) {
 }
 
 std::vector<int32_t> LlamaCppModel::tokenize(const std::string& text) {
-  if (!model_) {
-    throw std::runtime_error("Model not loaded");
+  std::lock_guard<std::mutex> lock(mutex_);
+  
+  if (!model_ || !ctx_) {
+    throw std::runtime_error("Model or context not initialized");
   }
   
-  std::vector<llama_token> tokens(text.size() + 4);
+  // Check if it's the first run (empty context)
+  const bool is_first = llama_kv_self_used_cells(ctx_) == 0;
+  
   const llama_vocab* vocab = llama_model_get_vocab(model_);
-  int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), false, false);
   
+  // First get the number of tokens
+  int n_tokens = -llama_tokenize(vocab, text.c_str(), text.length(), nullptr, 0, is_first, true);
   if (n_tokens < 0) {
-    n_tokens = 0; // Handle error case
+    n_tokens = -n_tokens; // Handle negative return value
   }
   
-  // Add special tokens if needed
-  std::vector<llama_token> tokens_with_special;
-  llama_token bos_token = llama_token_bos(vocab);
+  // Allocate space for tokens
+  std::vector<llama_token> tokens(n_tokens);
   
-  // Add BOS token if it's not already there
-  if (n_tokens > 0 && tokens[0] != bos_token) {
-    tokens_with_special.push_back(bos_token);
+  // Do the actual tokenization
+  n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), is_first, true);
+  if (n_tokens < 0) {
+    n_tokens = -n_tokens; // Handle negative return value
   }
   
-  // Add the regular tokens
-  for (int i = 0; i < n_tokens; i++) {
-    tokens_with_special.push_back(tokens[i]);
-  }
-  
-  return std::vector<int32_t>(tokens_with_special.begin(), tokens_with_special.end());
+  // Convert to int32_t for JS compatibility
+  std::vector<int32_t> result(tokens.begin(), tokens.end());
+  return result;
 }
 
 std::vector<float> LlamaCppModel::embedding(const std::string& text) {
@@ -117,7 +129,7 @@ std::vector<float> LlamaCppModel::embedding(const std::string& text) {
   
   // Add special tokens if needed
   std::vector<llama_token> tokens_with_special;
-  llama_token bos_token = llama_token_bos(vocab);
+  llama_token bos_token = llama_vocab_bos(vocab);
   
   // Add BOS token if it's not already there
   if (n_tokens > 0 && tokens[0] != bos_token) {
@@ -164,19 +176,54 @@ std::vector<float> LlamaCppModel::embedding(const std::string& text) {
   return embeddings;
 }
 
-// Then modify the function signature
-CompletionResult LlamaCppModel::completion(const std::string& prompt, 
-                                     const std::vector<ChatMessage>& messages,
-                                     float temperature, float top_p, int top_k, 
-                                     int max_tokens,
-                                     const std::vector<std::string>& stop_sequences,
-                                     const std::string& template_name,
-                                     bool jinja,
-                                     const std::string& tool_choice,
-                                     const std::vector<Tool>& tools,
-                                     const std::string& grammar,
-                                     std::function<void(jsi::Runtime&, const char*)> partialCallback,
-                                     jsi::Runtime* rt) {
+// Convert CompletionOptions to common_params_sampling
+common_params_sampling LlamaCppModel::convertToSamplingParams(const CompletionOptions& options) {
+    common_params_sampling params;
+    
+    // Set parameters from options
+    params.n_prev = 64;
+    params.temp = options.temperature;
+    params.penalty_repeat = options.repeat_penalty;
+    params.penalty_freq = options.frequency_penalty;
+    params.penalty_present = options.presence_penalty;
+    params.top_k = options.top_k;
+    params.top_p = options.top_p;
+    params.min_p = options.min_p;
+    params.typ_p = options.typical_p;
+    params.penalty_last_n = options.repeat_last_n;
+    params.seed = options.seed; // Add seed parameter
+    
+    // Set sampling strategy - use a reasonable default chain
+    // Order matters for samplers!
+    if (options.min_p > 0.0f && options.min_p < 1.0f) {
+        params.samplers.push_back(COMMON_SAMPLER_TYPE_MIN_P);
+    }
+    
+    if (options.top_k > 0) {
+        params.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_K);
+    }
+    
+    if (options.top_p > 0.0f && options.top_p < 1.0f) {
+        params.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_P);
+    }
+    
+    if (options.typical_p > 0.0f && options.typical_p < 1.0f) {
+        params.samplers.push_back(COMMON_SAMPLER_TYPE_TYPICAL_P);
+    }
+    
+    // Apply frequency and presence penalties if set
+    if (options.frequency_penalty != 0.0f || options.presence_penalty != 0.0f) {
+        params.samplers.push_back(COMMON_SAMPLER_TYPE_PENALTIES);
+    }
+    
+    // Temperature always comes last before distribution
+    params.samplers.push_back(COMMON_SAMPLER_TYPE_TEMPERATURE);
+    
+    return params;
+}
+
+// Main completion method
+CompletionResult LlamaCppModel::completion(const CompletionOptions& options) {
   if (!model_ || !ctx_) {
     throw std::runtime_error("Model or context not initialized");
   }
@@ -187,66 +234,127 @@ CompletionResult LlamaCppModel::completion(const std::string& prompt,
   // Create result to return
   CompletionResult result;
   result.text = "";
+  result.truncated = false;
+  result.finish_reason = "length"; // Default finish reason
   
   // Clear the KV cache if needed
   bool is_first = llama_kv_self_used_cells(ctx_) == 0;
   
+  // Prepare the prompt using chat template
   std::string input_text;
   
-  if (!prompt.empty()) {
+  if (!options.prompt.empty()) {
     // Use prompt directly if provided
-    input_text = prompt;
-  } else if (!messages.empty()) {
-    // Format chat messages with official template
-    std::vector<llama_chat_message> llama_messages;
-    
-    // Convert messages to llama.cpp format
-    for (const auto& msg : messages) {
-      llama_chat_message lcm;
-      lcm.role = strdup(msg.role.c_str());
-      lcm.content = strdup(msg.content.c_str());
-      llama_messages.push_back(lcm);
-    }
-    
-    // Get the template to use - use model's default if none specified
-    const char* tmpl = nullptr;
-    if (!template_name.empty()) {
-      tmpl = llama_model_chat_template(model_, template_name.c_str());
-    } else {
-      tmpl = llama_model_chat_template(model_, nullptr);
-    }
-    
-    // Allocate a buffer that can hold the formatted template
-    std::vector<char> formatted(llama_n_ctx(ctx_) * 4); // Plenty of space
-    
-    // Apply the template and format the messages
-    int n_buf = llama_chat_apply_template(tmpl, llama_messages.data(), llama_messages.size(), true, formatted.data(), formatted.size());
-    
-    // Check for errors
-    if (n_buf < 0) {
-      // Fall back to a simple format if the template fails
-      input_text = "";
-      for (const auto& msg : messages) {
-        if (msg.role == "system") {
-          input_text += "System: " + msg.content + "\n\n";
-        } else if (msg.role == "user") {
-          input_text += "User: " + msg.content + "\n\n";
-        } else if (msg.role == "assistant") {
-          input_text += "Assistant: " + msg.content + "\n\n";
-        } else {
-          input_text += msg.role + ": " + msg.content + "\n\n";
+    input_text = options.prompt;
+    fprintf(stderr, "Completion using prompt (first 50 chars): %.50s%s\n", 
+            input_text.c_str(), input_text.length() > 50 ? "..." : "");
+  } else if (!options.messages.empty()) {
+    try {
+      // Validate messages
+      fprintf(stderr, "Completion using %zu messages\n", options.messages.size());
+      for (size_t i = 0; i < options.messages.size(); i++) {
+        const auto& msg = options.messages[i];
+        fprintf(stderr, "  Message %zu: role='%s', content length=%zu%s\n", 
+                i, msg.role.c_str(), msg.content.length(),
+                !msg.name.empty() ? (", name='" + msg.name + "'").c_str() : "");
+      }
+      
+      // Initialize the chat template using llama.cpp's chat utilities
+      auto chat_templates = common_chat_templates_init(model_, "");
+      if (!chat_templates) {
+        throw std::runtime_error("Failed to initialize chat templates");
+      }
+      
+      // Convert our messages to common_chat_msg format
+      std::vector<common_chat_msg> common_msgs;
+      for (const auto& msg : options.messages) {
+        common_chat_msg common_msg;
+        common_msg.role = msg.role;
+        common_msg.content = msg.content;
+        
+        if (!msg.name.empty()) {
+          common_msg.tool_name = msg.name;
+        }
+        
+        common_msgs.push_back(common_msg);
+      }
+      
+      // Convert tools to common_chat_tool format if provided
+      std::vector<common_chat_tool> common_tools;
+      if (!options.tools.empty()) {
+        fprintf(stderr, "Completion with %zu tools\n", options.tools.size());
+        for (const auto& tool : options.tools) {
+          common_chat_tool common_tool;
+          common_tool.name = tool.function.name;
+          common_tool.description = tool.function.description;
+          
+          // Convert parameters to JSON schema string
+          nlohmann::ordered_json params_obj;
+          params_obj["type"] = "object";
+          params_obj["properties"] = nlohmann::ordered_json::object();
+          params_obj["required"] = nlohmann::ordered_json::array();
+          
+          for (const auto& param : tool.function.parameters) {
+            nlohmann::ordered_json param_obj;
+            param_obj["type"] = param.type;
+            if (!param.description.empty()) {
+              param_obj["description"] = param.description;
+            }
+            
+            params_obj["properties"][param.name] = param_obj;
+            
+            if (param.required) {
+              params_obj["required"].push_back(param.name);
+            }
+          }
+          
+          common_tool.parameters = params_obj.dump();
+          fprintf(stderr, "  Tool: name='%s', parameters=%zu bytes\n", 
+                  common_tool.name.c_str(), common_tool.parameters.length());
+          common_tools.push_back(common_tool);
         }
       }
-      input_text += "Assistant:";
-    } else {
-      // Use the correctly formatted template
-      input_text = std::string(formatted.data(), n_buf);
-    }
-    
-    // Free allocated memory for messages
-    for (auto& msg : llama_messages) {
-      free(const_cast<char*>(msg.role));
-      free(const_cast<char*>(msg.content));
+      
+      // Set up inputs for the template
+      common_chat_templates_inputs inputs;
+      inputs.messages = common_msgs;
+      inputs.add_generation_prompt = true;
+      inputs.use_jinja = options.jinja;
+      inputs.tools = common_tools;
+      
+      // Convert tool_choice to the enum
+      if (!options.tool_choice.empty()) {
+        fprintf(stderr, "Tool choice: %s\n", options.tool_choice.c_str());
+        inputs.tool_choice = common_chat_tool_choice_parse_oaicompat(options.tool_choice);
+      } else {
+        inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
+      }
+      
+      // Set grammar if provided
+      if (!options.grammar.empty()) {
+        fprintf(stderr, "Using grammar: %zu bytes\n", options.grammar.length());
+        inputs.grammar = options.grammar;
+      }
+      
+      // Apply the template to get the prompt and grammar
+      try {
+        common_chat_params params = common_chat_templates_apply(chat_templates.get(), inputs);
+        input_text = params.prompt;
+        
+        fprintf(stderr, "Template applied successfully, prompt length=%zu\n", input_text.length());
+        
+        // Use the grammar from the template if we don't have one
+        if (options.grammar.empty() && !params.grammar.empty()) {
+          fprintf(stderr, "Using grammar from template: %zu bytes\n", params.grammar.length());
+          const_cast<CompletionOptions&>(options).grammar = params.grammar;
+        }
+      } catch (const std::exception& e) {
+        fprintf(stderr, "Error applying chat template: %s\n", e.what());
+        throw std::runtime_error(std::string("Error applying chat template: ") + e.what());
+      }
+    } catch (const std::exception& e) {
+      fprintf(stderr, "Error in chat template processing: %s\n", e.what());
+      throw;
     }
   } else {
     throw std::runtime_error("Either prompt or messages must be provided");
@@ -281,126 +389,64 @@ CompletionResult LlamaCppModel::completion(const std::string& prompt,
   // Record prompt processing time
   auto prompt_end_time = std::chrono::high_resolution_clock::now();
   
-  // Initialize token generation sampler
-  struct llama_sampler * sampler = nullptr;
+  // Convert our options to common_params_sampling
+  common_params_sampling sampling_params = convertToSamplingParams(options);
   
-  // Create the sampler chain
-  sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+  // Create common_sampler for token generation
+  struct common_sampler* sampler = common_sampler_init(model_, sampling_params);
   
-  // Add grammar sampler if provided
-  if (!grammar.empty()) {
-    // Initialize grammar sampler with the provided GBNF grammar
-    const llama_vocab* vocab = llama_model_get_vocab(model_);
-    struct llama_sampler* grammar_sampler = llama_sampler_init_grammar(vocab, grammar.c_str(), nullptr);
-    
-    // If that fails, try with "root" as the root symbol
-    if (grammar_sampler == nullptr) {
-      grammar_sampler = llama_sampler_init_grammar(vocab, grammar.c_str(), "root");
-    }
-    
-    // Add grammar sampler to the chain if successfully created
-    if (grammar_sampler != nullptr) {
-      llama_sampler_chain_add(sampler, grammar_sampler);
-    } else {
-      // Grammar init failed, log warning but continue without grammar
-      fprintf(stderr, "Warning: Failed to initialize grammar sampler with provided grammar\n");
-    }
-  } else if (jinja) {
-    // If jinja flag is true but no custom grammar provided, use a built-in JSON grammar
-    const llama_vocab* vocab = llama_model_get_vocab(model_);
-    // Basic JSON grammar that constrains output to valid JSON
-    const char* json_grammar = R"(
-root ::= object
-object ::= "{" ws (string_pair ("," ws string_pair)*)? "}" ws
-string_pair ::= string ws ":" ws value
-array ::= "[" ws (value ("," ws value)*)? "]" ws
-value ::= object | array | string | number | boolean | null
-string ::= "\"" ([^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""
-number ::= "-"? ([0-9] | [1-9] [0-9]*) ("." [0-9]+)? ([eE] [+-]? [0-9]+)?
-boolean ::= "true" | "false"
-null ::= "null"
-ws ::= [ \t\n\r]*
-)";
-    
-    // Try first with the root symbol as null
-    struct llama_sampler* grammar_sampler = llama_sampler_init_grammar(vocab, json_grammar, nullptr);
-    
-    // If that fails, try with "root" as the root symbol
-    if (grammar_sampler == nullptr) {
-      fprintf(stderr, "Retrying with 'root' as root symbol\n");
-      grammar_sampler = llama_sampler_init_grammar(vocab, json_grammar, "root");
-    }
-    
-    // Add grammar sampler to the chain if successfully created
-    if (grammar_sampler != nullptr) {
-      fprintf(stderr, "Successfully initialized JSON grammar sampler\n");
-      llama_sampler_chain_add(sampler, grammar_sampler);
-    } else {
-      // Grammar init failed, log warning but continue without grammar
-      fprintf(stderr, "Warning: Failed to initialize JSON grammar sampler\n");
-    }
+  if (!sampler) {
+    throw std::runtime_error("Failed to initialize sampler");
   }
-  
-  // Add sampling methods
-  if (top_k > 0) {
-    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(top_k));
-  }
-  
-  if (top_p > 0.0f && top_p < 1.0f) {
-    // Add a minimum of tokens to keep to ensure we don't cut off everything
-    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(top_p, 1));
-  }
-  
-  if (temperature > 0.0f) {
-    llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
-  }
-  
-  // Finally add the distribution sampler
-  llama_sampler_chain_add(sampler, llama_sampler_init_dist(0)); // Fixed seed for now
   
   // Generate tokens
-  llama_token new_token_id = 0;
-  int n_ctx = llama_n_ctx(ctx_);
+  llama_token token_id = 0;
   int n_generated = 0;
   
   // Generate up to max_tokens tokens
-  while ((n_generated < max_tokens || max_tokens <= 0) && !should_stop_completion_) {
+  while ((n_generated < options.max_tokens || options.max_tokens <= 0) && !should_stop_completion_) {
     // Check if we have enough space in the context
+    uint32_t n_ctx = llama_n_ctx(ctx_);
     if (llama_kv_self_used_cells(ctx_) + 1 >= n_ctx) {
+      result.truncated = true;
+      result.finish_reason = "context_length_exceeded";
       break;
     }
     
-    // Sample a token using our sampler
-    new_token_id = llama_sampler_sample(sampler, ctx_, -1);
+    // Sample a token using our common_sampler
+    token_id = common_sampler_sample(sampler, ctx_, 0, true);
     
     // Check for end of generation
-    if (new_token_id == llama_vocab_eos(vocab)) {
+    if (token_id == llama_vocab_eos(vocab)) {
+      result.finish_reason = "stop";
       break;
     }
     
     // Convert token to text
-    char token_str[8] = {0};
-    int n_chars = llama_token_to_piece(vocab, new_token_id, token_str, sizeof(token_str) - 1, false, true);
+    char token_buf[8] = {0};
+    int n_chars = llama_token_to_piece(vocab, token_id, token_buf, sizeof(token_buf) - 1, 0, true);
     if (n_chars < 0) n_chars = 0;
-    token_str[n_chars] = '\0';
+    token_buf[n_chars] = '\0';
+    
+    std::string token_text(token_buf);
     
     // Add to result
-    std::string token_text(token_str);
     result.text += token_text;
     
     // Call partial callback if provided
-    if (partialCallback && rt) {
-      partialCallback(*rt, token_str);
+    if (options.partial_callback && options.runtime) {
+      options.partial_callback(*options.runtime, token_text.c_str());
     }
     
     // Check for stop sequences
     bool should_stop = false;
-    for (const auto& stop_seq : stop_sequences) {
+    for (const auto& stop_seq : options.stop_sequences) {
       if (result.text.size() >= stop_seq.size() && 
           result.text.substr(result.text.size() - stop_seq.size()) == stop_seq) {
         // Remove the stop sequence from the result
         result.text = result.text.substr(0, result.text.size() - stop_seq.size());
         should_stop = true;
+        result.finish_reason = "stop";
         break;
       }
     }
@@ -410,10 +456,12 @@ ws ::= [ \t\n\r]*
     }
     
     // Accept the token
-    llama_sampler_accept(sampler, new_token_id);
+    common_sampler_accept(sampler, token_id, true);
+    
+    // Prepare the batch with the new token
+    batch = llama_batch_get_one(&token_id, 1);
     
     // Continue decoding with new token
-    batch = llama_batch_get_one(&new_token_id, 1);
     if (llama_decode(ctx_, batch)) {
       break;
     }
@@ -421,24 +469,304 @@ ws ::= [ \t\n\r]*
     n_generated++;
   }
   
+  // Handle interrupted generation
+  if (should_stop_completion_) {
+    result.finish_reason = "interrupted";
+  }
+  
   // Calculate time taken
   auto end_time = std::chrono::high_resolution_clock::now();
   auto prompt_duration = std::chrono::duration<double, std::milli>(prompt_end_time - start_time).count();
   auto generation_duration = std::chrono::duration<double, std::milli>(end_time - prompt_end_time).count();
+  auto total_duration = std::chrono::duration<double, std::milli>(end_time - start_time).count();
   
   // Clean up
-  llama_sampler_free(sampler);
+  common_sampler_free(sampler);
+  
+  // Parse tool calls if needed
+  if (!options.tools.empty() && !result.text.empty()) {
+    std::string remainingText;
+    std::vector<ToolCall> toolCalls = parseToolCalls(result.text, &remainingText);
+    
+    // If we found tool calls, only keep the remaining text
+    if (!toolCalls.empty()) {
+      result.text = remainingText;
+    }
+  }
   
   // Update result
   result.prompt_tokens = n_tokens;
   result.generated_tokens = n_generated;
   result.prompt_duration_ms = prompt_duration;
   result.generation_duration_ms = generation_duration;
+  result.total_duration_ms = total_duration;
   
   return result;
 }
 
-// JSI wrapper functions
+// Parse tool calls from generated text using llama.cpp common chat functionality
+std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text, std::string* remainingText) {
+  std::vector<ToolCall> result;
+  
+  // Add debug logging
+  fprintf(stderr, "parseToolCalls: Attempting to parse text: %.100s%s\n", 
+          text.c_str(), text.length() > 100 ? "..." : "");
+  
+  try {
+    // Use common_chat_parse to extract tool calls based on format
+    // Try multiple formats, starting with Llama-3, falling back to more generic parsing
+    common_chat_msg parsed;
+    std::vector<common_chat_format> formats_to_try = {
+      COMMON_CHAT_FORMAT_LLAMA_3_X,
+      COMMON_CHAT_FORMAT_GENERIC,
+      COMMON_CHAT_FORMAT_CONTENT_ONLY
+    };
+    
+    bool parsing_succeeded = false;
+    for (auto format : formats_to_try) {
+      try {
+        fprintf(stderr, "parseToolCalls: Trying format: %d\n", format);
+        parsed = common_chat_parse(text, format);
+        parsing_succeeded = true;
+        break;
+      } catch (const std::exception& e) {
+        fprintf(stderr, "parseToolCalls: Format %d failed: %s\n", format, e.what());
+        // Continue to next format
+      }
+    }
+    
+    if (!parsing_succeeded) {
+      fprintf(stderr, "parseToolCalls: All parsing formats failed\n");
+      // Fall back to returning the original text
+      if (remainingText) {
+        *remainingText = text;
+      }
+      return result;
+    }
+    
+    // Set the remaining text if requested
+    if (remainingText) {
+      *remainingText = parsed.content;
+    }
+    
+    // Convert common_chat_tool_call to our ToolCall format
+    for (const auto& tc : parsed.tool_calls) {
+      ToolCall toolCall;
+      toolCall.id = tc.id.empty() ? "call_" + std::to_string(result.size()) : tc.id;
+      toolCall.type = "function";  // Default to function type
+      toolCall.name = tc.name;
+      toolCall.arguments = tc.arguments;
+      
+      fprintf(stderr, "parseToolCalls: Found tool call - name: %s, args: %.50s%s\n", 
+              toolCall.name.c_str(), 
+              toolCall.arguments.c_str(), 
+              toolCall.arguments.length() > 50 ? "..." : "");
+      
+      result.push_back(toolCall);
+    }
+  } catch (const std::exception& e) {
+    // Log the error but don't crash
+    fprintf(stderr, "Error parsing tool calls: %s\n", e.what());
+    
+    // Set the original text as remaining if requested
+    if (remainingText) {
+      *remainingText = text;
+    }
+  }
+  
+  return result;
+}
+
+// JSI method for completions
+jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count) {
+  try {
+    if (count < 1 || !args[0].isString()) {
+      throw std::runtime_error("First argument (prompt) must be a string");
+    }
+    
+    std::string prompt = args[0].asString(rt).utf8(rt);
+    
+    // Setup options with defaults
+    CompletionOptions options;
+    options.prompt = prompt;
+    options.max_tokens = 128;     // Default max tokens to generate
+    options.temperature = 0.8f;   // Default temperature
+    options.top_p = 0.95f;        // Default top_p
+    options.top_k = 40;           // Default top_k
+    options.stop_sequences = {};  // Default stop words
+    options.repeat_penalty = 1.1f; // Default repeat penalty
+    options.seed = LLAMA_DEFAULT_SEED; // Default to random seed (-1)
+    
+    // Use second argument for options if provided
+    if (count > 1 && args[1].isObject()) {
+      jsi::Object jsOptions = args[1].getObject(rt);
+      
+      if (jsOptions.hasProperty(rt, "max_tokens")) {
+        options.max_tokens = jsOptions.getProperty(rt, "max_tokens").asNumber();
+      }
+      
+      if (jsOptions.hasProperty(rt, "temperature")) {
+        options.temperature = jsOptions.getProperty(rt, "temperature").asNumber();
+      }
+      
+      if (jsOptions.hasProperty(rt, "top_p")) {
+        options.top_p = jsOptions.getProperty(rt, "top_p").asNumber();
+      }
+      
+      if (jsOptions.hasProperty(rt, "top_k")) {
+        options.top_k = jsOptions.getProperty(rt, "top_k").asNumber();
+      }
+      
+      if (jsOptions.hasProperty(rt, "repeat_penalty")) {
+        options.repeat_penalty = jsOptions.getProperty(rt, "repeat_penalty").asNumber();
+      }
+      
+      // Add seed parameter
+      if (jsOptions.hasProperty(rt, "seed")) {
+        options.seed = jsOptions.getProperty(rt, "seed").asNumber();
+      }
+      
+      // Handle stop words array
+      if (jsOptions.hasProperty(rt, "stop")) {
+        jsi::Value stop_val = jsOptions.getProperty(rt, "stop");
+        if (stop_val.isObject() && stop_val.getObject(rt).isArray(rt)) {
+          jsi::Array stop_arr = stop_val.getObject(rt).asArray(rt);
+          for (size_t i = 0; i < stop_arr.size(rt); i++) {
+            jsi::Value item = stop_arr.getValueAtIndex(rt, i);
+            if (item.isString()) {
+              options.stop_sequences.push_back(item.asString(rt).utf8(rt));
+            }
+          }
+        } else if (stop_val.isString()) {
+          options.stop_sequences.push_back(stop_val.asString(rt).utf8(rt));
+        }
+      }
+    }
+    
+    // Get vocab for tokenization
+    const llama_vocab* vocab = llama_model_get_vocab(model_);
+    
+    // Check if context is empty (first run)
+    const bool is_first = llama_kv_self_used_cells(ctx_) == 0;
+    
+    // Tokenize prompt
+    std::vector<llama_token> tokens;
+    int n_tokens = -llama_tokenize(vocab, prompt.c_str(), prompt.size(), NULL, 0, is_first, true);
+    if (n_tokens < 0) {
+      n_tokens = -n_tokens; // Handle negative return value
+    }
+    tokens.resize(n_tokens);
+    
+    if (llama_tokenize(vocab, prompt.c_str(), prompt.size(), tokens.data(), tokens.size(), is_first, true) < 0) {
+      throw std::runtime_error("Failed to tokenize prompt");
+    }
+    
+    // Check for sufficient context space
+    int n_ctx = llama_n_ctx(ctx_);
+    int n_ctx_used = llama_kv_self_used_cells(ctx_);
+    if (n_ctx_used + n_tokens > n_ctx) {
+      throw std::runtime_error("Context size exceeded");
+    }
+    
+    // Initialize the sampler chain
+    llama_sampler* sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    if (options.min_p > 0.0f && options.min_p < 1.0f) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_min_p(options.min_p, 1));
+    }
+    if (options.repeat_penalty > 1.0f) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_penalties(64, options.repeat_penalty, 0.0f, 0.0f));
+    }
+    if (options.temperature > 0.0f) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_temp(options.temperature));
+    }
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(options.seed));
+    
+    if (!sampler) {
+      throw std::runtime_error("Failed to initialize sampler");
+    }
+    
+    // Create batch for the prompt
+    llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
+    
+    // Decode the prompt
+    if (llama_decode(ctx_, batch)) {
+      llama_sampler_free(sampler);
+      throw std::runtime_error("Failed to decode prompt");
+    }
+    
+    // Generate response
+    std::string completion;
+    std::vector<llama_token> result_tokens;
+    llama_token new_token_id;
+    
+    for (int i = 0; i < options.max_tokens; i++) {
+      // Sample the next token
+      new_token_id = llama_sampler_sample(sampler, ctx_, -1);
+      
+      // Is it an end of generation token?
+      if (llama_vocab_is_eog(vocab, new_token_id)) {
+        break;
+      }
+      
+      // Add token to result
+      result_tokens.push_back(new_token_id);
+      
+      // Convert token to text
+      char token_buf[8] = {0};
+      int n_chars = llama_token_to_piece(vocab, new_token_id, token_buf, sizeof(token_buf) - 1, 0, true);
+      if (n_chars < 0) n_chars = 0;
+      token_buf[n_chars] = '\0';
+      
+      std::string new_piece(token_buf);
+      completion += new_piece;
+      
+      // Call partial callback if provided
+      if (options.partial_callback && options.runtime) {
+        options.partial_callback(*options.runtime, new_piece.c_str());
+      }
+      
+      // Check for custom stop sequences
+      bool should_stop = false;
+      for (const auto& stop_seq : options.stop_sequences) {
+        if (completion.find(stop_seq) != std::string::npos) {
+          should_stop = true;
+          break;
+        }
+      }
+      
+      if (should_stop) {
+        break;
+      }
+      
+      // Prepare batch for next token prediction
+      batch = llama_batch_get_one(&new_token_id, 1);
+      
+      // Process the batch
+      if (llama_decode(ctx_, batch)) {
+        break;
+      }
+    }
+    
+    // Clean up resources
+    llama_sampler_free(sampler);
+    
+    // Create result object
+    jsi::Object result_obj(rt);
+    result_obj.setProperty(rt, "text", jsi::String::createFromUtf8(rt, completion));
+    
+    // Create an array for token ids if needed
+    jsi::Array token_array(rt, result_tokens.size());
+    for (size_t i = 0; i < result_tokens.size(); i++) {
+      token_array.setValueAtIndex(rt, i, jsi::Value((double)result_tokens[i]));
+    }
+    result_obj.setProperty(rt, "token_ids", token_array);
+    
+    return result_obj;
+  } catch (const std::exception& e) {
+    throw jsi::JSError(rt, e.what());
+  }
+}
+
 jsi::Value LlamaCppModel::tokenizeJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count) {
   if (count < 1 || !args[0].isString()) {
     throw jsi::JSError(rt, "tokenize requires a string argument");
@@ -459,222 +787,6 @@ jsi::Value LlamaCppModel::tokenizeJsi(jsi::Runtime& rt, const jsi::Value* args, 
     return result;
   } catch (const std::exception& e) {
     throw jsi::JSError(rt, e.what());
-  }
-}
-
-jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count) {
-  if (count < 1 || !args[0].isObject()) {
-    throw jsi::JSError(rt, "completion requires an options object");
-  }
-  
-  // Check if model is already predicting
-  if (is_predicting_) {
-    throw jsi::JSError(rt, "Model is currently busy with another prediction");
-  }
-  
-  jsi::Object options = args[0].getObject(rt);
-  
-  try {
-    // Set the predicting flag
-    is_predicting_ = true;
-    
-    // Process input - either prompt or messages
-    std::string prompt;
-    std::vector<ChatMessage> chat_messages;
-    
-    // Get input type
-    if (options.hasProperty(rt, "prompt") && options.getProperty(rt, "prompt").isString()) {
-      prompt = options.getProperty(rt, "prompt").getString(rt).utf8(rt);
-    } else if (options.hasProperty(rt, "messages") && options.getProperty(rt, "messages").isObject()) {
-      // Get messages array
-      jsi::Array messages = options.getProperty(rt, "messages").getObject(rt).asArray(rt);
-      
-      // Convert to chat messages
-      for (size_t i = 0; i < messages.size(rt); i++) {
-        jsi::Object msg = messages.getValueAtIndex(rt, i).getObject(rt);
-        
-        ChatMessage chat_msg;
-        if (msg.hasProperty(rt, "role")) {
-          chat_msg.role = msg.getProperty(rt, "role").getString(rt).utf8(rt);
-        }
-        
-        if (msg.hasProperty(rt, "content")) {
-          chat_msg.content = msg.getProperty(rt, "content").getString(rt).utf8(rt);
-        }
-        
-        if (msg.hasProperty(rt, "name")) {
-          chat_msg.name = msg.getProperty(rt, "name").getString(rt).utf8(rt);
-        }
-        
-        chat_messages.push_back(chat_msg);
-      }
-    } else {
-      throw jsi::JSError(rt, "completion requires either 'prompt' or 'messages'");
-    }
-    
-    // Extract parameters
-    float temperature = 0.8f;
-    float top_p = 0.9f;
-    int top_k = 40;
-    int max_tokens = -1;
-    std::vector<std::string> stop_sequences;
-    std::string template_name = "";
-    bool jinja = false;
-    std::string tool_choice = "";
-    std::vector<Tool> tools;
-    
-    // Get temperature 
-    if (options.hasProperty(rt, "temperature")) {
-      temperature = (float)options.getProperty(rt, "temperature").asNumber();
-    }
-    
-    // Get top_p
-    if (options.hasProperty(rt, "top_p")) {
-      top_p = (float)options.getProperty(rt, "top_p").asNumber();
-    }
-    
-    // Get top_k
-    if (options.hasProperty(rt, "top_k")) {
-      top_k = (int)options.getProperty(rt, "top_k").asNumber();
-    }
-    
-    // Get token limit
-    if (options.hasProperty(rt, "max_tokens")) {
-      max_tokens = (int)options.getProperty(rt, "max_tokens").asNumber();
-    } else if (options.hasProperty(rt, "n_predict")) {
-      max_tokens = (int)options.getProperty(rt, "n_predict").asNumber();
-    }
-    
-    // Get stop sequences
-    if (options.hasProperty(rt, "stop") && options.getProperty(rt, "stop").isObject()) {
-      jsi::Array stopArray = options.getProperty(rt, "stop").getObject(rt).asArray(rt);
-      
-      for (size_t i = 0; i < stopArray.size(rt); i++) {
-        std::string stop_str = stopArray.getValueAtIndex(rt, i).getString(rt).utf8(rt);
-        stop_sequences.push_back(stop_str);
-      }
-    }
-    
-    // Get chat template name (if specified)
-    if (options.hasProperty(rt, "chat_template") && options.getProperty(rt, "chat_template").isString()) {
-      template_name = options.getProperty(rt, "chat_template").getString(rt).utf8(rt);
-    }
-    
-    // Get jinja flag
-    if (options.hasProperty(rt, "jinja") && options.getProperty(rt, "jinja").isBool()) {
-      jinja = options.getProperty(rt, "jinja").getBool();
-    }
-    
-    // Get tool choice
-    if (options.hasProperty(rt, "tool_choice") && options.getProperty(rt, "tool_choice").isString()) {
-      tool_choice = options.getProperty(rt, "tool_choice").getString(rt).utf8(rt);
-    }
-    
-    // Get tools
-    if (options.hasProperty(rt, "tools") && options.getProperty(rt, "tools").isObject()) {
-      jsi::Array toolsArray = options.getProperty(rt, "tools").getObject(rt).asArray(rt);
-      
-      for (size_t i = 0; i < toolsArray.size(rt); i++) {
-        jsi::Object jsiTool = toolsArray.getValueAtIndex(rt, i).getObject(rt);
-        tools.push_back(convertJsiToolToTool(rt, jsiTool));
-      }
-    }
-    
-    // Get grammar for structured output if provided
-    std::string grammar = "";
-    if (options.hasProperty(rt, "grammar") && options.getProperty(rt, "grammar").isString()) {
-      grammar = options.getProperty(rt, "grammar").getString(rt).utf8(rt);
-    }
-    
-    // Check for a partial callback
-    std::function<void(jsi::Runtime&, const char*)> partialCallback = nullptr;
-    if (count > 1 && args[1].isObject() && args[1].getObject(rt).isFunction(rt)) {
-      // Create a shared copy of the callback function
-      auto jsCallback = std::make_shared<jsi::Function>(args[1].getObject(rt).getFunction(rt));
-      
-      // Create our C++ callback that invokes the JS callback
-      partialCallback = [jsCallback](jsi::Runtime& runtime, const char* token) {
-        // Safely invoke the callback with the token
-        try {
-          jsi::Object dataObj(runtime);
-          dataObj.setProperty(runtime, "token", jsi::String::createFromUtf8(runtime, token));
-          jsCallback->call(runtime, dataObj);
-        } catch (std::exception& e) {
-          // Ignore errors in the callback
-        }
-      };
-    }
-    
-    // Record start time
-    auto start_time = std::chrono::high_resolution_clock::now();
-    
-    // Get completion
-    CompletionResult result;
-    try {
-      result = completion(prompt, chat_messages, temperature, top_p, top_k, max_tokens, stop_sequences, template_name, jinja, tool_choice, tools, grammar, partialCallback, &rt);
-    } catch (const std::exception& e) {
-      // Create a basic error message
-      throw jsi::JSError(rt, std::string("Failed to complete: ") + e.what());
-    }
-    
-    // Calculate time taken
-    auto end_time = std::chrono::high_resolution_clock::now();
-    double total_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
-    
-    // Parse tool calls first and extract cleaned text
-    std::string cleanedText;
-    std::vector<ToolCall> toolCalls = parseToolCalls(result.text, &cleanedText);
-    
-    // Determine if there's actual text content or just tool calls
-    bool hasToolCalls = !toolCalls.empty();
-    bool hasText = !cleanedText.empty();
-    
-    // Create result object
-    jsi::Object result_obj(rt);
-    
-    // Set text property (null if there's no meaningful text)
-    if (hasText) {
-      result_obj.setProperty(rt, "text", jsi::String::createFromUtf8(rt, cleanedText));
-    } else {
-      result_obj.setProperty(rt, "text", jsi::Value::null());
-    }
-    
-    // Always include tool_calls property
-    if (hasToolCalls) {
-      jsi::Array toolCallsArray(rt, toolCalls.size());
-      for (size_t i = 0; i < toolCalls.size(); i++) {
-        toolCallsArray.setValueAtIndex(rt, i, convertToolCallToJsiObject(rt, toolCalls[i]));
-      }
-      result_obj.setProperty(rt, "tool_calls", toolCallsArray);
-    } else {
-      result_obj.setProperty(rt, "tool_calls", jsi::Value::null());
-    }
-    
-    // Add basic timing info
-    jsi::Object timings(rt);
-    timings.setProperty(rt, "total_ms", jsi::Value(total_ms));
-    timings.setProperty(rt, "prompt_n", jsi::Value(result.prompt_tokens));
-    timings.setProperty(rt, "prompt_ms", jsi::Value(result.prompt_duration_ms));
-    timings.setProperty(rt, "predicted_n", jsi::Value(result.generated_tokens));
-    timings.setProperty(rt, "predicted_ms", jsi::Value(result.generation_duration_ms));
-    
-    result_obj.setProperty(rt, "timings", timings);
-    result_obj.setProperty(rt, "tokens_predicted", jsi::Value(result.generated_tokens));
-    
-    // Reset prediction flag
-    is_predicting_ = false;
-    
-    return result_obj;
-  } catch (const jsi::JSError& e) {
-    // Reset prediction flag
-    is_predicting_ = false;
-    // Re-throw JSError objects without wrapping
-    throw e;
-  } catch (const std::exception& e) {
-    // Reset prediction flag
-    is_predicting_ = false;
-    // Create a basic error message for other exceptions
-    throw jsi::JSError(rt, "Completion error: " + std::string(e.what()));
   }
 }
 
@@ -755,7 +867,7 @@ Tool LlamaCppModel::convertJsiToolToTool(jsi::Runtime& rt, const jsi::Object& js
           }
         }
         
-        // Get property names (non-standard but works for our case)
+        // Get property names
         jsi::Array propNames = propsObj.getPropertyNames(rt);
         for (size_t i = 0; i < propNames.size(rt); i++) {
           std::string propName = propNames.getValueAtIndex(rt, i).asString(rt).utf8(rt);
@@ -805,264 +917,6 @@ jsi::Object LlamaCppModel::convertToolCallToJsiObject(jsi::Runtime& rt, const To
   return jsiToolCall;
 }
 
-// Helper to parse tool calls from model output
-std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text, std::string* remainingText) {
-  std::vector<ToolCall> toolCalls;
-  std::string processedText = text;
-  
-  // Basic implementation for extracting tool calls from model output
-  // In a production environment, you'd want a more robust parser
-  
-  // Look for JSON blocks that might contain tool calls
-  size_t pos = 0;
-  bool hasTextContent = false;
-  
-  while ((pos = processedText.find("```json", pos)) != std::string::npos) {
-    // Found a JSON code block
-    size_t blockStart = pos;
-    size_t start = processedText.find("{", pos);
-    if (start == std::string::npos) {
-      pos += 7; // Move past ```json
-      continue;
-    }
-    
-    // Find the closing code block
-    size_t end = processedText.find("```", start);
-    if (end == std::string::npos) {
-      // Try to find the closing brace if no code block end marker
-      int depth = 0;
-      for (size_t i = start; i < processedText.length(); i++) {
-        if (processedText[i] == '{') depth++;
-        else if (processedText[i] == '}') {
-          depth--;
-          if (depth == 0) {
-            end = i + 1;
-            break;
-          }
-        }
-      }
-      
-      if (end == std::string::npos) {
-        pos = start + 1;
-        continue;
-      }
-    } else {
-      // Adjust end to point to the last character of the JSON
-      size_t jsonEnd = processedText.rfind("}", end);
-      if (jsonEnd != std::string::npos && jsonEnd > start) {
-        end = jsonEnd + 1;
-      } else {
-        pos = end + 3;
-        continue;
-      }
-    }
-    
-    // Extract the JSON content
-    std::string jsonContent = processedText.substr(start, end - start);
-    
-    // Check if it contains "name" and "arguments" properties
-    if (jsonContent.find("\"name\"") != std::string::npos && 
-        jsonContent.find("\"arguments\"") != std::string::npos) {
-      
-      // Create a tool call
-      ToolCall toolCall;
-      toolCall.id = "call_" + std::to_string(toolCalls.size() + 1);
-      toolCall.type = "function";
-      
-      // Extract function name
-      size_t nameStart = jsonContent.find("\"name\"");
-      size_t nameValueStart = jsonContent.find("\"", nameStart + 7) + 1;
-      size_t nameValueEnd = jsonContent.find("\"", nameValueStart);
-      
-      if (nameValueStart != std::string::npos && nameValueEnd != std::string::npos) {
-        toolCall.name = jsonContent.substr(nameValueStart, nameValueEnd - nameValueStart);
-        
-        // Extract arguments - this part is tricky because arguments could be a complex JSON
-        size_t argsStart = jsonContent.find("\"arguments\"");
-        if (argsStart != std::string::npos) {
-          // Check if arguments is a JSON object
-          size_t argsValueStart = jsonContent.find("{", argsStart);
-          if (argsValueStart != std::string::npos) {
-            // Find the matching closing brace for the arguments object
-            int depth = 1;
-            size_t argsValueEnd = argsValueStart + 1;
-            
-            while (depth > 0 && argsValueEnd < jsonContent.length()) {
-              if (jsonContent[argsValueEnd] == '{') depth++;
-              else if (jsonContent[argsValueEnd] == '}') depth--;
-              argsValueEnd++;
-            }
-            
-            if (depth == 0) {
-              toolCall.arguments = jsonContent.substr(argsValueStart, argsValueEnd - argsValueStart);
-            }
-          } else {
-            // Try for string arguments (surrounded by quotes)
-            argsValueStart = jsonContent.find("\"", argsStart + 12) + 1;
-            size_t argsValueEnd = jsonContent.find("\"", argsValueStart);
-            
-            if (argsValueStart != std::string::npos && argsValueEnd != std::string::npos) {
-              toolCall.arguments = jsonContent.substr(argsValueStart, argsValueEnd - argsValueStart);
-            }
-          }
-        }
-        
-        // Only add if we have a valid name and arguments
-        if (!toolCall.name.empty()) {
-          // Initialize empty arguments if not set
-          if (toolCall.arguments.empty()) {
-            toolCall.arguments = "{}";
-          }
-          toolCalls.push_back(toolCall);
-          
-          // Remove the tool call from the text
-          size_t blockEnd = processedText.find("```", end) + 3;
-          if (blockEnd == std::string::npos) {
-            blockEnd = end;
-          }
-          
-          // Check if there's content before/after this tool call
-          if (blockStart > 0) {
-            hasTextContent = true;
-          }
-          
-          if (blockEnd < processedText.length()) {
-            hasTextContent = true;
-          }
-          
-          // Remove this block from the processed text
-          processedText.erase(blockStart, blockEnd - blockStart);
-          
-          // Adjust position to account for the removed text
-          pos = blockStart;
-          continue;
-        }
-      }
-    }
-    
-    pos = end;
-  }
-  
-  // If no tool calls found in code blocks, try the simple approach
-  if (toolCalls.empty()) {
-    pos = 0;
-    while ((pos = processedText.find("\"name\":", pos)) != std::string::npos) {
-      // Found a potential tool call
-      size_t blockStart = pos;
-      size_t start = processedText.rfind("{", pos);
-      if (start == std::string::npos) {
-        pos += 7; // Move past "name":
-        continue;
-      }
-      
-      // Look for a closing brace
-      int depth = 1;
-      size_t end = start + 1;
-      
-      while (depth > 0 && end < processedText.length()) {
-        if (processedText[end] == '{') depth++;
-        else if (processedText[end] == '}') depth--;
-        end++;
-      }
-      
-      if (depth != 0) {
-        pos += 7;
-        continue;
-      }
-      
-      // Extract the tool call JSON
-      std::string toolCallJson = processedText.substr(start, end - start);
-      
-      // Create a basic tool call
-      ToolCall toolCall;
-      toolCall.id = "call_" + std::to_string(toolCalls.size() + 1);
-      toolCall.type = "function";
-      
-      // Extract function name
-      size_t nameStart = toolCallJson.find("\"name\":");
-      size_t nameValueStart = toolCallJson.find("\"", nameStart + 7) + 1;
-      size_t nameValueEnd = toolCallJson.find("\"", nameValueStart);
-      
-      if (nameValueStart != std::string::npos && nameValueEnd != std::string::npos) {
-        toolCall.name = toolCallJson.substr(nameValueStart, nameValueEnd - nameValueStart);
-        
-        // Extract arguments
-        size_t argsStart = toolCallJson.find("\"arguments\":");
-        if (argsStart != std::string::npos) {
-          // Check if arguments is a JSON object
-          size_t argsValueStart = toolCallJson.find("{", argsStart + 12);
-          if (argsValueStart != std::string::npos) {
-            // Find the matching closing brace for the arguments object
-            int depth = 1;
-            size_t argsValueEnd = argsValueStart + 1;
-            
-            while (depth > 0 && argsValueEnd < toolCallJson.length()) {
-              if (toolCallJson[argsValueEnd] == '{') depth++;
-              else if (toolCallJson[argsValueEnd] == '}') depth--;
-              argsValueEnd++;
-            }
-            
-            if (depth == 0) {
-              toolCall.arguments = toolCallJson.substr(argsValueStart, argsValueEnd - argsValueStart);
-            }
-          } else {
-            // Try for string arguments (surrounded by quotes)
-            argsValueStart = toolCallJson.find("\"", argsStart + 12) + 1;
-            size_t argsValueEnd = toolCallJson.find("\"", argsValueStart);
-            
-            if (argsValueStart != std::string::npos && argsValueEnd != std::string::npos) {
-              toolCall.arguments = toolCallJson.substr(argsValueStart, argsValueEnd - argsValueStart);
-            }
-          }
-        }
-        
-        // Only add if we have a valid name
-        if (!toolCall.name.empty()) {
-          // Initialize empty arguments if not set
-          if (toolCall.arguments.empty()) {
-            toolCall.arguments = "{}";
-          }
-          toolCalls.push_back(toolCall);
-          
-          // Remove the tool call from the text
-          // Check if there's content before/after this tool call
-          if (start > 0) {
-            hasTextContent = true;
-          }
-          
-          if (end < processedText.length()) {
-            hasTextContent = true;
-          }
-          
-          // Remove this block from the processed text
-          processedText.erase(start, end - start);
-          
-          // Adjust position to account for the removed text
-          pos = start;
-          continue;
-        }
-      }
-      
-      pos = end;
-    }
-  }
-  
-  // Clean up the remaining text
-  if (remainingText != nullptr) {
-    // Trim whitespace
-    size_t first = processedText.find_first_not_of(" \t\n\r");
-    size_t last = processedText.find_last_not_of(" \t\n\r");
-    
-    if (first != std::string::npos && last != std::string::npos) {
-      *remainingText = processedText.substr(first, last - first + 1);
-    } else {
-      *remainingText = "";
-    }
-  }
-  
-  return toolCalls;
-}
-
 // Function to test token-by-token processing in a simplified manner
 jsi::Value LlamaCppModel::testProcessTokensJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count) {
   try {
@@ -1092,7 +946,7 @@ jsi::Value LlamaCppModel::testProcessTokensJsi(jsi::Runtime& rt, const jsi::Valu
     
     // Add special tokens if needed
     std::vector<llama_token> tokens_with_special;
-    llama_token bos_token = llama_token_bos(vocab);
+    llama_token bos_token = llama_vocab_bos(vocab);
     
     // Add BOS token if it's not already there
     if (n_tokens > 0 && tokens[0] != bos_token) {
@@ -1140,14 +994,14 @@ jsi::Value LlamaCppModel::testProcessTokensJsi(jsi::Runtime& rt, const jsi::Valu
       tokenResult.setProperty(rt, "id", jsi::Value((double)tokens[i]));
       
       // Try to get token text
-      char token_str[8] = {0};
-      int token_str_len = llama_token_to_piece(vocab, tokens[i], token_str, sizeof(token_str) - 1, 0, true);
-      if (token_str_len > 0) {
-        token_str[token_str_len] = '\0';
-        tokenResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, token_str));
-      } else {
-        tokenResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, "<error>"));
-      }
+      char token_buf[8] = {0};
+      int n_chars = llama_token_to_piece(vocab, tokens[i], token_buf, sizeof(token_buf) - 1, 0, true);
+      if (n_chars < 0) n_chars = 0;
+      token_buf[n_chars] = '\0';
+      
+      std::string token_text(token_buf);
+      
+      tokenResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, token_text));
       
       // Process the token
       int decode_result = llama_decode(ctx_, batch);
@@ -1182,6 +1036,75 @@ jsi::Value LlamaCppModel::testProcessTokensJsi(jsi::Runtime& rt, const jsi::Valu
     error.setProperty(rt, "error", jsi::String::createFromUtf8(rt, e.what()));
     return error;
   }
+}
+
+jsi::Value LlamaCppModel::get(jsi::Runtime& rt, const jsi::PropNameID& name) {
+  auto nameStr = name.utf8(rt);
+
+  if (nameStr == "tokenize") {
+    return jsi::Function::createFromHostFunction(
+      rt, name, 1,
+      [this](jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count) {
+        return this->tokenizeJsi(runtime, args, count);
+      });
+  } 
+  else if (nameStr == "completion") {
+    return jsi::Function::createFromHostFunction(
+      rt, name, 2,
+      [this](jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count) {
+        return this->completionJsi(runtime, args, count);
+      });
+  }
+  else if (nameStr == "embedding") {
+    return jsi::Function::createFromHostFunction(
+      rt, name, 1,
+      [this](jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count) {
+        return this->embeddingJsi(runtime, args, count);
+      });
+  }
+  else if (nameStr == "testProcessTokens") {
+    return jsi::Function::createFromHostFunction(
+      rt, name, 1,
+      [this](jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count) {
+        return this->testProcessTokensJsi(runtime, args, count);
+      });
+  }
+  else if (nameStr == "release") {
+    return jsi::Function::createFromHostFunction(
+      rt, name, 0,
+      [this](jsi::Runtime& runtime, const jsi::Value& thisValue, const jsi::Value* args, size_t count) {
+        return this->releaseJsi(runtime, args, count);
+      });
+  }
+  else if (nameStr == "n_vocab") {
+    return jsi::Value(getVocabSize());
+  }
+  else if (nameStr == "n_ctx") {
+    return jsi::Value(getContextSize());
+  }
+  else if (nameStr == "n_embd") {
+    return jsi::Value(getEmbeddingSize());
+  }
+  
+  return jsi::Value::undefined();
+}
+
+void LlamaCppModel::set(jsi::Runtime& rt, const jsi::PropNameID& name, const jsi::Value& value) {
+  // Currently we don't support setting properties
+  throw jsi::JSError(rt, "Cannot modify llama model properties");
+}
+
+std::vector<jsi::PropNameID> LlamaCppModel::getPropertyNames(jsi::Runtime& rt) {
+  std::vector<jsi::PropNameID> result;
+  result.push_back(jsi::PropNameID::forAscii(rt, "tokenize"));
+  result.push_back(jsi::PropNameID::forAscii(rt, "completion"));
+  result.push_back(jsi::PropNameID::forAscii(rt, "embedding"));
+  result.push_back(jsi::PropNameID::forAscii(rt, "testProcessTokens"));
+  result.push_back(jsi::PropNameID::forAscii(rt, "release"));
+  result.push_back(jsi::PropNameID::forAscii(rt, "n_vocab"));
+  result.push_back(jsi::PropNameID::forAscii(rt, "n_ctx"));
+  result.push_back(jsi::PropNameID::forAscii(rt, "n_embd"));
+  return result;
 }
 
 } // namespace facebook::react 
