@@ -100,9 +100,30 @@ jsi::Value LlamaCppRn::loadLlamaModelInfo(jsi::Runtime &runtime, jsi::String mod
     result.setProperty(runtime, "description", 
                       jsi::String::createFromUtf8(runtime, buf[0] ? buf : "Unknown model"));
     
-    // Check if Metal/GPU is supported
+    // Check if GPU is supported
     bool gpuSupported = llama_supports_gpu_offload();
     result.setProperty(runtime, "gpuSupported", jsi::Value(gpuSupported));
+    
+    // Calculate optimal GPU layers if GPU is supported
+    int optimalGpuLayers = 0;
+    if (gpuSupported) {
+      optimalGpuLayers = SystemUtils::getOptimalGpuLayers(model);
+    }
+    result.setProperty(runtime, "optimalGpuLayers", jsi::Value(optimalGpuLayers));
+    
+    // Extract quantization type from model description
+    std::string desc(buf);
+    std::string quantType = "Unknown";
+    size_t qPos = desc.find(" Q");
+    if (qPos != std::string::npos && qPos + 5 <= desc.length()) {
+      // Extract quantization string (like Q4_K, Q5_K, Q8_0)
+      quantType = desc.substr(qPos + 1, 4);
+      // Remove any trailing non-alphanumeric characters
+      quantType.erase(std::find_if(quantType.rbegin(), quantType.rend(), [](char c) {
+        return std::isalnum(c);
+      }).base(), quantType.end());
+    }
+    result.setProperty(runtime, "quant_type", jsi::String::createFromUtf8(runtime, quantType));
     
     // Add architecture info
     result.setProperty(runtime, "architecture", 
@@ -133,22 +154,25 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
     // Initialize llama backend
     llama_backend_init();
     
+    // The following model and context parameters aim to be compatible with llama.cpp server (server.cpp)
+    // See: https://github.com/ggml-org/llama.cpp/tree/master/examples/server
+    
     // Create model params
     llama_model_params modelParams = llama_model_default_params();
     
     // Get optional parameters
-    if (params.hasProperty(runtime, "n_gpu_layers")) {
-      modelParams.n_gpu_layers = (int)params.getProperty(runtime, "n_gpu_layers").asNumber();
-    }
-    
     if (params.hasProperty(runtime, "use_mlock") && params.getProperty(runtime, "use_mlock").asBool()) {
       modelParams.use_mlock = true;
     }
     
-    // Load the model
-    llama_model* model = llama_model_load_from_file(modelPath.c_str(), modelParams);
-    if (!model) {
-      throw std::runtime_error("Failed to load model: " + modelPath);
+    // Memory mapping
+    if (params.hasProperty(runtime, "mmap")) {
+      modelParams.use_mmap = params.getProperty(runtime, "mmap").asBool();
+    }
+    
+    // Vocabulary only
+    if (params.hasProperty(runtime, "vocab_only")) {
+      modelParams.vocab_only = params.getProperty(runtime, "vocab_only").asBool();
     }
     
     // Check if GPU is supported
@@ -161,19 +185,25 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
         modelParams.n_gpu_layers = 0;
       }
     } else {
-      // User didn't specify - use optimal GPU layers if supported
-      modelParams.n_gpu_layers = gpuSupported ? SystemUtils::getOptimalGpuLayers(model) : 0;
+      modelParams.n_gpu_layers = 0;
+    }
+    
+    // Load the model
+    llama_model* model = llama_model_load_from_file(modelPath.c_str(), modelParams);
+    if (!model) {
+      throw std::runtime_error("Failed to load model: " + modelPath);
     }
     
     // Create context params
     llama_context_params contextParams = llama_context_default_params();
     
     // Get optional context parameters
+    // Context size
     if (params.hasProperty(runtime, "n_ctx")) {
       contextParams.n_ctx = (int)params.getProperty(runtime, "n_ctx").asNumber();
     }
     
-    // Set batch size with a conservative default for mobile
+    // Batch size
     if (params.hasProperty(runtime, "n_batch")) {
       contextParams.n_batch = (int)params.getProperty(runtime, "n_batch").asNumber();
     } else {
@@ -181,11 +211,25 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object params) {
       contextParams.n_batch = 128;
     }
     
-    // Get thread count
+    // Thread count
     if (params.hasProperty(runtime, "n_threads")) {
       contextParams.n_threads = (int)params.getProperty(runtime, "n_threads").asNumber();
     } else {
       contextParams.n_threads = SystemUtils::getOptimalThreadCount();
+    }
+    
+    // RoPE frequency scaling
+    if (params.hasProperty(runtime, "rope_freq_base")) {
+      contextParams.rope_freq_base = (float)params.getProperty(runtime, "rope_freq_base").asNumber();
+    }
+    
+    if (params.hasProperty(runtime, "rope_freq_scale")) {
+      contextParams.rope_freq_scale = (float)params.getProperty(runtime, "rope_freq_scale").asNumber();
+    }
+    
+    // LogitsAll parameter - needed for perplexity
+    if (params.hasProperty(runtime, "logits_all") && params.getProperty(runtime, "logits_all").asBool()) {
+      contextParams.logits_all = true;
     }
     
     // Create context
@@ -239,12 +283,15 @@ jsi::Value LlamaCppRn::jsonSchemaToGbnf(jsi::Runtime &runtime, jsi::Object schem
                 requiredProps.push_back(required.getValueAtIndex(runtime, i).getString(runtime).utf8(runtime));
               }
             }
-          } else if (schema.hasProperty(runtime, "required") && schema.getProperty(runtime, "required").isArray()) {
+          } else if (schema.hasProperty(runtime, "required")) {
             // Alternative format where required is directly an array
-            jsi::Array required = schema.getProperty(runtime, "required").getArray(runtime);
-            for (size_t i = 0; i < required.size(runtime); i++) {
-              if (required.getValueAtIndex(runtime, i).isString()) {
-                requiredProps.push_back(required.getValueAtIndex(runtime, i).getString(runtime).utf8(runtime));
+            jsi::Value requiredVal = schema.getProperty(runtime, "required");
+            if (requiredVal.isObject()) {
+              jsi::Array required = requiredVal.getObject(runtime).asArray(runtime);
+              for (size_t i = 0; i < required.size(runtime); i++) {
+                if (required.getValueAtIndex(runtime, i).isString()) {
+                  requiredProps.push_back(required.getValueAtIndex(runtime, i).getString(runtime).utf8(runtime));
+                }
               }
             }
           }
@@ -400,6 +447,11 @@ jsi::Object LlamaCppRn::createModelObject(jsi::Runtime& runtime, llama_model* mo
       jsi::PropNameID::forAscii(runtime, "completion"), 
       1,  // takes completion options
       [llamaModel](jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) -> jsi::Value {
+        // Parse the completion parameters from the first argument
+        // Accepts parameters compatible with llama.cpp server API:
+        // https://github.com/ggml-org/llama.cpp/tree/master/examples/server
+        // Including: prompt, temperature, top_p, top_k, n_predict, stop,
+        // frequency_penalty, presence_penalty, repeat_penalty, etc.
         return llamaModel->completionJsi(rt, args, count);
       })
   );

@@ -166,6 +166,10 @@ interface LlamaModelInfo {
   n_vocab: number;    // Vocabulary size
   n_embd: number;     // Embedding dimension
   description: string; // Model description if available
+  gpuSupported: boolean; // Whether GPU acceleration is available
+  optimalGpuLayers: number; // Recommended number of GPU layers for this model
+  quant_type: string; // Quantization type (e.g., "Q4_K", "Q5_K", "Q8_0")
+  architecture: string; // Model architecture if available
   vocab: string[];    // Model vocabulary (first 100 tokens)
 }
 ```

@@ -15,16 +15,80 @@ This library was greatly inspired by [llama.rn](https://github.com/mybigday/llam
 - Embeddings generation
 - JSON mode with grammar constraints
 - **Opinionated defaults** for thread count and GPU layers
+- **Compatible with llama.cpp server API** for easy migration
+
+## Compatibility with llama.cpp Server
+
+This library is designed to be compatible with the [llama.cpp server](https://github.com/ggml-org/llama.cpp/tree/master/examples/server) API. This means:
+
+- Similar parameter naming and behavior
+- Support for most llama.cpp server options
+- Easy migration from server-based implementations
+
+If you're already using llama.cpp server in your projects, you can use similar parameters and expect similar behavior:
+
+```typescript
+// Server-compatible initialization
+const context = await initLlama({
+  model: 'path/to/model.gguf',
+  n_ctx: 2048,
+  n_batch: 512,
+  n_gpu_layers: 32,
+  main_gpu: 0,
+  tensor_split: [0.5, 0.5], // Split between multiple GPUs
+  use_mlock: true
+});
+
+// Server-compatible completion parameters
+const result = await context.completion({
+  prompt: 'What is artificial intelligence?',
+  temperature: 0.7,
+  top_p: 0.95,
+  top_k: 40,
+  min_p: 0.05,
+  n_predict: 256,
+  stop: ['\n\n'],
+  repeat_penalty: 1.1,
+  repeat_last_n: 64,
+  frequency_penalty: 0.0,
+  presence_penalty: 0.0
+});
+```
+
+For a complete list of supported parameters, see the [API.md](./API.md) file or check the TypeScript definitions.
 
 ## Opinionated Resource Handling
 
 Given the wide diversity of mobile devices, LlamaCppRn takes an opinionated approach to resource management:
 
 - **Thread Count**: If `n_threads` is not provided, the library attempts to select a reasonable thread count based on the device's CPU cores.
-- **GPU Layers**: If `n_gpu_layers` is not specified, the library makes a best-effort estimate based on the device's capabilities and model parameters.
-- **Android GPU Acceleration**: The library automatically detects and prioritizes OpenCL over Vulkan for GPU acceleration on Android devices.
 - **User Control**: When you explicitly provide values for `n_threads` or `n_gpu_layers`, your values always take precedence.
 - **Graceful Fallback**: If GPU acceleration is requested but not available, the library silently falls back to CPU-only mode.
+
+### Getting Optimal GPU Layer Information
+
+To make informed decisions about GPU acceleration, you can use the `loadLlamaModelInfo` function to get the recommended GPU layer count:
+
+```typescript
+// Get model info including optimal GPU layer count
+const modelInfo = await loadLlamaModelInfo('path/to/model.gguf');
+
+console.log(`GPU supported: ${modelInfo.gpuSupported}`);
+console.log(`Optimal GPU layers: ${modelInfo.optimalGpuLayers}`);
+console.log(`Quantization type: ${modelInfo.quant_type}`);
+
+// Use the optimal GPU layers in model initialization
+const context = await initLlama({
+  model: 'path/to/model.gguf',
+  n_gpu_layers: modelInfo.optimalGpuLayers,
+  // other parameters...
+});
+```
+
+This approach allows your application to:
+1. Check if GPU acceleration is supported
+2. Get a model-specific recommended value for GPU layers
+3. Make an informed decision based on model size and quantization type
 
 This approach aims to simplify development across different mobile devices while still giving you full control when needed.
 
