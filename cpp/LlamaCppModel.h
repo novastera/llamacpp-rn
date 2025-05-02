@@ -73,6 +73,7 @@ public:
                          bool jinja = false,
                          const std::string& tool_choice = "", 
                          const std::vector<Tool>& tools = std::vector<Tool>(),
+                         const std::string& grammar = "",
                          std::function<void(jsi::Runtime&, const char*)> partialCallback = nullptr,
                          jsi::Runtime* rt = nullptr);
   

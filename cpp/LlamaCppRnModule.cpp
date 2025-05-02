@@ -210,28 +210,158 @@ jsi::Value LlamaCppRn::jsonSchemaToGbnf(jsi::Runtime &runtime, jsi::Object schem
   std::lock_guard<std::mutex> lock(mutex_);
   
   try {
-    // Simple implementation for JSON schema to GBNF conversion
     std::ostringstream gbnf;
     
-    // Basic JSON grammar
-    gbnf << "root ::= value\n\n";
-    gbnf << "value ::= object | array | string | number | true | false | null\n\n";
-    gbnf << "object ::= \"{\" ws (pair (\",\" ws pair)*)? \"}\" ws\n";
-    gbnf << "pair ::= string \":\" ws value\n\n";
-    gbnf << "array ::= \"[\" ws (value (\",\" ws value)*)? \"]\" ws\n\n";
-    gbnf << "string ::= quote ([^\\\\\"]* | escaped)* quote\n";
-    gbnf << "escaped ::= \"\\\\\\\\\"\n";
-    gbnf << "quote ::= \"\\\"\"\n\n";
-    gbnf << "number ::= int frac? exp? ws\n";
-    gbnf << "int ::= \"-\"? (\"0\" | [1-9] [0-9]*)\n";
-    gbnf << "frac ::= \".\" [0-9]+\n";
-    gbnf << "exp ::= [eE] [+\\-]? [0-9]+\n\n";
-    gbnf << "true ::= \"true\" ws\n";
-    gbnf << "false ::= \"false\" ws\n";
-    gbnf << "null ::= \"null\" ws\n\n";
-    gbnf << "ws ::= [ \\t\\n\\r]*";
+    // Start with basic JSON grammar rules
+    gbnf << "# Base JSON grammar rules\n";
+    gbnf << "root ::= object\n\n";
     
-    return jsi::String::createFromUtf8(runtime, gbnf.str());
+    // Process the schema to add type-specific rules
+    if (schema.hasProperty(runtime, "type")) {
+      std::string type = schema.getProperty(runtime, "type").getString(runtime).utf8(runtime);
+      
+      if (type == "object") {
+        // Process object schema
+        gbnf << "# Object definition from schema\n";
+        gbnf << "object ::= \"{\" ws ";
+        
+        // Check if we have any properties
+        if (schema.hasProperty(runtime, "properties") && schema.getProperty(runtime, "properties").isObject()) {
+          jsi::Object properties = schema.getProperty(runtime, "properties").getObject(runtime);
+          std::vector<std::string> propNames;
+          std::vector<std::string> requiredProps;
+          
+          // Get required properties if specified
+          if (schema.hasProperty(runtime, "required") && schema.getProperty(runtime, "required").isObject()) {
+            jsi::Array required = schema.getProperty(runtime, "required").getObject(runtime).asArray(runtime);
+            for (size_t i = 0; i < required.size(runtime); i++) {
+              if (required.getValueAtIndex(runtime, i).isString()) {
+                requiredProps.push_back(required.getValueAtIndex(runtime, i).getString(runtime).utf8(runtime));
+              }
+            }
+          } else if (schema.hasProperty(runtime, "required") && schema.getProperty(runtime, "required").isArray()) {
+            // Alternative format where required is directly an array
+            jsi::Array required = schema.getProperty(runtime, "required").getArray(runtime);
+            for (size_t i = 0; i < required.size(runtime); i++) {
+              if (required.getValueAtIndex(runtime, i).isString()) {
+                requiredProps.push_back(required.getValueAtIndex(runtime, i).getString(runtime).utf8(runtime));
+              }
+            }
+          }
+          
+          // Get property names (using jsi::Function.getPropertyNames is better but not available)
+          auto propNameIds = properties.getPropertyNames(runtime);
+          for (size_t i = 0; i < propNameIds.size(runtime); i++) {
+            std::string propName = propNameIds.getValueAtIndex(runtime, i).getString(runtime).utf8(runtime);
+            propNames.push_back(propName);
+          }
+          
+          // Generate property pairs
+          if (!propNames.empty()) {
+            size_t count = 0;
+            for (const auto& propName : propNames) {
+              bool isRequired = std::find(requiredProps.begin(), requiredProps.end(), propName) != requiredProps.end();
+              
+              // Property name, always quoted
+              gbnf << "\"\\\"" << propName << "\\\"\" ws \":\" ws ";
+              
+              // Property value - look up property type
+              jsi::Object propObj = properties.getProperty(runtime, propName.c_str()).getObject(runtime);
+              if (propObj.hasProperty(runtime, "type")) {
+                std::string propType = propObj.getProperty(runtime, "type").getString(runtime).utf8(runtime);
+                
+                if (propType == "string") {
+                  gbnf << "string";
+                } else if (propType == "number" || propType == "integer") {
+                  gbnf << "number";
+                } else if (propType == "boolean") {
+                  gbnf << "boolean";
+                } else if (propType == "array") {
+                  gbnf << "array";
+                } else if (propType == "object") {
+                  gbnf << "nested_object";
+                } else {
+                  gbnf << "value"; // Fallback
+                }
+              } else {
+                gbnf << "value"; // Fallback
+              }
+              
+              count++;
+              if (count < propNames.size()) {
+                gbnf << " ws \",\" ws ";
+              }
+            }
+          } else {
+            // If no properties defined, allow any string pairs
+            gbnf << "string_pair (ws \",\" ws string_pair)*";
+          }
+        } else {
+          // No properties specified, allow any string pairs
+          gbnf << "string_pair (ws \",\" ws string_pair)*";
+        }
+        
+        gbnf << " ws \"}\" ws\n\n";
+        
+        // Add nested object rule
+        gbnf << "nested_object ::= \"{\" ws (string_pair (ws \",\" ws string_pair)*)? ws \"}\" ws\n";
+        gbnf << "string_pair ::= string ws \":\" ws value\n\n";
+      } else if (type == "array") {
+        // Process array schema
+        gbnf << "# Array definition from schema\n";
+        
+        if (schema.hasProperty(runtime, "items") && schema.getProperty(runtime, "items").isObject()) {
+          jsi::Object items = schema.getProperty(runtime, "items").getObject(runtime);
+          
+          if (items.hasProperty(runtime, "type")) {
+            std::string itemType = items.getProperty(runtime, "type").getString(runtime).utf8(runtime);
+            
+            gbnf << "array ::= \"[\" ws ";
+            
+            if (itemType == "string") {
+              gbnf << "(string (ws \",\" ws string)*)? ";
+            } else if (itemType == "number" || itemType == "integer") {
+              gbnf << "(number (ws \",\" ws number)*)? ";
+            } else if (itemType == "boolean") {
+              gbnf << "(boolean (ws \",\" ws boolean)*)? ";
+            } else if (itemType == "object") {
+              gbnf << "(nested_object (ws \",\" ws nested_object)*)? ";
+            } else {
+              gbnf << "(value (ws \",\" ws value)*)? "; // Default
+            }
+            
+            gbnf << "ws \"]\" ws\n\n";
+          } else {
+            // Default array definition with any values
+            gbnf << "array ::= \"[\" ws (value (ws \",\" ws value)*)? ws \"]\" ws\n\n";
+          }
+        } else {
+          // Default array definition
+          gbnf << "array ::= \"[\" ws (value (ws \",\" ws value)*)? ws \"]\" ws\n\n";
+        }
+      }
+    }
+    
+    // Add value and basic type definitions
+    gbnf << "# Basic value and type definitions\n";
+    gbnf << "value ::= object | array | string | number | boolean | null\n\n";
+    gbnf << "string ::= \"\\\"\" ([^\"\\\\] | (\"\\\\\\\\\") | (\\\"\\\\\\\"\\\"))* \"\\\"\"\n";
+    gbnf << "number ::= (\"-\"? ([0-9] | [1-9] [0-9]*)) (\".\" [0-9]+)? (([eE] [-+]? [0-9]+))?\n";
+    gbnf << "boolean ::= \"true\" | \"false\"\n";
+    gbnf << "null ::= \"null\"\n";
+    gbnf << "ws ::= [ \\t\\n\\r]*\n";
+    
+    // Ensure object is defined if it hasn't been defined by the schema
+    if (gbnf.str().find("object ::=") == std::string::npos) {
+      gbnf << "\n# Default object definition\n";
+      gbnf << "object ::= \"{\" ws (string_pair (ws \",\" ws string_pair)*)? ws \"}\" ws\n";
+      gbnf << "string_pair ::= string ws \":\" ws value\n";
+    }
+    
+    // Debug print the generated grammar
+    std::string grammar = gbnf.str();
+    
+    return jsi::String::createFromUtf8(runtime, grammar);
   } catch (const std::exception& e) {
     jsi::Object error(runtime);
     error.setProperty(runtime, "message", jsi::String::createFromUtf8(runtime, e.what()));

@@ -174,6 +174,7 @@ CompletionResult LlamaCppModel::completion(const std::string& prompt,
                                      bool jinja,
                                      const std::string& tool_choice,
                                      const std::vector<Tool>& tools,
+                                     const std::string& grammar,
                                      std::function<void(jsi::Runtime&, const char*)> partialCallback,
                                      jsi::Runtime* rt) {
   if (!model_ || !ctx_) {
@@ -285,6 +286,60 @@ CompletionResult LlamaCppModel::completion(const std::string& prompt,
   
   // Create the sampler chain
   sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+  
+  // Add grammar sampler if provided
+  if (!grammar.empty()) {
+    // Initialize grammar sampler with the provided GBNF grammar
+    const llama_vocab* vocab = llama_model_get_vocab(model_);
+    struct llama_sampler* grammar_sampler = llama_sampler_init_grammar(vocab, grammar.c_str(), nullptr);
+    
+    // If that fails, try with "root" as the root symbol
+    if (grammar_sampler == nullptr) {
+      grammar_sampler = llama_sampler_init_grammar(vocab, grammar.c_str(), "root");
+    }
+    
+    // Add grammar sampler to the chain if successfully created
+    if (grammar_sampler != nullptr) {
+      llama_sampler_chain_add(sampler, grammar_sampler);
+    } else {
+      // Grammar init failed, log warning but continue without grammar
+      fprintf(stderr, "Warning: Failed to initialize grammar sampler with provided grammar\n");
+    }
+  } else if (jinja) {
+    // If jinja flag is true but no custom grammar provided, use a built-in JSON grammar
+    const llama_vocab* vocab = llama_model_get_vocab(model_);
+    // Basic JSON grammar that constrains output to valid JSON
+    const char* json_grammar = R"(
+root ::= object
+object ::= "{" ws (string_pair ("," ws string_pair)*)? "}" ws
+string_pair ::= string ws ":" ws value
+array ::= "[" ws (value ("," ws value)*)? "]" ws
+value ::= object | array | string | number | boolean | null
+string ::= "\"" ([^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""
+number ::= "-"? ([0-9] | [1-9] [0-9]*) ("." [0-9]+)? ([eE] [+-]? [0-9]+)?
+boolean ::= "true" | "false"
+null ::= "null"
+ws ::= [ \t\n\r]*
+)";
+    
+    // Try first with the root symbol as null
+    struct llama_sampler* grammar_sampler = llama_sampler_init_grammar(vocab, json_grammar, nullptr);
+    
+    // If that fails, try with "root" as the root symbol
+    if (grammar_sampler == nullptr) {
+      fprintf(stderr, "Retrying with 'root' as root symbol\n");
+      grammar_sampler = llama_sampler_init_grammar(vocab, json_grammar, "root");
+    }
+    
+    // Add grammar sampler to the chain if successfully created
+    if (grammar_sampler != nullptr) {
+      fprintf(stderr, "Successfully initialized JSON grammar sampler\n");
+      llama_sampler_chain_add(sampler, grammar_sampler);
+    } else {
+      // Grammar init failed, log warning but continue without grammar
+      fprintf(stderr, "Warning: Failed to initialize JSON grammar sampler\n");
+    }
+  }
   
   // Add sampling methods
   if (top_k > 0) {
@@ -525,6 +580,12 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
       }
     }
     
+    // Get grammar for structured output if provided
+    std::string grammar = "";
+    if (options.hasProperty(rt, "grammar") && options.getProperty(rt, "grammar").isString()) {
+      grammar = options.getProperty(rt, "grammar").getString(rt).utf8(rt);
+    }
+    
     // Check for a partial callback
     std::function<void(jsi::Runtime&, const char*)> partialCallback = nullptr;
     if (count > 1 && args[1].isObject() && args[1].getObject(rt).isFunction(rt)) {
@@ -550,7 +611,7 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     // Get completion
     CompletionResult result;
     try {
-      result = completion(prompt, chat_messages, temperature, top_p, top_k, max_tokens, stop_sequences, template_name, jinja, tool_choice, tools, partialCallback, &rt);
+      result = completion(prompt, chat_messages, temperature, top_p, top_k, max_tokens, stop_sequences, template_name, jinja, tool_choice, tools, grammar, partialCallback, &rt);
     } catch (const std::exception& e) {
       // Create a basic error message
       throw jsi::JSError(rt, std::string("Failed to complete: ") + e.what());
