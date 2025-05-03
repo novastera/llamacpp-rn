@@ -195,21 +195,47 @@ export default function ModelChatTest() {
       const testPrompt = input || "Complete this sentence: The sky is";
       console.log('Test prompt:', testPrompt);
       
-      // Use minimal parameters with safer defaults
+      // Use minimal parameters with safer defaults - avoid any complex options
       const response = await model.completion({
         prompt: testPrompt,  // Use prompt instead of messages
         temperature: 0.1,    // Very low temperature for more stability
-        top_p: 0.9,          // More conservative filtering 
-        top_k: 40,           // Standard filtering
         max_tokens: 20,      // Increased for better results
         n_gpu_layers: 0,
       });
       
-      console.log('Basic completion result:', response.text);
+      console.log('Basic completion result:', response);
+      
+      // Check for error in response
+      if (response.finish_reason === 'error') {
+        setTestResult(`Error: ${response.text}`);
+        return;
+      }
+      
       setTestResult(`Basic completion result: "${response.text}"`);
     } catch (err) {
       console.error('Basic completion error:', err);
-      setTestResult(`Basic Completion Error: ${err instanceof Error ? err.message : String(err)}`);
+      
+      // More detailed error information
+      let errorMessage = 'Basic Completion Error: ';
+      
+      if (err instanceof Error) {
+        errorMessage += err.message;
+        
+        // Log extended properties
+        console.error('Error name:', err.name);
+        console.error('Error stack:', err.stack);
+        
+        // Log additional properties
+        for (const key in err) {
+          if (Object.prototype.hasOwnProperty.call(err, key)) {
+            console.error(`Error.${key}:`, (err as any)[key]);
+          }
+        }
+      } else {
+        errorMessage += String(err);
+      }
+      
+      setTestResult(errorMessage);
     }
   };
   

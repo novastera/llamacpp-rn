@@ -32,6 +32,8 @@ Pod::Spec.new do |s|
                    "cpp/llama.cpp/common/log.h",
                    "cpp/llama.cpp/common/sampling.cpp",
                    "cpp/llama.cpp/common/sampling.h",
+                   "cpp/llama.cpp/common/ngram-cache.cpp",
+                   "cpp/llama.cpp/common/ngram-cache.h",
                    "cpp/llama.cpp/common/minja/chat-template.hpp",
                    "cpp/llama.cpp/common/minja/minja.hpp",
                    "cpp/llama.cpp/llama.cpp",

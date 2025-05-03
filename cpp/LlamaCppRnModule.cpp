@@ -166,7 +166,7 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
   std::lock_guard<std::mutex> lock(mutex_);
   
   try {
-    // Get model path - required
+    // Get model path - required (preserve custom path handling)
     if (!options.hasProperty(runtime, "model")) {
       throw std::runtime_error("model path is required");
     }
@@ -176,77 +176,117 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
     
     std::string model_path = SystemUtils::normalizeFilePath(options.getProperty(runtime, "model").asString(runtime).utf8(runtime));
     
-    // Setup parameters from options (or use defaults if not supplied)
-    struct llama_model_params model_params = llama_model_default_params();
+    // Create common_params structure for initialization
+    common_params params = {};
     
-    // Set n_gpu_layers
-    int n_gpu_layers = 0;
-    bool gpuSupported = llama_supports_gpu_offload();
-    if (options.hasProperty(runtime, "n_gpu_layers") && gpuSupported) {
-      n_gpu_layers = options.getProperty(runtime, "n_gpu_layers").asNumber();
-    }
-    model_params.n_gpu_layers = n_gpu_layers;
+    // Set model path
+    params.model.path = model_path;
     
-    // Set use_mlock
-    bool use_mlock = false;
-    if (options.hasProperty(runtime, "use_mlock")) {
-      use_mlock = options.getProperty(runtime, "use_mlock").asBool();
-    }
-    model_params.use_mlock = use_mlock;
+    // Set context size and batch parameters
+    SystemUtils::setIfExists(runtime, options, "n_ctx", params.n_ctx);
+    SystemUtils::setIfExists(runtime, options, "n_batch", params.n_batch);
+    SystemUtils::setIfExists(runtime, options, "n_ubatch", params.n_ubatch);
+    SystemUtils::setIfExists(runtime, options, "n_keep", params.n_keep);
     
-    // Create inference parameters
-    llama_context_params ctx_params = llama_context_default_params();
+    // Memory and resource options
+    SystemUtils::setIfExists(runtime, options, "use_mmap", params.use_mmap);
+    SystemUtils::setIfExists(runtime, options, "use_mlock", params.use_mlock);
     
-    // Set n_ctx - default to a reasonable context length
-    int n_ctx = 2048;
-    if (options.hasProperty(runtime, "n_ctx")) {
-      n_ctx = options.getProperty(runtime, "n_ctx").asNumber();
-    }
-    ctx_params.n_ctx = n_ctx;
-    
-    // Set n_batch - how many tokens to process at once
-    int n_batch = 512;
-    if (options.hasProperty(runtime, "n_batch")) {
-      n_batch = options.getProperty(runtime, "n_batch").asNumber();
-    }
-    ctx_params.n_batch = n_batch;
-    
-    // Set number of threads
+    // Extract threading parameters (preserve custom thread logic)
     int n_threads = 0; // 0 = auto
     if (options.hasProperty(runtime, "n_threads")) {
       n_threads = options.getProperty(runtime, "n_threads").asNumber();
     } else {
       n_threads = SystemUtils::getOptimalThreadCount();
     }
-    ctx_params.n_threads = n_threads;
+    params.cpuparams.n_threads = n_threads;
     
-    // Initialize seed for reproducibility or randomness
-    int seed = -1; // -1 = random
-    if (options.hasProperty(runtime, "seed")) {
-      seed = options.getProperty(runtime, "seed").asNumber();
+    // Set n_gpu_layers (preserve custom GPU logic)
+    int n_gpu_layers = 0;
+    bool gpuSupported = llama_supports_gpu_offload();
+    if (options.hasProperty(runtime, "n_gpu_layers") && gpuSupported) {
+      n_gpu_layers = options.getProperty(runtime, "n_gpu_layers").asNumber();
     }
-    // The seed should not be assigned to ctx_params directly
-    // It will be passed to the sampling parameters in the LlamaCppModel
+    params.n_gpu_layers = n_gpu_layers;
     
-    // Use the non-deprecated function
-    llama_model* model = llama_model_load_from_file(model_path.c_str(), model_params);
-    if (!model) {
-      fprintf(stderr, "Failed to load model: %s\n", model_path.c_str());
-      throw std::runtime_error("failed to load model");
+    // Additional model parameters
+    SystemUtils::setIfExists(runtime, options, "vocab_only", params.logits_all);
+    SystemUtils::setIfExists(runtime, options, "embedding", params.embedding);
+    SystemUtils::setIfExists(runtime, options, "rope_freq_base", params.rope_freq_base);
+    SystemUtils::setIfExists(runtime, options, "rope_freq_scale", params.rope_freq_scale);
+    
+    // Sampling parameters
+    SystemUtils::setIfExists(runtime, options, "seed", params.sampling.seed);
+    
+    // Other system parameters
+    SystemUtils::setIfExists(runtime, options, "verbose", params.verbosity);
+    
+    // RoPE settings if provided
+    if (options.hasProperty(runtime, "yarn_ext_factor")) {
+      params.yarn_ext_factor = options.getProperty(runtime, "yarn_ext_factor").asNumber();
+    }
+    if (options.hasProperty(runtime, "yarn_attn_factor")) {
+      params.yarn_attn_factor = options.getProperty(runtime, "yarn_attn_factor").asNumber();
+    }
+    if (options.hasProperty(runtime, "yarn_beta_fast")) {
+      params.yarn_beta_fast = options.getProperty(runtime, "yarn_beta_fast").asNumber();
+    }
+    if (options.hasProperty(runtime, "yarn_beta_slow")) {
+      params.yarn_beta_slow = options.getProperty(runtime, "yarn_beta_slow").asNumber();
     }
     
-    // Initialize the context using the non-deprecated function
-    fprintf(stderr, "Initializing context (n_ctx=%d, n_batch=%d, n_threads=%d)\n", 
-            ctx_params.n_ctx, ctx_params.n_batch, ctx_params.n_threads);
-    llama_context* ctx = llama_init_from_model(model, ctx_params);
-    if (!ctx) {
-      // Use the non-deprecated function
-      fprintf(stderr, "Failed to initialize context\n");
-      llama_model_free(model);
-      throw std::runtime_error("failed to initialize context");
+    // Support for chat template override
+    std::string chat_template;
+    if (SystemUtils::setIfExists(runtime, options, "chat_template", chat_template)) {
+      params.chat_template = chat_template;
     }
     
-    fprintf(stderr, "Model loaded successfully with vocab size: %d\n", llama_vocab_n_tokens(llama_model_get_vocab(model)));
+    // Support for LoRA adapters
+    if (options.hasProperty(runtime, "lora_adapters") && options.getProperty(runtime, "lora_adapters").isObject()) {
+      jsi::Object lora_obj = options.getProperty(runtime, "lora_adapters").asObject(runtime);
+      if (lora_obj.isArray(runtime)) {
+        jsi::Array lora_array = lora_obj.asArray(runtime);
+        size_t n_lora = lora_array.size(runtime);
+        
+        for (size_t i = 0; i < n_lora; i++) {
+          if (lora_array.getValueAtIndex(runtime, i).isObject()) {
+            jsi::Object adapter = lora_array.getValueAtIndex(runtime, i).asObject(runtime);
+            if (adapter.hasProperty(runtime, "path") && adapter.getProperty(runtime, "path").isString()) {
+              common_adapter_lora_info lora;
+              lora.path = adapter.getProperty(runtime, "path").asString(runtime).utf8(runtime);
+              
+              // Get scale if provided
+              lora.scale = 1.0f; // Default scale
+              if (adapter.hasProperty(runtime, "scale") && adapter.getProperty(runtime, "scale").isNumber()) {
+                lora.scale = adapter.getProperty(runtime, "scale").asNumber();
+              }
+              
+              params.lora_adapters.push_back(lora);
+            }
+          }
+        }
+      }
+    }
+    
+    // Initialize using common_init_from_params   
+    common_init_result result = common_init_from_params(params);
+    
+    // Check if initialization was successful
+    if (!result.model || !result.context) {
+      throw std::runtime_error("Failed to initialize model and context");
+    }
+    
+    // Get raw pointers and release ownership from shared_ptr
+    llama_model* model = result.model.release();
+    llama_context* ctx = result.context.release();
+    
+    
+    // Handle any LoRA adapters that were loaded
+    // In this implementation, we don't need to do anything special since the adapters
+    // have already been applied by common_init_from_params
+    
+   //fprintf(stderr, "Model loaded successfully with vocab size: %d\n", 
+   //         llama_vocab_n_tokens(llama_model_get_vocab(model)));
     
     // Create the model object and return it
     return createModelObject(runtime, model, ctx);

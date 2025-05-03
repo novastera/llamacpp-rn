@@ -18,18 +18,46 @@ export interface LlamaContextType {
 export interface LlamaModelParams {
   // Model loading parameters
   model: string;               // path to the model file
-  model_alias?: string;        // alias for the model name
-  n_ctx?: number;              // context size (default: 512)
+  n_ctx?: number;              // context size (default: 2048)
   n_batch?: number;            // batch size (default: 512)
+  n_ubatch?: number;           // micro batch size for prompt processing
   n_threads?: number;          // number of threads (default: number of physical CPU cores)
+  n_keep?: number;             // number of tokens to keep from initial prompt
+  
+  // GPU acceleration parameters
   n_gpu_layers?: number;       // number of layers to store in VRAM (default: 0)
+  
+  // Memory management parameters
   use_mmap?: boolean;          // use mmap for faster loading (default: true)
   use_mlock?: boolean;         // use mlock to keep model in memory (default: false)
+  
+  // Model behavior parameters
   vocab_only?: boolean;        // only load the vocabulary, no weights
   embedding?: boolean;         // use embedding mode (default: false)
+  seed?: number;               // RNG seed for reproducibility
+  
+  // RoPE parameters
   rope_freq_base?: number;     // RoPE base frequency (default: 10000.0)
   rope_freq_scale?: number;    // RoPE frequency scaling factor (default: 1.0)
-  logits_all?: boolean;        // return logits for all tokens (needed for perplexity calculation)
+  
+  // YaRN parameters (RoPE scaling for longer contexts)
+  yarn_ext_factor?: number;    // YaRN extrapolation mix factor
+  yarn_attn_factor?: number;   // YaRN magnitude scaling factor
+  yarn_beta_fast?: number;     // YaRN low correction dim
+  yarn_beta_slow?: number;     // YaRN high correction dim
+  
+  // Additional options
+  logits_all?: boolean;        // return logits for all tokens
+  chat_template?: string;      // override chat template
+  verbose?: number;            // verbosity level (0 = silent, 1 = info, 2+ = debug)
+  
+  // LoRA adapters
+  lora_adapters?: Array<{
+    path: string;              // path to LoRA adapter file
+    scale?: number;            // scaling factor for the adapter (default: 1.0)
+  }>;
+  
+  // Grammar-based sampling
   grammar?: string;            // GBNF grammar for grammar-based sampling
 }
 
