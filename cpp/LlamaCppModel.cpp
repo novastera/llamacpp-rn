@@ -1,7 +1,7 @@
 #include "LlamaCppModel.h"
 #include <chrono>
 #include <stdexcept>
-
+#include "SystemUtils.h"
 // Include llama.cpp headers directly
 #include "llama.h"
 #include "chat.h"
@@ -224,10 +224,6 @@ common_params_sampling LlamaCppModel::convertToSamplingParams(const CompletionOp
 
 // Main completion method
 CompletionResult LlamaCppModel::completion(const CompletionOptions& options) {
-  if (!model_ || !ctx_) {
-    throw std::runtime_error("Model or context not initialized");
-  }
-  
   // Start timing
   auto start_time = std::chrono::high_resolution_clock::now();
   
@@ -236,286 +232,357 @@ CompletionResult LlamaCppModel::completion(const CompletionOptions& options) {
   result.text = "";
   result.truncated = false;
   result.finish_reason = "length"; // Default finish reason
+  result.prompt_tokens = 0;
+  result.generated_tokens = 0;
   
-  // Clear the KV cache if needed
-  bool is_first = llama_kv_self_used_cells(ctx_) == 0;
-  
-  // Prepare the prompt using chat template
-  std::string input_text;
-  
-  if (!options.prompt.empty()) {
-    // Use prompt directly if provided
-    input_text = options.prompt;
-    fprintf(stderr, "Completion using prompt (first 50 chars): %.50s%s\n", 
-            input_text.c_str(), input_text.length() > 50 ? "..." : "");
-  } else if (!options.messages.empty()) {
-    try {
-      // Validate messages
-      fprintf(stderr, "Completion using %zu messages\n", options.messages.size());
-      for (size_t i = 0; i < options.messages.size(); i++) {
-        const auto& msg = options.messages[i];
-        fprintf(stderr, "  Message %zu: role='%s', content length=%zu%s\n", 
-                i, msg.role.c_str(), msg.content.length(),
-                !msg.name.empty() ? (", name='" + msg.name + "'").c_str() : "");
-      }
-      
-      // Initialize the chat template using llama.cpp's chat utilities
-      auto chat_templates = common_chat_templates_init(model_, "");
-      if (!chat_templates) {
-        throw std::runtime_error("Failed to initialize chat templates");
-      }
-      
-      // Convert our messages to common_chat_msg format
-      std::vector<common_chat_msg> common_msgs;
-      for (const auto& msg : options.messages) {
-        common_chat_msg common_msg;
-        common_msg.role = msg.role;
-        common_msg.content = msg.content;
+  try {
+    if (!model_ || !ctx_) {
+      throw std::runtime_error("Model or context not initialized");
+    }
+    
+    fprintf(stderr, "Starting completion with model at %p, context at %p\n", (void*)model_, (void*)ctx_);
+    
+    // Clear the KV cache if needed
+    bool is_first = llama_kv_self_used_cells(ctx_) == 0;
+    fprintf(stderr, "KV cache status: is_first=%d, used_cells=%zu\n", is_first, llama_kv_self_used_cells(ctx_));
+    
+    // Prepare the prompt 
+    std::string input_text;
+    
+    // Set is_predicting flag
+    is_predicting_ = true;
+    
+    if (!options.prompt.empty()) {
+      // Use prompt directly if provided
+      input_text = options.prompt;
+      fprintf(stderr, "Using direct prompt: %.50s%s\n", 
+              input_text.c_str(), input_text.length() > 50 ? "..." : "");
+    } else if (!options.messages.empty()) {
+      try {
+        // Initialize chat template
+        fprintf(stderr, "Initializing chat template with %zu messages\n", options.messages.size());
         
-        if (!msg.name.empty()) {
-          common_msg.tool_name = msg.name;
+        auto chat_templates = common_chat_templates_init(model_, "");
+        if (!chat_templates) {
+          throw std::runtime_error("Failed to initialize chat templates");
         }
         
-        common_msgs.push_back(common_msg);
-      }
-      
-      // Convert tools to common_chat_tool format if provided
-      std::vector<common_chat_tool> common_tools;
-      if (!options.tools.empty()) {
-        fprintf(stderr, "Completion with %zu tools\n", options.tools.size());
-        for (const auto& tool : options.tools) {
-          common_chat_tool common_tool;
-          common_tool.name = tool.function.name;
-          common_tool.description = tool.function.description;
+        // Convert our messages to common_chat_msg format
+        std::vector<common_chat_msg> common_msgs;
+        common_msgs.reserve(options.messages.size());
+        
+        for (const auto& msg : options.messages) {
+          common_chat_msg common_msg;
+          common_msg.role = msg.role;
+          common_msg.content = msg.content;
           
-          // Convert parameters to JSON schema string
-          nlohmann::ordered_json params_obj;
-          params_obj["type"] = "object";
-          params_obj["properties"] = nlohmann::ordered_json::object();
-          params_obj["required"] = nlohmann::ordered_json::array();
-          
-          for (const auto& param : tool.function.parameters) {
-            nlohmann::ordered_json param_obj;
-            param_obj["type"] = param.type;
-            if (!param.description.empty()) {
-              param_obj["description"] = param.description;
-            }
-            
-            params_obj["properties"][param.name] = param_obj;
-            
-            if (param.required) {
-              params_obj["required"].push_back(param.name);
-            }
+          if (!msg.name.empty()) {
+            common_msg.tool_name = msg.name;
           }
           
-          common_tool.parameters = params_obj.dump();
-          fprintf(stderr, "  Tool: name='%s', parameters=%zu bytes\n", 
-                  common_tool.name.c_str(), common_tool.parameters.length());
-          common_tools.push_back(common_tool);
+          common_msgs.push_back(common_msg);
         }
-      }
-      
-      // Set up inputs for the template
-      common_chat_templates_inputs inputs;
-      inputs.messages = common_msgs;
-      inputs.add_generation_prompt = true;
-      inputs.use_jinja = options.jinja;
-      inputs.tools = common_tools;
-      
-      // Convert tool_choice to the enum
-      if (!options.tool_choice.empty()) {
-        fprintf(stderr, "Tool choice: %s\n", options.tool_choice.c_str());
-        inputs.tool_choice = common_chat_tool_choice_parse_oaicompat(options.tool_choice);
-      } else {
-        inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
-      }
-      
-      // Set grammar if provided
-      if (!options.grammar.empty()) {
-        fprintf(stderr, "Using grammar: %zu bytes\n", options.grammar.length());
-        inputs.grammar = options.grammar;
-      }
-      
-      // Apply the template to get the prompt and grammar
-      try {
+        
+        // Convert tools if present
+        std::vector<common_chat_tool> common_tools;
+        if (!options.tools.empty()) {
+          fprintf(stderr, "Setting up %zu tools\n", options.tools.size());
+          for (const auto& tool : options.tools) {
+            common_chat_tool common_tool;
+            common_tool.name = tool.function.name;
+            common_tool.description = tool.function.description;
+            
+            // Convert parameters to simple JSON schema
+            nlohmann::ordered_json params_obj;
+            params_obj["type"] = "object";
+            params_obj["properties"] = nlohmann::ordered_json::object();
+            params_obj["required"] = nlohmann::ordered_json::array();
+            
+            for (const auto& param : tool.function.parameters) {
+              nlohmann::ordered_json param_obj;
+              param_obj["type"] = param.type;
+              if (!param.description.empty()) {
+                param_obj["description"] = param.description;
+              }
+              
+              params_obj["properties"][param.name] = param_obj;
+              
+              if (param.required) {
+                params_obj["required"].push_back(param.name);
+              }
+            }
+            
+            common_tool.parameters = params_obj.dump();
+            common_tools.push_back(common_tool);
+          }
+        }
+        
+        // Set up template inputs
+        common_chat_templates_inputs inputs;
+        inputs.messages = common_msgs;
+        inputs.add_generation_prompt = true;
+        inputs.use_jinja = options.jinja;
+        inputs.tools = common_tools;
+        
+        // Convert tool_choice
+        if (!options.tool_choice.empty()) {
+          fprintf(stderr, "Tool choice: %s\n", options.tool_choice.c_str());
+          inputs.tool_choice = common_chat_tool_choice_parse_oaicompat(options.tool_choice);
+        } else {
+          inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
+        }
+        
+        // Set grammar if provided
+        if (!options.grammar.empty()) {
+          fprintf(stderr, "Using grammar: %zu bytes\n", options.grammar.length());
+          inputs.grammar = options.grammar;
+        }
+        
+        // Apply template to get prompt and grammar
+        fprintf(stderr, "Applying chat template\n");
         common_chat_params params = common_chat_templates_apply(chat_templates.get(), inputs);
         input_text = params.prompt;
         
-        fprintf(stderr, "Template applied successfully, prompt length=%zu\n", input_text.length());
+        fprintf(stderr, "Template applied, prompt length: %zu\n", input_text.length());
         
-        // Use the grammar from the template if we don't have one
+        // Use grammar from template if needed
         if (options.grammar.empty() && !params.grammar.empty()) {
           fprintf(stderr, "Using grammar from template: %zu bytes\n", params.grammar.length());
           const_cast<CompletionOptions&>(options).grammar = params.grammar;
         }
       } catch (const std::exception& e) {
-        fprintf(stderr, "Error applying chat template: %s\n", e.what());
-        throw std::runtime_error(std::string("Error applying chat template: ") + e.what());
+        fprintf(stderr, "Error in chat template processing: %s\n", e.what());
+        throw std::runtime_error(std::string("Template error: ") + e.what());
       }
-    } catch (const std::exception& e) {
-      fprintf(stderr, "Error in chat template processing: %s\n", e.what());
-      throw;
-    }
-  } else {
-    throw std::runtime_error("Either prompt or messages must be provided");
-  }
-  
-  // Tokenize the input
-  const llama_vocab* vocab = llama_model_get_vocab(model_);
-  
-  // First get the number of tokens needed
-  int n_tokens = llama_tokenize(vocab, input_text.c_str(), input_text.length(), nullptr, 0, is_first, true);
-  if (n_tokens < 0) {
-    n_tokens = -n_tokens; // Handle negative return value
-  }
-  
-  // Allocate space for tokens
-  std::vector<llama_token> tokens(n_tokens);
-  
-  // Do the actual tokenization
-  n_tokens = llama_tokenize(vocab, input_text.c_str(), input_text.length(), tokens.data(), tokens.size(), is_first, true);
-  if (n_tokens < 0) {
-    n_tokens = -n_tokens; // Handle negative return value
-  }
-  
-  // Prepare a batch for the prompt
-  llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
-  
-  // Process the prompt
-  if (llama_decode(ctx_, batch)) {
-    throw std::runtime_error("Failed to decode prompt");
-  }
-  
-  // Record prompt processing time
-  auto prompt_end_time = std::chrono::high_resolution_clock::now();
-  
-  // Convert our options to common_params_sampling
-  common_params_sampling sampling_params = convertToSamplingParams(options);
-  
-  // Create common_sampler for token generation
-  struct common_sampler* sampler = common_sampler_init(model_, sampling_params);
-  
-  if (!sampler) {
-    throw std::runtime_error("Failed to initialize sampler");
-  }
-  
-  // Generate tokens
-  llama_token token_id = 0;
-  int n_generated = 0;
-  
-  // Generate up to max_tokens tokens
-  while ((n_generated < options.max_tokens || options.max_tokens <= 0) && !should_stop_completion_) {
-    // Check if we have enough space in the context
-    uint32_t n_ctx = llama_n_ctx(ctx_);
-    if (llama_kv_self_used_cells(ctx_) + 1 >= n_ctx) {
-      result.truncated = true;
-      result.finish_reason = "context_length_exceeded";
-      break;
+    } else {
+      throw std::runtime_error("Either prompt or messages must be provided");
     }
     
-    // Sample a token using our common_sampler
-    token_id = common_sampler_sample(sampler, ctx_, 0, true);
+    // Tokenize the input
+    fprintf(stderr, "Tokenizing input text\n");
+    const llama_vocab* vocab = llama_model_get_vocab(model_);
     
-    // Check for end of generation
-    if (token_id == llama_vocab_eos(vocab)) {
-      result.finish_reason = "stop";
-      break;
+    // First get the number of tokens
+    int n_tokens = llama_tokenize(vocab, input_text.c_str(), input_text.length(), nullptr, 0, is_first, true);
+    if (n_tokens <= 0) {
+      n_tokens = -n_tokens; // Handle negative return value
+      fprintf(stderr, "Tokenization required negation, new count: %d\n", n_tokens);
     }
     
-    // Convert token to text
-    char token_buf[8] = {0};
-    int n_chars = llama_token_to_piece(vocab, token_id, token_buf, sizeof(token_buf) - 1, 0, true);
-    if (n_chars < 0) n_chars = 0;
-    token_buf[n_chars] = '\0';
+    fprintf(stderr, "Prompt requires %d tokens\n", n_tokens);
     
-    std::string token_text(token_buf);
+    // Allocate space for tokens
+    std::vector<llama_token> tokens(n_tokens);
     
-    // Add to result
-    result.text += token_text;
-    
-    // Call partial callback if provided
-    if (options.partial_callback && options.runtime) {
-      options.partial_callback(*options.runtime, token_text.c_str());
+    // Do the actual tokenization
+    n_tokens = llama_tokenize(vocab, input_text.c_str(), input_text.length(), tokens.data(), tokens.size(), is_first, true);
+    if (n_tokens <= 0) {
+      n_tokens = -n_tokens; // Handle negative return value
+      fprintf(stderr, "Final tokenization required negation, final count: %d\n", n_tokens);
     }
     
-    // Check for stop sequences
-    bool should_stop = false;
-    for (const auto& stop_seq : options.stop_sequences) {
-      if (result.text.size() >= stop_seq.size() && 
-          result.text.substr(result.text.size() - stop_seq.size()) == stop_seq) {
-        // Remove the stop sequence from the result
-        result.text = result.text.substr(0, result.text.size() - stop_seq.size());
-        should_stop = true;
+    if (n_tokens == 0) {
+      throw std::runtime_error("Failed to tokenize input text");
+    }
+    
+    fprintf(stderr, "Successfully tokenized to %d tokens\n", n_tokens);
+    
+    // Process the prompt
+    fprintf(stderr, "Creating batch for prompt tokens\n");
+    llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
+    
+    fprintf(stderr, "Decoding prompt tokens\n");
+    if (llama_decode(ctx_, batch)) {
+      throw std::runtime_error("Failed to decode prompt");
+    }
+    
+    fprintf(stderr, "Prompt tokens processed successfully\n");
+    
+    // Record prompt processing time and set prompt tokens in result
+    auto prompt_end_time = std::chrono::high_resolution_clock::now();
+    result.prompt_tokens = n_tokens;
+    
+    // Set up sampling parameters
+    fprintf(stderr, "Setting up sampling parameters\n");
+    common_params_sampling sampling_params = convertToSamplingParams(options);
+    
+    // Create sampler for token generation
+    fprintf(stderr, "Initializing sampler\n");
+    struct common_sampler* sampler = common_sampler_init(model_, sampling_params);
+    
+    if (!sampler) {
+      throw std::runtime_error("Failed to initialize sampler");
+    }
+    
+    fprintf(stderr, "Starting token generation, max_tokens: %d\n", options.max_tokens);
+    
+    // Generate tokens
+    llama_token token_id = 0;
+    int n_generated = 0;
+    
+    // Generate up to max_tokens tokens
+    while ((n_generated < options.max_tokens || options.max_tokens <= 0) && !should_stop_completion_) {
+      // Safety check for array bounds and context length
+      uint32_t n_ctx = llama_n_ctx(ctx_);
+      if (llama_kv_self_used_cells(ctx_) + 1 >= n_ctx) {
+        fprintf(stderr, "Context length exceeded, truncating\n");
+        result.truncated = true;
+        result.finish_reason = "context_length_exceeded";
+        break;
+      }
+      
+      // Sample next token
+      fprintf(stderr, "Sampling token %d\n", n_generated + 1);
+      token_id = common_sampler_sample(sampler, ctx_, 0, false);
+      
+      // Check for end of generation
+      if (token_id == llama_vocab_eos(vocab)) {
+        fprintf(stderr, "Generated EOS token, stopping\n");
         result.finish_reason = "stop";
         break;
       }
+      
+      // Convert token to text
+      char token_buf[8] = {0};
+      int n_chars = llama_token_to_piece(vocab, token_id, token_buf, sizeof(token_buf) - 1, 0, true);
+      if (n_chars < 0) n_chars = 0;
+      token_buf[n_chars] = '\0';
+      
+      std::string token_text(token_buf);
+      fprintf(stderr, "Generated token: '%s'\n", token_text.c_str());
+      
+      // Add to result
+      result.text += token_text;
+      
+      // Call partial callback if provided - safely
+      if (options.partial_callback && options.runtime) {
+        try {
+          fprintf(stderr, "Calling partial callback\n");
+          options.partial_callback(*options.runtime, token_text.c_str());
+        } catch (const std::exception& e) {
+          // Log but continue - don't fail the entire completion
+          fprintf(stderr, "Error in partial callback: %s\n", e.what());
+        }
+      }
+      
+      // Check for stop sequences
+      bool should_stop = false;
+      for (const auto& stop_seq : options.stop_sequences) {
+        if (result.text.size() >= stop_seq.size() && 
+            result.text.substr(result.text.size() - stop_seq.size()) == stop_seq) {
+          // Remove the stop sequence from the result
+          fprintf(stderr, "Stop sequence found: '%s'\n", stop_seq.c_str());
+          result.text = result.text.substr(0, result.text.size() - stop_seq.size());
+          should_stop = true;
+          result.finish_reason = "stop";
+          break;
+        }
+      }
+      
+      if (should_stop) {
+        break;
+      }
+      
+      // Accept the token and prepare for next iteration
+      fprintf(stderr, "Accepting token\n");
+      common_sampler_accept(sampler, token_id, true);
+      
+      // Prepare the batch with the new token
+      fprintf(stderr, "Preparing batch with new token\n");
+      batch = llama_batch_get_one(&token_id, 1);
+      
+      // Continue decoding with new token
+      fprintf(stderr, "Decoding with new token\n");
+      if (llama_decode(ctx_, batch)) {
+        fprintf(stderr, "Error decoding token, stopping generation\n");
+        break;
+      }
+      
+      n_generated++;
+      fprintf(stderr, "Generated %d tokens so far\n", n_generated);
     }
     
-    if (should_stop) {
-      break;
+    // Handle interrupted generation
+    if (should_stop_completion_) {
+      fprintf(stderr, "Completion was interrupted\n");
+      result.finish_reason = "interrupted";
     }
     
-    // Accept the token
-    common_sampler_accept(sampler, token_id, true);
+    // Calculate time taken
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto prompt_duration = std::chrono::duration<double, std::milli>(prompt_end_time - start_time).count();
+    auto generation_duration = std::chrono::duration<double, std::milli>(end_time - prompt_end_time).count();
+    auto total_duration = std::chrono::duration<double, std::milli>(end_time - start_time).count();
     
-    // Prepare the batch with the new token
-    batch = llama_batch_get_one(&token_id, 1);
+    // Clean up
+    fprintf(stderr, "Completion finished, cleaning up\n");
+    common_sampler_free(sampler);
     
-    // Continue decoding with new token
-    if (llama_decode(ctx_, batch)) {
-      break;
+    // Reset prediction flag
+    is_predicting_ = false;
+    
+    // Parse tool calls if needed
+    if (!options.tools.empty() && !result.text.empty()) {
+      fprintf(stderr, "Checking for tool calls in generated text\n");
+      std::string remainingText;
+      std::vector<ToolCall> toolCalls = parseToolCalls(result.text, &remainingText);
+      
+      // If we found tool calls, store them in the result
+      if (!toolCalls.empty()) {
+        fprintf(stderr, "Found %zu tool calls\n", toolCalls.size());
+        result.tool_calls = std::move(toolCalls);
+        result.text = remainingText;
+        result.finish_reason = "tool_calls";
+      }
     }
     
-    n_generated++;
+    // Update result
+    result.generated_tokens = n_generated;
+    result.prompt_duration_ms = prompt_duration;
+    result.generation_duration_ms = generation_duration;
+    result.total_duration_ms = total_duration;
+    
+    fprintf(stderr, "Completion successful: %d prompt tokens, %d generated tokens\n", 
+            result.prompt_tokens, result.generated_tokens);
+    
+    return result;
+  } catch (const std::exception& e) {
+    // Reset prediction flag on error
+    is_predicting_ = false;
+    
+    // Log the error
+    fprintf(stderr, "Error in completion: %s\n", e.what());
+    
+    // Return a result with the error information
+    result.text = "";
+    result.finish_reason = "error";
+    // Add error message to result for troubleshooting
+    result.text = std::string("ERROR: ") + e.what();
+    
+    return result;
   }
-  
-  // Handle interrupted generation
-  if (should_stop_completion_) {
-    result.finish_reason = "interrupted";
-  }
-  
-  // Calculate time taken
-  auto end_time = std::chrono::high_resolution_clock::now();
-  auto prompt_duration = std::chrono::duration<double, std::milli>(prompt_end_time - start_time).count();
-  auto generation_duration = std::chrono::duration<double, std::milli>(end_time - prompt_end_time).count();
-  auto total_duration = std::chrono::duration<double, std::milli>(end_time - start_time).count();
-  
-  // Clean up
-  common_sampler_free(sampler);
-  
-  // Parse tool calls if needed
-  if (!options.tools.empty() && !result.text.empty()) {
-    std::string remainingText;
-    std::vector<ToolCall> toolCalls = parseToolCalls(result.text, &remainingText);
-    
-    // If we found tool calls, only keep the remaining text
-    if (!toolCalls.empty()) {
-      result.text = remainingText;
-    }
-  }
-  
-  // Update result
-  result.prompt_tokens = n_tokens;
-  result.generated_tokens = n_generated;
-  result.prompt_duration_ms = prompt_duration;
-  result.generation_duration_ms = generation_duration;
-  result.total_duration_ms = total_duration;
-  
-  return result;
 }
 
 // Parse tool calls from generated text using llama.cpp common chat functionality
 std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text, std::string* remainingText) {
   std::vector<ToolCall> result;
   
-  // Add debug logging
-  fprintf(stderr, "parseToolCalls: Attempting to parse text: %.100s%s\n", 
-          text.c_str(), text.length() > 100 ? "..." : "");
+  // Add detailed logging
+  fprintf(stderr, "parseToolCalls: Starting parse of text (length=%zu): %.100s%s\n", 
+          text.length(), text.c_str(), text.length() > 100 ? "..." : "");
   
   try {
-    // Use common_chat_parse to extract tool calls based on format
-    // Try multiple formats, starting with Llama-3, falling back to more generic parsing
-    common_chat_msg parsed;
+    // First check if the text is empty or too short to contain a tool call
+    if (text.empty() || text.length() < 10) {
+      fprintf(stderr, "parseToolCalls: Text too short to contain tool calls\n");
+      if (remainingText) {
+        *remainingText = text;
+      }
+      return result;
+    }
+
+    // Use common_chat_parse to extract tool calls - try multiple formats
+    fprintf(stderr, "parseToolCalls: Trying common_chat_parse\n");
     std::vector<common_chat_format> formats_to_try = {
       COMMON_CHAT_FORMAT_LLAMA_3_X,
       COMMON_CHAT_FORMAT_GENERIC,
@@ -523,11 +590,14 @@ std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text, std
     };
     
     bool parsing_succeeded = false;
+    common_chat_msg parsed;
+    
     for (auto format : formats_to_try) {
       try {
         fprintf(stderr, "parseToolCalls: Trying format: %d\n", format);
         parsed = common_chat_parse(text, format);
         parsing_succeeded = true;
+        fprintf(stderr, "parseToolCalls: Format %d succeeded\n", format);
         break;
       } catch (const std::exception& e) {
         fprintf(stderr, "parseToolCalls: Format %d failed: %s\n", format, e.what());
@@ -537,6 +607,53 @@ std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text, std
     
     if (!parsing_succeeded) {
       fprintf(stderr, "parseToolCalls: All parsing formats failed\n");
+      
+      // Try to manually detect JSON in the content as a fallback
+      size_t jsonStart = text.find("{\"");
+      size_t jsonEnd = text.rfind("}");
+      
+      if (jsonStart != std::string::npos && jsonEnd != std::string::npos && jsonEnd > jsonStart) {
+        fprintf(stderr, "parseToolCalls: Trying manual JSON extraction\n");
+        try {
+          std::string jsonStr = text.substr(jsonStart, jsonEnd - jsonStart + 1);
+          nlohmann::json parsedJson = nlohmann::json::parse(jsonStr);
+          
+          // Check if this looks like a function call
+          if (parsedJson.contains("name") && parsedJson.contains("arguments")) {
+            fprintf(stderr, "parseToolCalls: Found potential tool call via manual extraction\n");
+            
+            ToolCall toolCall;
+            toolCall.id = "call_" + std::to_string(result.size());
+            toolCall.type = "function";
+            toolCall.name = parsedJson["name"].get<std::string>();
+            
+            // Handle arguments as either string or object
+            if (parsedJson["arguments"].is_string()) {
+              toolCall.arguments = parsedJson["arguments"].get<std::string>();
+            } else {
+              toolCall.arguments = parsedJson["arguments"].dump();
+            }
+            
+            result.push_back(toolCall);
+            
+            // Set remaining text
+            if (remainingText) {
+              // Return text before JSON if possible
+              if (jsonStart > 0) {
+                *remainingText = text.substr(0, jsonStart);
+              } else {
+                *remainingText = "";
+              }
+            }
+            
+            fprintf(stderr, "parseToolCalls: Successfully extracted tool call manually\n");
+            return result;
+          }
+        } catch (const std::exception& e) {
+          fprintf(stderr, "parseToolCalls: Manual JSON extraction failed: %s\n", e.what());
+        }
+      }
+      
       // Fall back to returning the original text
       if (remainingText) {
         *remainingText = text;
@@ -544,29 +661,36 @@ std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text, std
       return result;
     }
     
-    // Set the remaining text if requested
+    // Set the remaining text if we have a successful parse
     if (remainingText) {
       *remainingText = parsed.content;
+      fprintf(stderr, "parseToolCalls: Remaining text length=%zu\n", parsed.content.length());
     }
     
-    // Convert common_chat_tool_call to our ToolCall format
-    for (const auto& tc : parsed.tool_calls) {
-      ToolCall toolCall;
-      toolCall.id = tc.id.empty() ? "call_" + std::to_string(result.size()) : tc.id;
-      toolCall.type = "function";  // Default to function type
-      toolCall.name = tc.name;
-      toolCall.arguments = tc.arguments;
+    // Convert tool calls
+    if (!parsed.tool_calls.empty()) {
+      fprintf(stderr, "parseToolCalls: Found %zu tool calls\n", parsed.tool_calls.size());
       
-      fprintf(stderr, "parseToolCalls: Found tool call - name: %s, args: %.50s%s\n", 
-              toolCall.name.c_str(), 
-              toolCall.arguments.c_str(), 
-              toolCall.arguments.length() > 50 ? "..." : "");
-      
-      result.push_back(toolCall);
+      for (const auto& tc : parsed.tool_calls) {
+        ToolCall toolCall;
+        toolCall.id = tc.id.empty() ? "call_" + std::to_string(result.size()) : tc.id;
+        toolCall.type = "function";  // Default to function type
+        toolCall.name = tc.name;
+        toolCall.arguments = tc.arguments;
+        
+        fprintf(stderr, "parseToolCalls: Tool call - name: %s, args: %.50s%s\n", 
+                toolCall.name.c_str(), 
+                toolCall.arguments.c_str(), 
+                toolCall.arguments.length() > 50 ? "..." : "");
+        
+        result.push_back(toolCall);
+      }
+    } else {
+      fprintf(stderr, "parseToolCalls: No tool calls found in parsed message\n");
     }
   } catch (const std::exception& e) {
     // Log the error but don't crash
-    fprintf(stderr, "Error parsing tool calls: %s\n", e.what());
+    fprintf(stderr, "parseToolCalls: Error: %s\n", e.what());
     
     // Set the original text as remaining if requested
     if (remainingText) {
@@ -574,194 +698,204 @@ std::vector<ToolCall> LlamaCppModel::parseToolCalls(const std::string& text, std
     }
   }
   
+  fprintf(stderr, "parseToolCalls: Returning %zu tool calls\n", result.size());
   return result;
 }
 
 // JSI method for completions
 jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count) {
   try {
-    if (count < 1 || !args[0].isString()) {
-      throw std::runtime_error("First argument (prompt) must be a string");
+    if (count < 1 || !args[0].isObject()) {
+      throw std::runtime_error("First argument must be a completion options object");
     }
     
-    std::string prompt = args[0].asString(rt).utf8(rt);
+    // Get the options object
+    jsi::Object options = args[0].getObject(rt);
     
-    // Setup options with defaults
-    CompletionOptions options;
-    options.prompt = prompt;
-    options.max_tokens = 128;     // Default max tokens to generate
-    options.temperature = 0.8f;   // Default temperature
-    options.top_p = 0.95f;        // Default top_p
-    options.top_k = 40;           // Default top_k
-    options.stop_sequences = {};  // Default stop words
-    options.repeat_penalty = 1.1f; // Default repeat penalty
-    options.seed = LLAMA_DEFAULT_SEED; // Default to random seed (-1)
+    // Setup completion options - defaults already defined in the struct
+    CompletionOptions completionOpts;
     
-    // Use second argument for options if provided
-    if (count > 1 && args[1].isObject()) {
-      jsi::Object jsOptions = args[1].getObject(rt);
-      
-      if (jsOptions.hasProperty(rt, "max_tokens")) {
-        options.max_tokens = jsOptions.getProperty(rt, "max_tokens").asNumber();
+    // Check if options has either prompt or messages
+    bool hasPrompt = options.hasProperty(rt, "prompt");
+    bool hasMessages = options.hasProperty(rt, "messages");
+    
+    if (!hasPrompt && !hasMessages) {
+      throw std::runtime_error("Either 'prompt' or 'messages' must be provided");
+    }
+    
+    // Process prompt if available
+    if (hasPrompt) {
+      jsi::Value promptValue = options.getProperty(rt, "prompt");
+      if (promptValue.isString()) {
+        completionOpts.prompt = promptValue.asString(rt).utf8(rt);
+      } else {
+        throw std::runtime_error("'prompt' must be a string");
       }
-      
-      if (jsOptions.hasProperty(rt, "temperature")) {
-        options.temperature = jsOptions.getProperty(rt, "temperature").asNumber();
-      }
-      
-      if (jsOptions.hasProperty(rt, "top_p")) {
-        options.top_p = jsOptions.getProperty(rt, "top_p").asNumber();
-      }
-      
-      if (jsOptions.hasProperty(rt, "top_k")) {
-        options.top_k = jsOptions.getProperty(rt, "top_k").asNumber();
-      }
-      
-      if (jsOptions.hasProperty(rt, "repeat_penalty")) {
-        options.repeat_penalty = jsOptions.getProperty(rt, "repeat_penalty").asNumber();
-      }
-      
-      // Add seed parameter
-      if (jsOptions.hasProperty(rt, "seed")) {
-        options.seed = jsOptions.getProperty(rt, "seed").asNumber();
-      }
-      
-      // Handle stop words array
-      if (jsOptions.hasProperty(rt, "stop")) {
-        jsi::Value stop_val = jsOptions.getProperty(rt, "stop");
-        if (stop_val.isObject() && stop_val.getObject(rt).isArray(rt)) {
-          jsi::Array stop_arr = stop_val.getObject(rt).asArray(rt);
-          for (size_t i = 0; i < stop_arr.size(rt); i++) {
-            jsi::Value item = stop_arr.getValueAtIndex(rt, i);
-            if (item.isString()) {
-              options.stop_sequences.push_back(item.asString(rt).utf8(rt));
-            }
+    }
+    
+    // Process messages if available
+    if (hasMessages) {
+      jsi::Value messagesValue = options.getProperty(rt, "messages");
+      if (messagesValue.isObject() && messagesValue.getObject(rt).isArray(rt)) {
+        jsi::Array messagesArray = messagesValue.getObject(rt).asArray(rt);
+        
+        for (size_t i = 0; i < messagesArray.size(rt); i++) {
+          jsi::Value messageValue = messagesArray.getValueAtIndex(rt, i);
+          
+          if (!messageValue.isObject()) {
+            throw std::runtime_error("Each message must be an object");
           }
-        } else if (stop_val.isString()) {
-          options.stop_sequences.push_back(stop_val.asString(rt).utf8(rt));
+          
+          jsi::Object messageObj = messageValue.getObject(rt);
+          
+          if (!messageObj.hasProperty(rt, "role") || !messageObj.hasProperty(rt, "content")) {
+            throw std::runtime_error("Each message must have 'role' and 'content' properties");
+          }
+          
+          Message message;
+          message.role = messageObj.getProperty(rt, "role").asString(rt).utf8(rt);
+          message.content = messageObj.getProperty(rt, "content").asString(rt).utf8(rt);
+          
+          // Optional name property for tool responses
+          if (messageObj.hasProperty(rt, "name") && messageObj.getProperty(rt, "name").isString()) {
+            message.name = messageObj.getProperty(rt, "name").asString(rt).utf8(rt);
+          }
+          
+          completionOpts.messages.push_back(message);
+        }
+      } else {
+        throw std::runtime_error("'messages' must be an array");
+      }
+    }
+    
+    // Use SystemUtils to set remaining options with proper type checking
+    SystemUtils::setIfExists(rt, options, "temperature", completionOpts.temperature);
+    SystemUtils::setIfExists(rt, options, "top_p", completionOpts.top_p);
+    SystemUtils::setIfExists(rt, options, "top_k", completionOpts.top_k);
+    SystemUtils::setIfExists(rt, options, "min_p", completionOpts.min_p);
+    SystemUtils::setIfExists(rt, options, "typical_p", completionOpts.typical_p);
+    SystemUtils::setIfExists(rt, options, "repeat_penalty", completionOpts.repeat_penalty);
+    SystemUtils::setIfExists(rt, options, "repeat_last_n", completionOpts.repeat_last_n);
+    SystemUtils::setIfExists(rt, options, "frequency_penalty", completionOpts.frequency_penalty);
+    SystemUtils::setIfExists(rt, options, "presence_penalty", completionOpts.presence_penalty);
+    SystemUtils::setIfExists(rt, options, "seed", completionOpts.seed);
+    SystemUtils::setIfExists(rt, options, "jinja", completionOpts.jinja);
+    
+    // Support both n_predict and max_tokens (with max_tokens taking precedence)
+    if (options.hasProperty(rt, "n_predict")) {
+      int n_predict = 0;
+      if (SystemUtils::setIfExists(rt, options, "n_predict", n_predict)) {
+        completionOpts.max_tokens = n_predict;
+      }
+    }
+    
+    if (options.hasProperty(rt, "max_tokens")) {
+      SystemUtils::setIfExists(rt, options, "max_tokens", completionOpts.max_tokens);
+    }
+    
+    // Handle optional string parameters
+    SystemUtils::setIfExists(rt, options, "grammar", completionOpts.grammar);
+    SystemUtils::setIfExists(rt, options, "tool_choice", completionOpts.tool_choice);
+    
+    // Handle the stop sequences
+    if (options.hasProperty(rt, "stop")) {
+      jsi::Value stopVal = options.getProperty(rt, "stop");
+      if (stopVal.isString()) {
+        // Single stop sequence
+        completionOpts.stop_sequences.push_back(stopVal.asString(rt).utf8(rt));
+      } else if (stopVal.isObject() && stopVal.getObject(rt).isArray(rt)) {
+        // Array of stop sequences
+        jsi::Array stopArr = stopVal.getObject(rt).asArray(rt);
+        for (size_t i = 0; i < stopArr.size(rt); i++) {
+          jsi::Value item = stopArr.getValueAtIndex(rt, i);
+          if (item.isString()) {
+            completionOpts.stop_sequences.push_back(item.asString(rt).utf8(rt));
+          }
         }
       }
     }
     
-    // Get vocab for tokenization
-    const llama_vocab* vocab = llama_model_get_vocab(model_);
-    
-    // Check if context is empty (first run)
-    const bool is_first = llama_kv_self_used_cells(ctx_) == 0;
-    
-    // Tokenize prompt
-    std::vector<llama_token> tokens;
-    int n_tokens = -llama_tokenize(vocab, prompt.c_str(), prompt.size(), NULL, 0, is_first, true);
-    if (n_tokens < 0) {
-      n_tokens = -n_tokens; // Handle negative return value
-    }
-    tokens.resize(n_tokens);
-    
-    if (llama_tokenize(vocab, prompt.c_str(), prompt.size(), tokens.data(), tokens.size(), is_first, true) < 0) {
-      throw std::runtime_error("Failed to tokenize prompt");
-    }
-    
-    // Check for sufficient context space
-    int n_ctx = llama_n_ctx(ctx_);
-    int n_ctx_used = llama_kv_self_used_cells(ctx_);
-    if (n_ctx_used + n_tokens > n_ctx) {
-      throw std::runtime_error("Context size exceeded");
-    }
-    
-    // Initialize the sampler chain
-    llama_sampler* sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
-    if (options.min_p > 0.0f && options.min_p < 1.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_min_p(options.min_p, 1));
-    }
-    if (options.repeat_penalty > 1.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_penalties(64, options.repeat_penalty, 0.0f, 0.0f));
-    }
-    if (options.temperature > 0.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_temp(options.temperature));
-    }
-    llama_sampler_chain_add(sampler, llama_sampler_init_dist(options.seed));
-    
-    if (!sampler) {
-      throw std::runtime_error("Failed to initialize sampler");
-    }
-    
-    // Create batch for the prompt
-    llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
-    
-    // Decode the prompt
-    if (llama_decode(ctx_, batch)) {
-      llama_sampler_free(sampler);
-      throw std::runtime_error("Failed to decode prompt");
-    }
-    
-    // Generate response
-    std::string completion;
-    std::vector<llama_token> result_tokens;
-    llama_token new_token_id;
-    
-    for (int i = 0; i < options.max_tokens; i++) {
-      // Sample the next token
-      new_token_id = llama_sampler_sample(sampler, ctx_, -1);
+    // Handle tools if provided
+    if (options.hasProperty(rt, "tools") && options.getProperty(rt, "tools").isObject() && 
+        options.getProperty(rt, "tools").getObject(rt).isArray(rt)) {
+      jsi::Array toolsArr = options.getProperty(rt, "tools").getObject(rt).asArray(rt);
       
-      // Is it an end of generation token?
-      if (llama_vocab_is_eog(vocab, new_token_id)) {
-        break;
-      }
-      
-      // Add token to result
-      result_tokens.push_back(new_token_id);
-      
-      // Convert token to text
-      char token_buf[8] = {0};
-      int n_chars = llama_token_to_piece(vocab, new_token_id, token_buf, sizeof(token_buf) - 1, 0, true);
-      if (n_chars < 0) n_chars = 0;
-      token_buf[n_chars] = '\0';
-      
-      std::string new_piece(token_buf);
-      completion += new_piece;
-      
-      // Call partial callback if provided
-      if (options.partial_callback && options.runtime) {
-        options.partial_callback(*options.runtime, new_piece.c_str());
-      }
-      
-      // Check for custom stop sequences
-      bool should_stop = false;
-      for (const auto& stop_seq : options.stop_sequences) {
-        if (completion.find(stop_seq) != std::string::npos) {
-          should_stop = true;
-          break;
+      for (size_t i = 0; i < toolsArr.size(rt); i++) {
+        if (toolsArr.getValueAtIndex(rt, i).isObject()) {
+          try {
+            auto tool = convertJsiToolToTool(rt, toolsArr.getValueAtIndex(rt, i).getObject(rt));
+            completionOpts.tools.push_back(tool);
+          } catch (const std::exception& e) {
+            fprintf(stderr, "Error converting tool at index %zu: %s\n", i, e.what());
+            // Continue with other tools
+          }
         }
       }
-      
-      if (should_stop) {
-        break;
-      }
-      
-      // Prepare batch for next token prediction
-      batch = llama_batch_get_one(&new_token_id, 1);
-      
-      // Process the batch
-      if (llama_decode(ctx_, batch)) {
-        break;
-      }
     }
     
-    // Clean up resources
-    llama_sampler_free(sampler);
-    
-    // Create result object
-    jsi::Object result_obj(rt);
-    result_obj.setProperty(rt, "text", jsi::String::createFromUtf8(rt, completion));
-    
-    // Create an array for token ids if needed
-    jsi::Array token_array(rt, result_tokens.size());
-    for (size_t i = 0; i < result_tokens.size(); i++) {
-      token_array.setValueAtIndex(rt, i, jsi::Value((double)result_tokens[i]));
+    // Check for partial callback (second argument)
+    if (count > 1 && args[1].isObject() && args[1].getObject(rt).isFunction(rt)) {
+      // Set up the runtime pointer only - this will be used to access the correct runtime
+      completionOpts.runtime = &rt;
+      
+      // Create a persistent copy of the function using a shared_ptr to avoid copy issues
+      auto jsFunction = std::make_shared<jsi::Function>(args[1].getObject(rt).asFunction(rt));
+      
+      // Store a simple lambda that doesn't capture by copy, avoiding the copy constructor issue
+      completionOpts.partial_callback = [jsFunction](jsi::Runtime& runtime, const char* token) {
+        // Safely create the result object and call the function
+        try {
+          jsi::Object result(runtime);
+          result.setProperty(runtime, "token", jsi::String::createFromUtf8(runtime, token));
+          jsFunction->call(runtime, result);
+        } catch (const std::exception& e) {
+          // Log error but don't crash
+          fprintf(stderr, "Error in callback: %s\n", e.what());
+        }
+      };
     }
-    result_obj.setProperty(rt, "token_ids", token_array);
     
-    return result_obj;
+    try {
+      // Execute the completion
+      CompletionResult result = completion(completionOpts);
+      
+      // Reset the prediction status
+      is_predicting_ = false;
+      
+      // Create return object
+      jsi::Object resultObj(rt);
+      resultObj.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.text));
+      resultObj.setProperty(rt, "truncated", jsi::Value(result.truncated));
+      resultObj.setProperty(rt, "finish_reason", jsi::String::createFromUtf8(rt, result.finish_reason));
+      resultObj.setProperty(rt, "prompt_tokens", jsi::Value(result.prompt_tokens));
+      resultObj.setProperty(rt, "generated_tokens", jsi::Value(result.generated_tokens));
+      
+      // Add timing information
+      jsi::Object timings(rt);
+      timings.setProperty(rt, "prompt_ms", jsi::Value(result.prompt_duration_ms));
+      timings.setProperty(rt, "predicted_ms", jsi::Value(result.generation_duration_ms));
+      timings.setProperty(rt, "total_ms", jsi::Value(result.total_duration_ms));
+      timings.setProperty(rt, "prompt_n", jsi::Value(result.prompt_tokens));
+      timings.setProperty(rt, "predicted_n", jsi::Value(result.generated_tokens));
+      resultObj.setProperty(rt, "timings", timings);
+      
+      // If there are tool calls, add them to the result
+      if (!result.tool_calls.empty()) {
+        jsi::Array toolCallsArray(rt, result.tool_calls.size());
+        
+        for (size_t i = 0; i < result.tool_calls.size(); i++) {
+          jsi::Object toolCallObj = convertToolCallToJsiObject(rt, result.tool_calls[i]);
+          toolCallsArray.setValueAtIndex(rt, i, toolCallObj);
+        }
+        
+        resultObj.setProperty(rt, "tool_calls", toolCallsArray);
+      }
+      
+      return resultObj;
+    } catch (const std::exception& e) {
+      // Add more context to the error
+      throw std::runtime_error(std::string("Error during completion: ") + e.what());
+    }
   } catch (const std::exception& e) {
     throw jsi::JSError(rt, e.what());
   }
@@ -826,79 +960,102 @@ jsi::Value LlamaCppModel::releaseJsi(jsi::Runtime& rt, const jsi::Value* args, s
 Tool LlamaCppModel::convertJsiToolToTool(jsi::Runtime& rt, const jsi::Object& jsiTool) {
   Tool tool;
   
-  // Get the type
-  if (jsiTool.hasProperty(rt, "type")) {
-    tool.type = jsiTool.getProperty(rt, "type").asString(rt).utf8(rt);
-  } else {
-    tool.type = "function"; // Default type
-  }
-  
-  // Get the function
-  if (jsiTool.hasProperty(rt, "function") && jsiTool.getProperty(rt, "function").isObject()) {
-    jsi::Object funcObj = jsiTool.getProperty(rt, "function").asObject(rt);
-    
-    // Get the name
-    if (funcObj.hasProperty(rt, "name")) {
-      tool.function.name = funcObj.getProperty(rt, "name").asString(rt).utf8(rt);
+  try {
+    // Check if the tool has a type field
+    if (!jsiTool.hasProperty(rt, "type")) {
+      throw std::runtime_error("Missing tool type");
     }
     
-    // Get the description
-    if (funcObj.hasProperty(rt, "description")) {
+    // Get the type
+    tool.type = jsiTool.getProperty(rt, "type").asString(rt).utf8(rt);
+    
+    // Currently we only support function tools
+    if (tool.type != "function") {
+      throw std::runtime_error("Unsupported tool type: " + tool.type);
+    }
+    
+    // Check if the tool has a function field
+    if (!jsiTool.hasProperty(rt, "function") || 
+        !jsiTool.getProperty(rt, "function").isObject()) {
+      throw std::runtime_error("Missing tool function");
+    }
+    
+    // Get the function object
+    jsi::Object funcObj = jsiTool.getProperty(rt, "function").asObject(rt);
+    
+    // Get required name field
+    if (!funcObj.hasProperty(rt, "name") || !funcObj.getProperty(rt, "name").isString()) {
+      throw std::runtime_error("Missing function name");
+    }
+    tool.function.name = funcObj.getProperty(rt, "name").asString(rt).utf8(rt);
+    
+    // Get optional description field
+    if (funcObj.hasProperty(rt, "description") && funcObj.getProperty(rt, "description").isString()) {
       tool.function.description = funcObj.getProperty(rt, "description").asString(rt).utf8(rt);
     }
     
-    // Get the parameters
-    if (funcObj.hasProperty(rt, "parameters") && funcObj.getProperty(rt, "parameters").isObject()) {
-      jsi::Object paramsObj = funcObj.getProperty(rt, "parameters").asObject(rt);
+    // Get the parameters object (required)
+    if (!funcObj.hasProperty(rt, "parameters") || !funcObj.getProperty(rt, "parameters").isObject()) {
+      throw std::runtime_error("Missing function parameters");
+    }
+    
+    jsi::Object paramsObj = funcObj.getProperty(rt, "parameters").asObject(rt);
+    
+    // Build the function parameters
+    if (paramsObj.hasProperty(rt, "properties") && paramsObj.getProperty(rt, "properties").isObject()) {
+      jsi::Object propsObj = paramsObj.getProperty(rt, "properties").asObject(rt);
       
-      // For simplicity, we'll only process the first level of parameters
-      if (paramsObj.hasProperty(rt, "properties") && paramsObj.getProperty(rt, "properties").isObject()) {
-        jsi::Object propsObj = paramsObj.getProperty(rt, "properties").asObject(rt);
-        
-        // Get required array if it exists
-        std::vector<std::string> requiredProps;
-        if (paramsObj.hasProperty(rt, "required")) {
-          jsi::Value reqValue = paramsObj.getProperty(rt, "required");
-          if (reqValue.isObject() && reqValue.getObject(rt).isArray(rt)) {
-            jsi::Array reqArray = reqValue.getObject(rt).asArray(rt);
-            for (size_t i = 0; i < reqArray.size(rt); i++) {
-              requiredProps.push_back(reqArray.getValueAtIndex(rt, i).asString(rt).utf8(rt));
-            }
-          }
-        }
-        
-        // Get property names
-        jsi::Array propNames = propsObj.getPropertyNames(rt);
-        for (size_t i = 0; i < propNames.size(rt); i++) {
-          std::string propName = propNames.getValueAtIndex(rt, i).asString(rt).utf8(rt);
+      // Get required array if it exists
+      std::vector<std::string> requiredProps;
+      if (paramsObj.hasProperty(rt, "required") && 
+          paramsObj.getProperty(rt, "required").isObject() &&
+          paramsObj.getProperty(rt, "required").asObject(rt).isArray(rt)) {
           
-          if (propsObj.hasProperty(rt, propName.c_str()) && propsObj.getProperty(rt, propName.c_str()).isObject()) {
-            jsi::Object propObj = propsObj.getProperty(rt, propName.c_str()).asObject(rt);
+        jsi::Array reqArray = paramsObj.getProperty(rt, "required").asObject(rt).asArray(rt);
+        for (size_t i = 0; i < reqArray.size(rt); i++) {
+          requiredProps.push_back(reqArray.getValueAtIndex(rt, i).asString(rt).utf8(rt));
+        }
+      }
+      
+      // Get property names
+      jsi::Array propNames = propsObj.getPropertyNames(rt);
+      for (size_t i = 0; i < propNames.size(rt); i++) {
+        std::string propName = propNames.getValueAtIndex(rt, i).asString(rt).utf8(rt);
+        
+        if (propsObj.hasProperty(rt, propName.c_str()) && 
+            propsObj.getProperty(rt, propName.c_str()).isObject()) {
             
-            FunctionParameter param;
-            param.name = propName;
-            
-            // Get type
-            if (propObj.hasProperty(rt, "type")) {
-              param.type = propObj.getProperty(rt, "type").asString(rt).utf8(rt);
-            }
-            
-            // Get description
-            if (propObj.hasProperty(rt, "description")) {
-              param.description = propObj.getProperty(rt, "description").asString(rt).utf8(rt);
-            }
-            
-            // Check if required
-            param.required = std::find(requiredProps.begin(), requiredProps.end(), propName) != requiredProps.end();
-            
-            tool.function.parameters.push_back(param);
+          jsi::Object propObj = propsObj.getProperty(rt, propName.c_str()).asObject(rt);
+          
+          FunctionParameter param;
+          param.name = propName;
+          
+          // Get type
+          if (propObj.hasProperty(rt, "type") && propObj.getProperty(rt, "type").isString()) {
+            param.type = propObj.getProperty(rt, "type").asString(rt).utf8(rt);
+          } else {
+            param.type = "string"; // Default type
           }
+          
+          // Get description
+          if (propObj.hasProperty(rt, "description") && propObj.getProperty(rt, "description").isString()) {
+            param.description = propObj.getProperty(rt, "description").asString(rt).utf8(rt);
+          }
+          
+          // Check if required
+          param.required = std::find(requiredProps.begin(), requiredProps.end(), propName) != requiredProps.end();
+          
+          tool.function.parameters.push_back(param);
         }
       }
     }
+    
+    return tool;
+  } catch (const std::exception& e) {
+    // Log the error for debugging
+    fprintf(stderr, "Error converting JSI tool: %s\n", e.what());
+    throw; // Rethrow to be handled by caller
   }
-  
-  return tool;
 }
 
 // Helper to convert our ToolCall to JSI object

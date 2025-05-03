@@ -174,7 +174,7 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
     // Load dynamic backends if needed
     ggml_backend_load_all();
     
-    std::string model_path = options.getProperty(runtime, "model").asString(runtime).utf8(runtime);
+    std::string model_path = SystemUtils::normalizeFilePath(options.getProperty(runtime, "model").asString(runtime).utf8(runtime));
     
     // Setup parameters from options (or use defaults if not supplied)
     struct llama_model_params model_params = llama_model_default_params();
@@ -215,6 +215,8 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
     int n_threads = 0; // 0 = auto
     if (options.hasProperty(runtime, "n_threads")) {
       n_threads = options.getProperty(runtime, "n_threads").asNumber();
+    } else {
+      n_threads = SystemUtils::getOptimalThreadCount();
     }
     ctx_params.n_threads = n_threads;
     
@@ -225,11 +227,6 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
     }
     // The seed should not be assigned to ctx_params directly
     // It will be passed to the sampling parameters in the LlamaCppModel
-    
-    // Load the model
-    fprintf(stderr, "Loading model: %s\n", model_path.c_str());
-    fprintf(stderr, "Parameters: n_gpu_layers=%d, use_mlock=%d, n_ctx=%d, n_batch=%d, n_threads=%d, seed=%d\n",
-            n_gpu_layers, use_mlock, n_ctx, n_batch, n_threads, seed);
     
     // Use the non-deprecated function
     llama_model* model = llama_model_load_from_file(model_path.c_str(), model_params);
