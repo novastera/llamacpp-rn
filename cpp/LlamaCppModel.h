@@ -9,9 +9,10 @@
 #include <functional>
 
 // Include all necessary common headers from llama.cpp
-#include "json-schema-to-grammar.h"
-#include "chat.h"
+#include "common.h"
 #include "sampling.h"
+#include "chat.h"
+#include "json-schema-to-grammar.h"
 
 // Forward declarations for llama.cpp types
 struct llama_model;
@@ -20,6 +21,10 @@ struct common_sampler;
 struct common_speculative;
 
 namespace facebook::react {
+
+// Helper functions for chat templates
+std::vector<common_chat_msg> parse_chat_messages_from_json(const nlohmann::json& messages);
+std::vector<common_chat_tool> parse_chat_tools_from_json(const nlohmann::json& tools);
 
 // Chat message structure
 struct Message {
@@ -63,6 +68,9 @@ struct CompletionOptions {
   std::string prompt;
   std::vector<Message> messages;
   
+  // Output generated prompt
+  std::string generated_prompt;
+  
   // Sampling parameters
   float temperature = 0.8f;
   float top_p = 0.9f;
@@ -71,8 +79,8 @@ struct CompletionOptions {
   float typical_p = 1.0f;
   
   // Generation control
-  int max_tokens = 512;
-  std::vector<std::string> stop_sequences;
+  int n_predict = 512;
+  std::vector<std::string> stop_prompts;
   
   // Repetition penalties
   float repeat_penalty = 1.1f;
@@ -80,23 +88,23 @@ struct CompletionOptions {
   float frequency_penalty = 0.0f;
   float presence_penalty = 0.0f;
   
-  // Mirostat settings
-  int mirostat = 0;       // 0 = disabled, 1 = mirostat, 2 = mirostat 2.0
-  float mirostat_tau = 5.0f;
-  float mirostat_eta = 0.1f;
-  
-  // Miscellaneous
+  // Random seed for sampling (-1 means random)
   int seed = -1;
-  std::string template_name;
   
-  // Tool related
+  // Template and tools
+  std::string template_name;
   std::vector<Tool> tools;
   std::string tool_choice = "auto";
   bool jinja = false;
   std::string grammar;
   
-  // Callbacks
-  std::function<void(jsi::Runtime&, const char*)> partial_callback;
+  // Reusable template for inference
+  common_chat_templates_ptr chat_template; 
+  common_chat_templates_inputs chat_inputs;
+  common_chat_params chat_params;
+  
+  // Callback for streaming tokens
+  std::function<void(jsi::Runtime&, const char*)> partial_callback = nullptr;
   jsi::Runtime* runtime = nullptr;
 };
 
@@ -145,7 +153,10 @@ public:
   std::vector<float> embedding(const std::string& text);
   
   // Main completion method
-  CompletionResult completion(const CompletionOptions& options);
+  CompletionResult completion(const CompletionOptions& options, std::function<void(jsi::Runtime&, const char*)> partialCallback = nullptr, jsi::Runtime* runtime = nullptr);
+  
+  // Text generation method with JSI return value
+  jsi::Value processPrompt(jsi::Runtime& rt, const std::string& prompt, const CompletionOptions& options);
   
   // JSI bindings
   jsi::Value completionJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
@@ -166,14 +177,9 @@ private:
   
   // Helper methods
   void initHelpers();
-  std::vector<ToolCall> parseToolCalls(const std::string& text, std::string* remainingText);
   
-  // Convert between JSI objects and our structs
-  Tool convertJsiToolToTool(jsi::Runtime& rt, const jsi::Object& jsiTool);
-  jsi::Object convertToolCallToJsiObject(jsi::Runtime& rt, const ToolCall& toolCall);
-  
-  // Convert options to sampling parameters
-  common_params_sampling convertToSamplingParams(const CompletionOptions& options);
+  // New helper methods for completion
+  CompletionOptions buildOptionsAndPrompt(jsi::Runtime& rt, const jsi::Object& obj);
 };
 
 } // namespace facebook::react 

@@ -4,6 +4,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <type_traits>  // For std::enable_if, std::is_arithmetic
 #include "llama.h"
 
 namespace facebook::react {
@@ -43,10 +44,30 @@ public:
    * Helper functions to easily set values from a JSI object if the property exists.
    * Returns true if the property was found and the value was set.
    */
-  static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, float& outValue);
-  static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, int& outValue);
+  // Template for all numeric types
+  template<typename T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
+  static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, T& outValue) {
+    if (options.hasProperty(rt, key.c_str())) {
+      jsi::Value val = options.getProperty(rt, key.c_str());
+      if (val.isNumber()) {
+        if (std::is_unsigned<T>::value && val.asNumber() < 0) {
+          // Skip negative values for unsigned types
+          return false;
+        }
+        outValue = static_cast<T>(val.asNumber());
+        return true;
+      }
+    }
+    return false;
+  }
+  
+  // Specialized version for std::string
   static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, std::string& outValue);
+  
+  // Specialized version for bool
   static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, bool& outValue);
+  
+  // Specialized version for vector
   static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, std::vector<jsi::Value>& outValue);
 };
 

@@ -131,28 +131,7 @@ int SystemUtils::getOptimalGpuLayers(struct llama_model* model) {
 }
 
 // helper function for setting options
-bool SystemUtils::setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, float& outValue) {
-  if (options.hasProperty(rt, key.c_str())) {
-    jsi::Value val = options.getProperty(rt, key.c_str());
-    if (val.isNumber()) {
-      outValue = static_cast<float>(val.asNumber());
-      return true;
-    }
-  }
-  return false;
-}
-
-bool SystemUtils::setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, int& outValue) {
-  if (options.hasProperty(rt, key.c_str())) {
-    jsi::Value val = options.getProperty(rt, key.c_str());
-    if (val.isNumber()) {
-      outValue = static_cast<int>(val.asNumber()); // truncates decimal
-      return true;
-    }
-  }
-  return false;
-}
-
+// Implementations of non-template specializations
 
 // For std::string
 bool SystemUtils::setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, std::string& outValue) {
@@ -197,4 +176,5 @@ bool SystemUtils::setIfExists(jsi::Runtime& rt, const jsi::Object& options, cons
   }
   return false;
 }
+
 } // namespace facebook::react 
