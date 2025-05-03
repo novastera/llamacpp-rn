@@ -22,7 +22,7 @@ struct common_speculative;
 namespace facebook::react {
 
 // Chat message structure
-struct ChatMessage {
+struct Message {
   std::string role;
   std::string content;
   std::string name;
@@ -61,7 +61,7 @@ struct ToolCall {
 struct CompletionOptions {
   // Input - either prompt or messages
   std::string prompt;
-  std::vector<ChatMessage> messages;
+  std::vector<Message> messages;
   
   // Sampling parameters
   float temperature = 0.8f;
@@ -114,6 +114,9 @@ struct CompletionResult {
   double prompt_duration_ms;
   double generation_duration_ms;
   double total_duration_ms;
+  
+  // Tool calls (if any)
+  std::vector<ToolCall> tool_calls;
 };
 
 // Main model class that wraps llama.cpp

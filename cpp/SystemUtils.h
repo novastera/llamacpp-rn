@@ -1,42 +1,53 @@
 #pragma once
 
+#include <jsi/jsi.h>
 #include <string>
 #include <thread>
+#include <vector>
 #include "llama.h"
 
 namespace facebook::react {
 
 class SystemUtils {
 public:
-    /**
-     * Calculates the optimal number of threads for llama.cpp based on available CPU cores.
-     * The logic follows these rules:
-     * - If only 1 core, use 1 thread
-     * - If less than 4 cores, use (cores - 1) threads
-     * - If 4+ cores, use (cores - 2) threads
-     */
-    static int getOptimalThreadCount();
+  /**
+    * Calculates the optimal number of threads for llama.cpp based on available CPU cores.
+    * The logic follows these rules:
+    * - If only 1 core, use 1 thread
+    * - If less than 4 cores, use (cores - 1) threads
+    * - If 4+ cores, use (cores - 2) threads
+    */
+  static int getOptimalThreadCount();
 
-    /**
-     * Normalizes a file path by removing file:// prefix if present.
-     * This is useful for handling paths that might come from different sources.
-     */
-    static std::string normalizeFilePath(const std::string& path);
+  /**
+    * Normalizes a file path by removing file:// prefix if present.
+    * This is useful for handling paths that might come from different sources.
+    */
+  static std::string normalizeFilePath(const std::string& path);
 
-    /**
-     * Calculates the optimal number of GPU layers for model inference.
-     * Should only be called if llama_supports_gpu_offload() returns true.
-     * The calculation takes into account:
-     * - Available GPU memory
-     * - Model size and parameters
-     * - Platform-specific optimizations
-     * - Current quantization method
-     * 
-     * @param model Pointer to an already loaded llama model
-     * @return Optimal number of GPU layers (0 if GPU not supported)
-     */
-    static int getOptimalGpuLayers(struct llama_model* model);
+  /**
+    * Calculates the optimal number of GPU layers for model inference.
+    * Should only be called if llama_supports_gpu_offload() returns true.
+    * The calculation takes into account:
+    * - Available GPU memory
+    * - Model size and parameters
+    * - Platform-specific optimizations
+    * - Current quantization method
+    * 
+    * @param model Pointer to an already loaded llama model
+    * @return Optimal number of GPU layers (0 if GPU not supported)
+    */
+  static int getOptimalGpuLayers(struct llama_model* model);
 
+  /**
+   * Helper functions to easily set values from a JSI object if the property exists.
+   * Returns true if the property was found and the value was set.
+   */
+  static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, float& outValue);
+  static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, int& outValue);
+  static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, std::string& outValue);
+  static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, bool& outValue);
+  static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, std::vector<jsi::Value>& outValue);
 };
 
 } // namespace facebook::react 

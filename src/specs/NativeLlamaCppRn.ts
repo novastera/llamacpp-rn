@@ -3,10 +3,10 @@ import { TurboModuleRegistry } from 'react-native';
 
 /**
  * Native LlamaCppRn Module
- * 
+ *
  * The API is designed to be compatible with the llama.cpp server API:
  * https://github.com/ggml-org/llama.cpp/tree/master/examples/server
- * 
+ *
  * However, since we are in the context of a mobile app, we need to make some adjustments.
  */
 
@@ -45,7 +45,6 @@ export interface LlamaCompletionParams {
   max_tokens?: number;         // alias for n_predict
   stop?: string[];             // stop sequences
   stream?: boolean;            // stream tokens as they're generated (default: true)
-  
   // Chat parameters
   chat_template?: string;      // optional chat template name to use
 

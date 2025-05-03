@@ -130,4 +130,71 @@ int SystemUtils::getOptimalGpuLayers(struct llama_model* model) {
     return optimal_layers;
 }
 
+// helper function for setting options
+bool SystemUtils::setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, float& outValue) {
+  if (options.hasProperty(rt, key.c_str())) {
+    jsi::Value val = options.getProperty(rt, key.c_str());
+    if (val.isNumber()) {
+      outValue = static_cast<float>(val.asNumber());
+      return true;
+    }
+  }
+  return false;
+}
+
+bool SystemUtils::setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, int& outValue) {
+  if (options.hasProperty(rt, key.c_str())) {
+    jsi::Value val = options.getProperty(rt, key.c_str());
+    if (val.isNumber()) {
+      outValue = static_cast<int>(val.asNumber()); // truncates decimal
+      return true;
+    }
+  }
+  return false;
+}
+
+
+// For std::string
+bool SystemUtils::setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, std::string& outValue) {
+  if (options.hasProperty(rt, key.c_str())) {
+    jsi::Value val = options.getProperty(rt, key.c_str());
+    if (val.isString()) {
+      outValue = val.asString(rt).utf8(rt);
+      return true;
+    }
+  }
+  return false;
+}
+
+// For bool
+bool SystemUtils::setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, bool& outValue) {
+  if (options.hasProperty(rt, key.c_str())) {
+    jsi::Value val = options.getProperty(rt, key.c_str());
+    if (val.isBool()) {
+      outValue = val.getBool();
+      return true;
+    }
+  }
+  return false;
+}
+
+// For std::vector<jsi::Value> (Array)
+bool SystemUtils::setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, std::vector<jsi::Value>& outValue) {
+  if (options.hasProperty(rt, key.c_str())) {
+    jsi::Value val = options.getProperty(rt, key.c_str());
+    if (val.isObject()) {
+      jsi::Object obj = val.asObject(rt);
+      if (obj.isArray(rt)) {
+        jsi::Array arr = obj.asArray(rt);
+        size_t length = arr.size(rt);
+        outValue.clear();
+        for (size_t i = 0; i < length; ++i) {
+          outValue.push_back(arr.getValueAtIndex(rt, i));
+        }
+        return true;
+      }
+    }
+  }
+  return false;
+}
 } // namespace facebook::react 
