@@ -67,7 +67,7 @@ jobs:
       
       - name: Download Complete Artifact
         if: ${{ github.event_name == 'workflow_run' }}
-        uses: dawidd6/action-download-artifact@v2
+        uses: dawidd6/action-download-artifact@v6
         with:
           workflow: 'CI and Native Build'
           run_id: ${{ github.event.workflow_run.id }}
@@ -179,7 +179,7 @@ jobs:
       
       - name: Download Complete Artifact
         if: ${{ github.event_name == 'workflow_run' }}
-        uses: dawidd6/action-download-artifact@v2
+        uses: dawidd6/action-download-artifact@v6
         with:
           workflow: 'CI and Native Build'
           run_id: ${{ github.event.workflow_run.id }}

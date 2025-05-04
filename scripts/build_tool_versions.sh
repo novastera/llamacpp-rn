@@ -5,7 +5,7 @@
 # Vulkan and OpenCL versions
 VULKAN_SDK_VERSION="1.4.309"
 OPENCL_VERSION="3.0"
-OPENCL_HEADERS_TAG="opencl-3.0.14"
+OPENCL_HEADERS_TAG="opencl-3.0.17"
 
 # Android SDK/NDK configuration
 NDK_VERSION="27.2.12479018"  # Specific NDK version

@@ -169,6 +169,11 @@ set(SOURCE_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/LlamaCppModel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/SystemUtils.h
     
+    # Add RN-llama files
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/rn-utils.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/rn-llama.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/rn-llama.cpp
+    
     # Add the common sources
     ${LLAMA_CPP_COMMON_SOURCES}
 )

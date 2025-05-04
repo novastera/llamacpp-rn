@@ -320,6 +320,19 @@ export default function ModelChatTest() {
     }
   };
 
+  // Handle streaming token callback
+  const handleStreamingToken = (token: string) => {
+    console.log('Token received:', token);
+    setStreamingTokens(prev => {
+      const newTokens = [...prev, token];
+      // Keep only the last 10 tokens to avoid overwhelming the UI
+      if (newTokens.length > 10) {
+        return newTokens.slice(newTokens.length - 10);
+      }
+      return newTokens;
+    });
+  };
+
   // Send a message to the model
   const sendMessage = async () => {
     if (!model || !input.trim()) return;
@@ -347,7 +360,7 @@ export default function ModelChatTest() {
         temperature: 0.3,     // Lower temperature for more stability
         top_p: 0.85,          // More conservative top_p
         top_k: 40,            // Standard top_k value
-        max_tokens: 200,      // Increased max tokens for better responses with tools
+        max_tokens: 400,      // Increased max tokens for better responses with tools
         stop: ["</s>", "<|im_end|>", "<|eot_id|>"], // Include <|eot_id|> for better compatibility
         n_gpu_layers: 0,
       };
@@ -372,8 +385,13 @@ export default function ModelChatTest() {
       console.log('Calling model.completion...');
       const response = await model.completion(
         completionOptions,
-        // Add streaming callback function
+        // Add streaming callback function with enhanced logging
         (data: { token: string }) => {
+          console.log('Streaming token received:', {
+            token: data.token,
+            timestamp: new Date().toISOString(),
+            tokenLength: data.token.length
+          });
           handleStreamingToken(data.token);
         }
       );
@@ -416,6 +434,11 @@ export default function ModelChatTest() {
         },
         // Add streaming callback function for final response
         (data: { token: string }) => {
+          console.log('Final response token received:', {
+            token: data.token,
+            timestamp: new Date().toISOString(),
+            tokenLength: data.token.length
+          });
           handleStreamingToken(data.token);
         });
         
@@ -655,19 +678,6 @@ export default function ModelChatTest() {
       // If not valid JSON, return as is
       return content;
     }
-  };
-  
-  // Handle streaming token callback
-  const handleStreamingToken = (token: string) => {
-    console.log('Token received:', token);
-    setStreamingTokens(prev => {
-      const newTokens = [...prev, token];
-      // Keep only the last 10 tokens to avoid overwhelming the UI
-      if (newTokens.length > 10) {
-        return newTokens.slice(newTokens.length - 10);
-      }
-      return newTokens;
-    });
   };
   
   return (
