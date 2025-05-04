@@ -80,6 +80,8 @@ struct CompletionOptions {
   
   // Generation control
   int n_predict = 512;
+  int max_tokens = 0;  // Alternative to n_predict for OpenAI compatibility
+  int n_batch = 512;   // Batch size for context processing
   std::vector<std::string> stop_prompts;
   
   // Repetition penalties
@@ -90,6 +92,9 @@ struct CompletionOptions {
   
   // Random seed for sampling (-1 means random)
   int seed = -1;
+  
+  // GPU configuration
+  int n_gpu_layers = 0;
   
   // Template and tools
   std::string template_name;
