@@ -103,23 +103,37 @@ std::vector<int32_t> LlamaCppModel::tokenize(const std::string& text) {
     throw std::runtime_error("Model not loaded");
   }
   
-  std::vector<llama_token> tokens(text.size() + 4);
   const llama_vocab* vocab = llama_model_get_vocab(model_);
   
-  // Check if this is the first call (KV cache is empty)
-  bool is_first = llama_kv_self_used_cells(ctx_) == 0;
+  // Parameters for tokenization
+  bool add_bos = false;
+  bool parse_special = false;
   
-  int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), is_first, true);
-  
+  // First get the number of tokens needed
+  int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), nullptr, 0, add_bos, parse_special);
   if (n_tokens < 0) {
-    n_tokens = 0; // Handle error case
+    n_tokens = -n_tokens; // Convert negative value (indicates insufficient buffer)
   }
   
-  // No need to add special tokens as llama_tokenize with is_first=true and add_bos=true already does that
+  // Allocate space for tokens
+  std::vector<llama_token> tokens(n_tokens);
   
-  // Trim to actual size
-  tokens.resize(n_tokens);
+  // Do the actual tokenization
+  n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), add_bos, parse_special);
+  if (n_tokens < 0) {
+    n_tokens = -n_tokens; // Handle negative return value
+    tokens.resize(n_tokens);
+    
+    // Retry with the correct size
+    int retry_result = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), add_bos, parse_special);
+    if (retry_result != n_tokens) {
+      throw std::runtime_error("Failed to tokenize text: inconsistent token count");
+    }
+  } else {
+    tokens.resize(n_tokens);
+  }
   
+  // Convert to int32_t for JSI
   return std::vector<int32_t>(tokens.begin(), tokens.end());
 }
 
@@ -145,15 +159,21 @@ std::vector<float> LlamaCppModel::embedding(const std::string& text) {
   // Clear the KV cache
   llama_kv_self_clear(ctx_);
   
-  // Check if this is the first call (KV cache is empty)
-  bool is_first = true; // After clearing KV cache, this is true
+  // Same tokenization parameters as the tokenize method for consistency
+  bool add_bos = false;
+  bool parse_special = false;
   
   // Tokenize the text
-  std::vector<llama_token> tokens(text.size() + 4);
-  int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), is_first, true);
+  std::vector<llama_token> tokens(text.size() + 4); // Allocate a reasonable initial size
+  int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), add_bos, parse_special);
   
+  // Handle negative return value (token buffer too small)
   if (n_tokens < 0) {
-    throw std::runtime_error("Tokenization failed: " + std::to_string(n_tokens));
+    tokens.resize(-n_tokens);
+    n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), add_bos, parse_special);
+    if (n_tokens < 0) {
+      throw std::runtime_error("Tokenization failed: " + std::to_string(n_tokens));
+    }
   }
   
   // Resize to actual size
@@ -196,7 +216,23 @@ std::vector<float> LlamaCppModel::embedding(const std::string& text) {
   return result;
 }
 
-// generate completion
+// Add a helper function to create a penalties sampler
+struct llama_sampler* create_penalties_sampler(float repeat_penalty, int repeat_last_n) {
+  if (repeat_penalty <= 1.0f) {
+    return nullptr; // No need for penalties
+  }
+  
+  // Create a penalties sampler with the given parameters
+  // This replaces the non-existent llama_sampler_init_rp function
+  return llama_sampler_init_penalties(
+    repeat_last_n,      // penalty_last_n
+    repeat_penalty,     // penalty_repeat
+    0.0f,               // penalty_freq
+    0.0f                // penalty_present
+  );
+}
+
+// Modify the completion function to use this helper
 CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std::function<void(jsi::Runtime&, const char*)> partialCallback, jsi::Runtime* runtime) {
   std::lock_guard<std::mutex> lock(mutex_);
   
@@ -208,6 +244,9 @@ CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std
   auto t_start = std::chrono::high_resolution_clock::now();
   
   try {
+    // Clear the KV cache before processing a new prompt to ensure clean context
+    llama_kv_self_clear(ctx_);
+    
     // We'll use the precomputed chat params prompt that was applied in buildOptionsAndPrompt
     std::string prompt = options.chat_params.prompt;
     if (prompt.empty() && !options.prompt.empty()) {
@@ -215,288 +254,233 @@ CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std
       prompt = options.prompt;
     }
     
-    // Debugging info
-    if (prompt.empty()) {
-      throw std::runtime_error("No prompt available for completion");
+    // If we still don't have a prompt, try to build it from messages
+    if (prompt.empty() && !options.messages.empty()) {
+      // Format conversation for simple models without chat template support
+      prompt = ""; // Start with empty prompt
+      for (const auto& msg : options.messages) {
+        if (msg.role == "system") {
+          prompt += "System: " + msg.content + "\n\n";
+        } else if (msg.role == "user") {
+          prompt += "User: " + msg.content + "\n";
+        } else if (msg.role == "assistant") {
+          prompt += "Assistant: " + msg.content + "\n";
+        } else if (msg.role == "tool") {
+          prompt += "Tool: " + msg.content + "\n";
+        }
+      }
+      // Add the final assistant marker
+      prompt += "Assistant: ";
     }
     
-    // Tokenize the prompt (using llama's core API)
+    if (prompt.empty()) {
+      throw std::runtime_error("No valid input provided: prompt, messages, or chat_params must be set");
+    }
+    
+    // Tokenize the prompt with consistent parameters (same as tokenize method)
     const llama_vocab* vocab = llama_model_get_vocab(model_);
     
-    // Use the common_tokenize function for robust tokenization
-    std::vector<llama_token> tokens = common_tokenize(vocab, prompt, false, true);
+    // Same parameters as the tokenize method for consistency
+    bool add_bos = false;
+    bool parse_special = false;
     
-    if (tokens.empty() && !prompt.empty()) {
-      throw std::runtime_error("Failed to tokenize prompt");
+    // First get the number of tokens needed
+    int n_prompt = llama_tokenize(vocab, prompt.c_str(), prompt.length(), nullptr, 0, add_bos, parse_special);
+    if (n_prompt < 0) {
+      n_prompt = -n_prompt; // Convert negative value (indicates insufficient buffer)
     }
     
-    const int n_prompt = tokens.size();
-    
-    // Create batch directly like the simple.cpp example
-    llama_batch batch = llama_batch_init(n_prompt, 0, 1);
-    
-    // Fill the batch with prompt tokens
-    for (int i = 0; i < n_prompt; i++) {
-      batch.token[i] = tokens[i];
-      batch.pos[i] = i;
-      batch.n_seq_id[i] = 1;
-      batch.seq_id[i][0] = 0;
-      batch.logits[i] = (i == n_prompt - 1);
+    // Check if the prompt will fit in context
+    if (n_prompt > llama_n_ctx(ctx_)) {
+      throw std::runtime_error("Prompt too long for context window (" + std::to_string(n_prompt) + 
+                              " tokens, max context is " + std::to_string(llama_n_ctx(ctx_)) + ")");
     }
     
-    // Process the batch
-    if (llama_decode(ctx_, batch) != 0) {
-      std::string err = "Failed to process prompt tokens (n_tokens=" + std::to_string(n_prompt) + 
-                       ", batch_size=" + std::to_string(batch.n_tokens) + 
-                       ", ctx_size=" + std::to_string(llama_n_ctx(ctx_)) +
-                       ", vocab_size=" + std::to_string(llama_vocab_n_tokens(vocab)) + ")";
+    // Allocate space for tokens
+    std::vector<llama_token> tokens(n_prompt);
+    
+    // Do the actual tokenization
+    n_prompt = llama_tokenize(vocab, prompt.c_str(), prompt.length(), tokens.data(), tokens.size(), add_bos, parse_special);
+    if (n_prompt < 0) {
+      n_prompt = -n_prompt; // Handle negative return value
+      tokens.resize(n_prompt);
+      
+      // Retry with the correct size
+      n_prompt = llama_tokenize(vocab, prompt.c_str(), prompt.length(), tokens.data(), tokens.size(), add_bos, parse_special);
+      if (n_prompt < 0) {
+        throw std::runtime_error("Failed to tokenize prompt: " + std::to_string(n_prompt));
+      }
+    } else {
+      tokens.resize(n_prompt);
+    }
+    
+    // Process tokens in batches
+    int batch_size = 512; // Default batch size, can be adjusted
+    if (options.n_batch > 0) {
+      batch_size = options.n_batch;
+    }
+    
+    // Process the prompt tokens in batches
+    auto prompt_start = std::chrono::high_resolution_clock::now();
+    
+    for (int i = 0; i < n_prompt; i += batch_size) {
+      int n_batch = std::min(batch_size, n_prompt - i);
+      
+      // Create a batch for this chunk of tokens
+      llama_batch batch = llama_batch_init(n_batch, 0, 1);
+      
+      // Fill the batch
+      for (int j = 0; j < n_batch; j++) {
+        batch.token[j] = tokens[i + j];
+        batch.pos[j] = i + j;
+        batch.n_seq_id[j] = 1;
+        batch.seq_id[j][0] = 0;
+        batch.logits[j] = (i + j == n_prompt - 1); // Only need logits for last token
+      }
+      batch.n_tokens = n_batch;
+      
+      // Process this batch
+      if (llama_decode(ctx_, batch) != 0) {
+        llama_batch_free(batch);
+        throw std::runtime_error("Failed to process prompt tokens (batch starting at token " + 
+                                std::to_string(i) + ")");
+      }
+      
+      // Clean up the batch
       llama_batch_free(batch);
-      throw std::runtime_error(err);
     }
     
-    // Free the batch
-    llama_batch_free(batch);
+    auto prompt_end = std::chrono::high_resolution_clock::now();
+    double prompt_duration = std::chrono::duration<double, std::milli>(prompt_end - prompt_start).count();
     
-    // Now get ready for generation
-    auto eval_end = std::chrono::high_resolution_clock::now();
+    // Capture prompt stats
     result.prompt_tokens = n_prompt;
-    result.prompt_duration_ms = std::chrono::duration<double, std::milli>(eval_end - t_start).count();
+    result.prompt_duration_ms = prompt_duration;
     
-    // Process stop sequences from options and chat params
-    std::vector<std::string> stop_prompts = options.stop_prompts;
-    for (const auto& stop : options.chat_params.additional_stops) {
-      stop_prompts.push_back(stop);
-    }
-    
-    // Main generation loop
-    int n_gen = 0;
-    std::string generated_text;
-    const int max_generated_tokens = options.n_predict > 0 ? options.n_predict : 512;
-    
-    auto gen_start = std::chrono::high_resolution_clock::now();
-    
-    // Prepare for generation
+    // Prepare for sampling
     is_predicting_ = true;
     should_stop_completion_ = false;
     
-    // Keep track of tokens for penalty calculation
-    std::vector<llama_token> last_tokens(std::max(0, options.repeat_last_n));
-    size_t last_tokens_index = 0;
+    // Store token generation data
+    std::string generated_text;
+    int n_gen = 0;
     
-    // Simplified implementation that uses only the basic llama API
-    while (n_gen < max_generated_tokens && !should_stop_completion_) {
-      // Get the logits for the most recent token
-      float* logits = llama_get_logits(ctx_);
-      
-      // Prepare token data array for sampling
-      const int n_vocab = llama_vocab_n_tokens(vocab);
-      std::vector<llama_token_data> candidates;
-      candidates.reserve(n_vocab);
-      
-      for (int token_id = 0; token_id < n_vocab; token_id++) {
-        candidates.push_back({ token_id, logits[token_id], 0.0f });
+    // Setup max tokens to generate
+    int max_tokens = options.n_predict > 0 ? options.n_predict : 512;
+    if (options.max_tokens > 0) {
+      max_tokens = options.max_tokens;
+    }
+    
+    // Combine all stop sequences
+    std::vector<std::string> stop_sequences = options.stop_prompts;
+    if (!options.chat_params.additional_stops.empty()) {
+      stop_sequences.insert(stop_sequences.end(), 
+                           options.chat_params.additional_stops.begin(), 
+                           options.chat_params.additional_stops.end());
+    }
+    
+    // Initialize sampling parameters
+    auto gen_start = std::chrono::high_resolution_clock::now();
+    
+    struct llama_sampler* sampler = nullptr;
+    
+    // Create the sampler chain
+    sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    
+    // Add sampling methods in appropriate order
+    // First penalties (frequency, presence, repeat)
+    if (options.repeat_penalty > 1.0f) {
+      int last_n = options.repeat_last_n;
+      if (last_n <= 0) {
+        last_n = 64; // Default value
+      }
+      // Use our helper function instead of the non-existent function
+      struct llama_sampler* penalties_sampler = create_penalties_sampler(options.repeat_penalty, last_n);
+      if (penalties_sampler) {
+        llama_sampler_chain_add(sampler, penalties_sampler);
+      }
+    }
+    
+    // Then other sampling modifiers
+    if (options.top_k > 0) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_top_k(options.top_k));
+    }
+    
+    if (options.typical_p > 0.0f && options.typical_p < 1.0f) {
+      // Use llama_sampler_init_typical instead of the non-existent llama_sampler_init_typ
+      llama_sampler_chain_add(sampler, llama_sampler_init_typical(options.typical_p, 1));
+    }
+    
+    if (options.top_p > 0.0f && options.top_p < 1.0f) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_top_p(options.top_p, 1));
+    }
+    
+    if (options.min_p > 0.0f && options.min_p < 1.0f) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_min_p(options.min_p, 0));
+    }
+    
+    if (options.temperature > 0.0f) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_temp(options.temperature));
+    }
+    
+    // Set random seed
+    int seed = options.seed;
+    if (seed < 0) {
+      // Generate random seed
+      std::random_device rd;
+      seed = rd();
+    }
+    
+    // Finally add distribution sampler
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(seed));
+    
+    // Start generating tokens
+    llama_token id = 0;
+    bool is_tool_response = false;
+    std::string tool_call_json = "";
+    
+    // Check if we need to look for tool calls
+    bool detect_tools = !options.tools.empty();
+    
+    while (n_gen < max_tokens && !should_stop_completion_) {
+      // Check if we've reached context limit
+      if (llama_kv_self_used_cells(ctx_) + 1 >= llama_n_ctx(ctx_)) {
+        result.finish_reason = "context_length_exceeded";
+        result.truncated = true;
+        break;
       }
       
-      // Create token data array for sampling functions
-      llama_token_data_array candidates_array = { candidates.data(), candidates.size(), false };
+      // Sample next token
+      id = llama_sampler_sample(sampler, ctx_, -1);
       
-      // Apply penalties if needed
-      if (options.repeat_last_n > 0 && options.repeat_penalty > 1.0f) {
-        // Get last tokens to penalize
-        std::vector<llama_token> penalty_tokens;
-        penalty_tokens.reserve(last_tokens.size());
-        for (size_t i = 0; i < last_tokens.size(); i++) {
-          if (last_tokens[i] != 0) {
-            penalty_tokens.push_back(last_tokens[i]);
-          }
-        }
-        
-        // Apply repetition penalty
-        for (size_t i = 0; i < candidates.size(); i++) {
-          const auto token_id = candidates[i].id;
-          
-          // Check if this token appears in the last n tokens
-          for (const auto& t : penalty_tokens) {
-            if (token_id == t) {
-              // Apply repetition penalty: if logit > 0, divide by penalty; if logit < 0, multiply by penalty
-              if (candidates[i].logit > 0.0f) {
-                candidates[i].logit /= options.repeat_penalty;
-              } else {
-                candidates[i].logit *= options.repeat_penalty;
-              }
-              break;
-            }
-          }
-        }
-      }
-      
-      // Apply frequency/presence penalties if needed
-      if (options.frequency_penalty != 0.0f || options.presence_penalty != 0.0f) {
-        // Count token frequencies from history
-        std::unordered_map<llama_token, int> token_counts;
-        for (const auto& t : last_tokens) {
-          if (t != 0) {
-            token_counts[t]++;
-          }
-        }
-        
-        // Apply penalties to the logits
-        for (size_t i = 0; i < candidates.size(); i++) {
-          const auto token_id = candidates[i].id;
-          
-          if (token_counts.find(token_id) != token_counts.end()) {
-            // Token exists in history
-            const int count = token_counts[token_id];
-            
-            // Apply frequency penalty (scales with frequency)
-            candidates[i].logit -= static_cast<float>(count) * options.frequency_penalty;
-            
-            // Apply presence penalty (applies once if token appears at all)
-            candidates[i].logit -= options.presence_penalty;
-          }
-        }
-      }
-      
-      // Choose a token based on sampling strategy
-      llama_token new_token_id;
-      
-      if (options.temperature <= 0.0f) {
-        // Greedy sampling - just pick the token with the highest probability
-        new_token_id = candidates[std::max_element(candidates.begin(), candidates.end(),
-          [](const llama_token_data& a, const llama_token_data& b) { return a.logit < b.logit; }) - candidates.begin()].id;
-      } else {
-        // Temperature sampling
-        
-        // Convert logits to probabilities via softmax
-        float sum_exp = 0.0f;
-        float max_logit = -INFINITY;
-        
-        // Find max logit for numerical stability
-        for (const auto& candidate : candidates) {
-          max_logit = std::max(max_logit, candidate.logit);
-        }
-        
-        // Compute softmax
-        for (auto& candidate : candidates) {
-          candidate.p = exp(candidate.logit - max_logit);
-          sum_exp += candidate.p;
-        }
-        
-        // Normalize
-        for (auto& candidate : candidates) {
-          candidate.p /= sum_exp;
-        }
-        
-        // Apply top_k if enabled
-        if (options.top_k > 0 && options.top_k < static_cast<int>(candidates.size())) {
-          // Sort candidates by probability in descending order
-          std::partial_sort(candidates.begin(), candidates.begin() + options.top_k, candidates.end(),
-            [](const llama_token_data& a, const llama_token_data& b) { return a.p > b.p; });
-          
-          // Keep only top_k candidates
-          candidates.resize(options.top_k);
-          candidates_array.size = options.top_k;
-          
-          // Renormalize
-          sum_exp = 0.0f;
-          for (const auto& candidate : candidates) {
-            sum_exp += candidate.p;
-          }
-          for (auto& candidate : candidates) {
-            candidate.p /= sum_exp;
-          }
-        }
-        
-        // Apply top_p if enabled
-        if (options.top_p > 0.0f && options.top_p < 1.0f) {
-          // Sort by probability in descending order
-          std::sort(candidates.begin(), candidates.end(),
-            [](const llama_token_data& a, const llama_token_data& b) { return a.p > b.p; });
-          
-          float cumsum = 0.0f;
-          size_t i;
-          
-          for (i = 0; i < candidates.size(); i++) {
-            cumsum += candidates[i].p;
-            if (cumsum >= options.top_p) {
-              i++;  // Include this token
-              break;
-            }
-          }
-          
-          // Resize to include only tokens up to the cumulative probability threshold
-          candidates.resize(i);
-          candidates_array.size = i;
-          
-          // Renormalize
-          sum_exp = 0.0f;
-          for (const auto& candidate : candidates) {
-            sum_exp += candidate.p;
-          }
-          for (auto& candidate : candidates) {
-            candidate.p /= sum_exp;
-          }
-        }
-        
-        // Apply temperature to adjust distribution entropy
-        if (options.temperature != 1.0f) {
-          for (auto& candidate : candidates) {
-            candidate.p = pow(candidate.p, 1.0f / options.temperature);
-          }
-          
-          // Renormalize
-          sum_exp = 0.0f;
-          for (const auto& candidate : candidates) {
-            sum_exp += candidate.p;
-          }
-          for (auto& candidate : candidates) {
-            candidate.p /= sum_exp;
-          }
-        }
-        
-        // Random sampling from the distribution
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::discrete_distribution<> dist(candidates.size(), 0.0, 0.0,
-          [&candidates](size_t i) { return candidates[i].p; });
-        
-        new_token_id = candidates[dist(gen)].id;
-      }
-      
-      // Update historical tokens for penalty calculation
-      if (options.repeat_last_n > 0) {
-        last_tokens[last_tokens_index] = new_token_id;
-        last_tokens_index = (last_tokens_index + 1) % last_tokens.size();
-      }
-      
-      // Check for EOS token
-      if (new_token_id == llama_vocab_eos(vocab)) {
+      // Check for EOS
+      if (id == llama_vocab_eos(vocab)) {
         result.finish_reason = "stop";
         break;
       }
       
-      // First convert to piece (string)
-      char token_buf[128] = {0}; // Larger buffer for safety
-      int token_str_len = llama_token_to_piece(vocab, new_token_id, token_buf, sizeof(token_buf) - 1, false, true);
-      std::string token_text;
-      if (token_str_len > 0) {
-        token_buf[token_str_len] = '\0';
-        token_text = std::string(token_buf);
+      // Convert token to text
+      std::string piece;
+      piece.resize(64);  // Initial size
+      int piece_len = llama_token_to_piece(vocab, id, piece.data(), piece.size(), false, true);
+      if (piece_len < 0) {
+        piece.resize(-piece_len);
+        piece_len = llama_token_to_piece(vocab, id, piece.data(), piece.size(), false, true);
       }
+      piece.resize(piece_len);
       
-      // Add the text to the output
-      generated_text += token_text;
+      // Add to generated text
+      generated_text += piece;
       
-      // Check if we should stop generation based on stop sequences
+      // Check for stop sequences
       bool should_stop = false;
-      
-      for (const auto& stop : stop_prompts) {
-        if (generated_text.length() >= stop.length()) {
+      for (const auto& stop : stop_sequences) {
+        if (!stop.empty() && generated_text.length() >= stop.length()) {
           if (generated_text.substr(generated_text.length() - stop.length()) == stop) {
-            should_stop = true;
-            result.finish_reason = "stop";
             // Remove the stop sequence from the result
             generated_text = generated_text.substr(0, generated_text.length() - stop.length());
+            should_stop = true;
+            result.finish_reason = "stop";
             break;
           }
         }
@@ -506,54 +490,159 @@ CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std
         break;
       }
       
-      // Prepare the next batch with the sampled token - using the same pattern as in the prompt
-      llama_batch next_batch = llama_batch_init(1, 0, 1);
-      next_batch.token[0] = new_token_id;
-      next_batch.pos[0] = n_prompt + n_gen; // Position is after the prompt plus generated tokens so far
-      next_batch.n_seq_id[0] = 1;
-      next_batch.seq_id[0][0] = 0;
-      next_batch.logits[0] = true;
+      // Check for tool calls if enabled
+      if (detect_tools && !is_tool_response) {
+        if (generated_text.find("\"tool_calls\"") != std::string::npos) {
+          // Potential tool call detected, look for tool JSON format
+          size_t tool_start = generated_text.find("{\"tool_calls\"");
+          if (tool_start != std::string::npos) {
+            // Try to find the end of the JSON
+            size_t brace_count = 0;
+            bool in_string = false;
+            bool escaped = false;
+            size_t i = tool_start;
+            
+            for (; i < generated_text.length(); i++) {
+              char c = generated_text[i];
+              
+              if (escaped) {
+                escaped = false;
+                continue;
+              }
+              
+              if (c == '\\') {
+                escaped = true;
+                continue;
+              }
+              
+              if (c == '"' && !escaped) {
+                in_string = !in_string;
+                continue;
+              }
+              
+              if (!in_string) {
+                if (c == '{') {
+                  brace_count++;
+                } else if (c == '}') {
+                  brace_count--;
+                  if (brace_count == 0) {
+                    // Found the end of the JSON object
+                    i++;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            if (i < generated_text.length() && brace_count == 0) {
+              // We found a complete JSON object
+              tool_call_json = generated_text.substr(tool_start, i - tool_start);
+              
+              try {
+                // Parse the JSON to extract tool calls
+                nlohmann::json json = nlohmann::json::parse(tool_call_json);
+                if (json.contains("tool_calls") && json["tool_calls"].is_array()) {
+                  auto tool_calls = json["tool_calls"];
+                  for (const auto& tc : tool_calls) {
+                    ToolCall tool_call;
+                    
+                    if (tc.contains("id")) {
+                      tool_call.id = tc["id"];
+                    }
+                    
+                    if (tc.contains("type")) {
+                      tool_call.type = tc["type"];
+                    } else {
+                      tool_call.type = "function";
+                    }
+                    
+                    if (tc.contains("function")) {
+                      auto function = tc["function"];
+                      if (function.contains("name")) {
+                        tool_call.name = function["name"];
+                      }
+                      if (function.contains("arguments")) {
+                        tool_call.arguments = function["arguments"];
+                      }
+                    }
+                    
+                    result.tool_calls.push_back(tool_call);
+                  }
+                  
+                  // We found tool calls, so stop generation
+                  result.finish_reason = "tool_calls";
+                  break;
+                }
+              } catch (const std::exception& e) {
+                // Failed to parse JSON, continue generation
+              }
+            }
+          }
+        }
+      }
       
-      // Process the new token
-      if (llama_decode(ctx_, next_batch)) {
-        llama_batch_free(next_batch);
+      // Accept the token
+      llama_sampler_accept(sampler, id);
+      
+      // Create a batch for single token
+      llama_batch batch = llama_batch_init(1, 0, 1);
+      batch.token[0] = id;
+      batch.pos[0] = n_prompt + n_gen;
+      batch.n_seq_id[0] = 1;
+      batch.seq_id[0][0] = 0;
+      batch.logits[0] = true;
+      batch.n_tokens = 1;
+      
+      // Process the token
+      if (llama_decode(ctx_, batch) != 0) {
+        llama_batch_free(batch);
+        llama_sampler_free(sampler);
         throw std::runtime_error("Failed to process generation token");
       }
-      llama_batch_free(next_batch);
       
-      // Report progress if a callback is provided
-      if (partialCallback && runtime) {
-        partialCallback(*runtime, token_text.c_str());
-      }
+      // Clean up the batch
+      llama_batch_free(batch);
       
+      // Increment token count
       n_gen++;
+      
+      // If we have a partial callback, invoke it
+      if (partialCallback && runtime) {
+        partialCallback(*runtime, piece.c_str());
+      }
     }
     
-    // Clean up after generation
-    is_predicting_ = false;
-    
-    // Calculate duration
-    auto gen_end = std::chrono::high_resolution_clock::now();
-    
-    // Set up result
+    // Set return values
     result.text = generated_text;
     result.generated_tokens = n_gen;
+    result.truncated = result.finish_reason == "context_length_exceeded" || 
+                      (n_gen >= max_tokens && result.finish_reason.empty());
     
-    // If we reached the max tokens, mark as truncated
-    if (n_gen >= max_generated_tokens) {
-      result.truncated = true;
-      result.finish_reason = "length";
+    if (result.finish_reason.empty()) {
+      if (n_gen >= max_tokens) {
+        result.finish_reason = "length";
+      } else if (should_stop_completion_) {
+        result.finish_reason = "user_cancelled";
+      } else {
+        result.finish_reason = "stop";
+      }
     }
     
-    // Calculate durations
+    // Clean up and calculate duration
+    auto gen_end = std::chrono::high_resolution_clock::now();
     result.generation_duration_ms = std::chrono::duration<double, std::milli>(gen_end - gen_start).count();
     result.total_duration_ms = std::chrono::duration<double, std::milli>(gen_end - t_start).count();
     
+    // Clean up sampler
+    llama_sampler_free(sampler);
   } catch (const std::exception& e) {
-    // Ensure we clean up state even if there's an error
+    // Reset prediction state
     is_predicting_ = false;
     throw;
   }
+  
+  // Reset prediction state
+  is_predicting_ = false;
   
   return result;
 }
@@ -589,14 +678,25 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     // Parse options and generate the prompt
     CompletionOptions options = buildOptionsAndPrompt(rt, args[0].getObject(rt));
     
-    // Set up callback and runtime if provided
-    if (partialCallback) {
-      options.partial_callback = partialCallback;
-      options.runtime = &rt;
-    }
+    // Save these for the actual completion call
+    options.partial_callback = partialCallback;
+    options.runtime = &rt;
     
-    // Use the prompt from the options
-    return processPrompt(rt, options.chat_params.prompt, options);
+    // Perform the completion (don't try to extract prompt again)
+    CompletionResult result = completion(options, partialCallback, &rt);
+    
+    // Convert the result to a JSI object
+    jsi::Object resultObj(rt);
+    resultObj.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.text));
+    resultObj.setProperty(rt, "truncated", jsi::Value(result.truncated));
+    resultObj.setProperty(rt, "finish_reason", jsi::String::createFromUtf8(rt, result.finish_reason));
+    resultObj.setProperty(rt, "prompt_tokens", jsi::Value(result.prompt_tokens));
+    resultObj.setProperty(rt, "generated_tokens", jsi::Value(result.generated_tokens));
+    resultObj.setProperty(rt, "prompt_duration_ms", jsi::Value(result.prompt_duration_ms));
+    resultObj.setProperty(rt, "generation_duration_ms", jsi::Value(result.generation_duration_ms));
+    resultObj.setProperty(rt, "total_duration_ms", jsi::Value(result.total_duration_ms));
+    
+    return resultObj;
   } catch (const std::exception& e) {
     throw jsi::JSError(rt, e.what());
   }
@@ -1257,190 +1357,76 @@ jsi::Value LlamaCppModel::processPrompt(jsi::Runtime& rt, const std::string& pro
       // Track timings
       const auto t_start = std::chrono::high_resolution_clock::now();
       
-      // Check if KV cache is empty
-      bool is_first = llama_kv_self_used_cells(ctx_) == 0;
+      // Clear the KV cache before processing
+      llama_kv_self_clear(ctx_);
+      
+      // Same tokenization parameters as other methods for consistency
+      bool add_bos = false;
+      bool parse_special = false;
       
       // Tokenize the prompt (using llama's core API)
       const llama_vocab* vocab = llama_model_get_vocab(model_);
       
       // First get the number of tokens needed
-      int n_prompt = llama_tokenize(vocab, prompt.c_str(), prompt.length(), nullptr, 0, is_first, true);
-      if (n_prompt < 0) {
-        n_prompt = -n_prompt; // Handle negative return value
+      int n_tokens = llama_tokenize(vocab, prompt.c_str(), prompt.length(), nullptr, 0, add_bos, parse_special);
+      if (n_tokens < 0) {
+        n_tokens = -n_tokens; // Handle negative return value
+      }
+      
+      if (n_tokens == 0) {
+        throw std::runtime_error("Failed to process prompt tokens (empty input)");
       }
       
       // Allocate space for tokens
-      std::vector<llama_token> tokens(n_prompt);
+      std::vector<llama_token> tokens(n_tokens);
       
       // Do the actual tokenization
-      n_prompt = llama_tokenize(vocab, prompt.c_str(), prompt.length(), tokens.data(), tokens.size(), is_first, true);
-      if (n_prompt < 0) {
-        n_prompt = -n_prompt; // Handle negative return value
-      }
-      
-      // Prepare a batch for the prompt using the helper function from llama.cpp
-      llama_batch batch = llama_batch_get_one(tokens.data(), n_prompt);
-      
-      // Process the batch
-      if (llama_decode(ctx_, batch) != 0) {
-        std::string err = "Failed to process prompt tokens (n_tokens=" + std::to_string(n_prompt) + 
-                         ", batch_size=" + std::to_string(batch.n_tokens) + 
-                         ", ctx_size=" + std::to_string(llama_n_ctx(ctx_)) +
-                         ", vocab_size=" + std::to_string(llama_vocab_n_tokens(vocab)) + 
-                         ", is_first=" + (is_first ? "true" : "false") + ")";
-        throw std::runtime_error(err);
-      }
-      
-      // Now get ready for generation
-      auto eval_end = std::chrono::high_resolution_clock::now();
-      result.prompt_tokens = n_prompt;
-      result.prompt_duration_ms = std::chrono::duration<double, std::milli>(eval_end - t_start).count();
-      
-      // Process stop sequences from options and chat params
-      std::vector<std::string> stop_prompts = options.stop_prompts;
-      for (const auto& stop : options.chat_params.additional_stops) {
-        stop_prompts.push_back(stop);
-      }
-      
-      // Main generation loop
-      int n_gen = 0;
-      std::string generated_text;
-      const int max_generated_tokens = options.n_predict > 0 ? options.n_predict : 512;
-      
-      auto gen_start = std::chrono::high_resolution_clock::now();
-      
-      // Prepare for generation
-      is_predicting_ = true;
-      should_stop_completion_ = false;
-      
-      // Initialize token generation sampler
-      struct llama_sampler* sampler = nullptr;
-      
-      // Create the sampler chain
-      sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
-      
-      // Add sampling methods in the correct order
-      if (options.top_k > 0) {
-        llama_sampler_chain_add(sampler, llama_sampler_init_top_k(options.top_k));
-      }
-      
-      if (options.top_p > 0.0f && options.top_p < 1.0f) {
-        // Add a minimum of tokens to keep to ensure we don't cut off everything
-        llama_sampler_chain_add(sampler, llama_sampler_init_top_p(options.top_p, 1));
-      }
-      
-      if (options.temperature > 0.0f) {
-        llama_sampler_chain_add(sampler, llama_sampler_init_temp(options.temperature));
-      }
-      
-      // Set seed for reproducibility
-      int seed = options.seed;
-      if (seed < 0) {
-        // Random seed based on time
-        seed = (int)std::chrono::high_resolution_clock::now().time_since_epoch().count();
-      }
-      
-      // Finally add the distribution sampler
-      llama_sampler_chain_add(sampler, llama_sampler_init_dist(seed));
-      
-      // Generate tokens
-      llama_token new_token_id = 0;
-      
-      // Generate up to max_tokens tokens
-      while (n_gen < max_generated_tokens && !should_stop_completion_) {
-        // Check if we have enough space in the context
-        uint32_t n_ctx = llama_n_ctx(ctx_);
-        if (llama_kv_self_used_cells(ctx_) + 1 >= n_ctx) {
-          result.truncated = true;
-          result.finish_reason = "context_length_exceeded";
-          break;
+      n_tokens = llama_tokenize(vocab, prompt.c_str(), prompt.length(), tokens.data(), tokens.size(), add_bos, parse_special);
+      if (n_tokens < 0) {
+        n_tokens = -n_tokens; // Handle negative return value
+        tokens.resize(n_tokens);
+        
+        // Retry with the correct size
+        n_tokens = llama_tokenize(vocab, prompt.c_str(), prompt.length(), tokens.data(), tokens.size(), add_bos, parse_special);
+        if (n_tokens < 0) {
+          throw std::runtime_error("Failed to process prompt tokens: " + std::to_string(n_tokens));
         }
-        
-        // Sample a token using our sampler
-        new_token_id = llama_sampler_sample(sampler, ctx_, -1);
-        
-        // Check for end of generation
-        if (new_token_id == llama_vocab_eos(vocab)) {
-          result.finish_reason = "stop";
-          break;
-        }
-        
-        // Convert token to text
-        char token_buf[128] = {0}; // Larger buffer for safety
-        int token_str_len = llama_token_to_piece(vocab, new_token_id, token_buf, sizeof(token_buf) - 1, false, true);
-        std::string token_text;
-        if (token_str_len > 0) {
-          token_buf[token_str_len] = '\0';
-          token_text = std::string(token_buf);
-        }
-        
-        // Add the text to the output
-        generated_text += token_text;
-        
-        // Check if we should stop generation based on stop sequences
-        bool should_stop = false;
-        for (const auto& stop : stop_prompts) {
-          if (generated_text.length() >= stop.length()) {
-            if (generated_text.substr(generated_text.length() - stop.length()) == stop) {
-              should_stop = true;
-              result.finish_reason = "stop";
-              // Remove the stop sequence from the result
-              generated_text = generated_text.substr(0, generated_text.length() - stop.length());
-              break;
-            }
-          }
-        }
-        
-        if (should_stop) {
-          break;
-        }
-        
-        // Accept the token
-        llama_sampler_accept(sampler, new_token_id);
-        
-        // Continue decoding with new token
-        batch = llama_batch_get_one(&new_token_id, 1);
-        if (llama_decode(ctx_, batch)) {
-          llama_sampler_free(sampler);
-          throw std::runtime_error("Failed to process generation token");
-        }
-        
-        // Report progress if we have a callback and runtime
-        if (options.partial_callback) {
-          options.partial_callback(*options.runtime, token_text.c_str());
-        }
-        
-        n_gen++;
+      } else {
+        tokens.resize(n_tokens);
       }
       
-      // Clean up after generation
-      is_predicting_ = false;
-      llama_sampler_free(sampler);
+      // Process the tokens
+      llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
+      batch.logits[batch.n_tokens - 1] = true; // Only need logits for the last token
       
-      // Calculate duration
-      auto gen_end = std::chrono::high_resolution_clock::now();
-      
-      // Set up result
-      result.text = generated_text;
-      result.generated_tokens = n_gen;
-      
-      // If we reached the max tokens, mark as truncated
-      if (n_gen >= max_generated_tokens) {
-        result.truncated = true;
-        result.finish_reason = "length";
+      if (llama_decode(ctx_, batch)) {
+        throw std::runtime_error("Failed to process prompt tokens (n_tokens=" + std::to_string(n_tokens) +
+                                ", batch_size=" + std::to_string(batch.n_tokens) + 
+                                ", ctx_size=" + std::to_string(llama_n_ctx(ctx_)) + 
+                                ", vocab_size=" + std::to_string(llama_vocab_n_tokens(vocab)) + ")");
       }
       
-      // Calculate durations
-      result.generation_duration_ms = std::chrono::duration<double, std::milli>(gen_end - gen_start).count();
-      result.total_duration_ms = std::chrono::duration<double, std::milli>(gen_end - t_start).count();
+      // Get the logits for the last token
+      const float* logits = llama_get_logits_ith(ctx_, -1);
+      if (!logits) {
+        throw std::runtime_error("Failed to get logits after processing prompt");
+      }
+      
+      // Track time spent
+      const auto t_end = std::chrono::high_resolution_clock::now();
+      const double elapsed = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+      
+      result.prompt_tokens = n_tokens;
+      result.prompt_duration_ms = elapsed;
+      
+      // Convert to JSI object
+      return resultToJsi(rt, result);
       
     } catch (const std::exception& e) {
-      // Ensure we clean up state even if there's an error
-      is_predicting_ = false;
-      throw;
+      jsi::Object error(rt);
+      error.setProperty(rt, "error", jsi::String::createFromUtf8(rt, e.what()));
+      return error;
     }
-    
-    return resultToJsi(rt, result);
 }
 
 } // namespace facebook::react 
