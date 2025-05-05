@@ -1,10 +1,11 @@
 #!/bin/bash
-# This script sets up the llama.cpp integration
-# It prioritizes pre-packaged binaries, then tries prebuilt downloads, then builds from source
+# setupLlamaCpp.sh - Main script to setup llama.cpp for React Native
+# 1. Initializes llama.cpp submodule and sets to correct version
+# 2. Sets up iOS framework using llama_cpp_ios.sh
 
 set -e
-# android/app/src/main/jniLibs/
-# Define color codes
+
+# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -12,173 +13,232 @@ NC='\033[0m' # No Color
 
 # Get script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-# Get package root directory (one level up from script dir)
 PACKAGE_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+LLAMA_CPP_DIR="$PACKAGE_DIR/cpp/llama.cpp"
 
-# Ensure the llama.cpp version script is sourced
-source "$SCRIPT_DIR/llama_cpp_version.sh"
+# Import version settings
+. "$SCRIPT_DIR/used_version.sh"
 
-# Function to check if a command exists
-command_exists() {
-  command -v "$1" &> /dev/null
+# Check if required tools are available
+check_requirements() {
+  # Check if git is available
+  if ! command -v git &> /dev/null; then
+    echo -e "${RED}Error: git is required but not installed${NC}"
+    return 1
+  fi
+  
+  # Ensure scripts are executable
+  chmod +x "$SCRIPT_DIR/llama_cpp_ios.sh"
+  
+  return 0
 }
 
-# Check if we're being run without arguments and print usage if so
-if [ "$#" -eq 0 ]; then
-  echo "Usage: $0 {init|status|list-tags|clean}"
-  echo "  init       - Initialize and set the llama.cpp repository to the correct version"
-  echo "  status     - Show current llama.cpp repository status"
-  echo "  list-tags  - List available llama.cpp release tags"
-  echo "  clean      - Clean up all downloaded frameworks and build artifacts"
-  exit 1
-fi
-
-# Handle clean command directly
-if [ "$1" = "clean" ]; then
-  echo -e "${YELLOW}Cleaning up all downloaded frameworks and build artifacts...${NC}"
-  "$SCRIPT_DIR/download_prebuilt.sh" clean
-  exit $?
-fi
-
-# Set permissions for the scripts
-echo -e "${YELLOW}Setting executable permissions for scripts...${NC}"
-chmod +x "$SCRIPT_DIR/download_prebuilt.sh"
-chmod +x "$SCRIPT_DIR/llama_cpp_version.sh"
-
-# Setup directories
-mkdir -p "ios/include"
-mkdir -p "ios/libs"
-mkdir -p "ios/framework/build-apple"
-mkdir -p "android/src/main/cpp/includes"
-mkdir -p "android/src/main/jniLibs/arm64-v8a"
-mkdir -p "android/src/main/jniLibs/armeabi-v7a"
-mkdir -p "android/src/main/jniLibs/x86"
-mkdir -p "android/src/main/jniLibs/x86_64"
-
-# Ask user if they want to build from source
-if [ "${LLAMACPPRN_BUILD_FROM_SOURCE}" = "true" ] || [ "$1" == "--source" ]; then
-  BUILD_FROM_SOURCE=true
-elif [ "$1" == "--prebuilt" ]; then
-  BUILD_FROM_SOURCE=false
-else
-  # Default behavior: try packaged binaries first, then prebuilt downloads, then source
-  BUILD_FROM_SOURCE=false
-fi
-
-if [ "$BUILD_FROM_SOURCE" = true ]; then
-  echo -e "${YELLOW}Setting up llama.cpp from source...${NC}"
-  "$SCRIPT_DIR/llama_cpp_version.sh" init
-  "$SCRIPT_DIR/llama_cpp_version.sh" status
+# Initialize and setup llama.cpp submodule
+setup_llama_cpp_submodule() {
+  echo -e "${YELLOW}Setting up llama.cpp submodule (commit: $LLAMA_CPP_COMMIT)...${NC}"
   
-  # Simply ensure the llama.cpp repository is set up for building by Android
-  echo -e "${GREEN}Setup completed - will build from source${NC}"
-else
-  # First check if pre-packaged binaries are available (these would be included in the npm package)
-  PACKAGED_IOS_FRAMEWORK="$PACKAGE_DIR/prebuilt/ios/llamacpp.xcframework"
-  PACKAGED_ANDROID_LIBS="$PACKAGE_DIR/prebuilt/android"
+  # Create directory structure if it doesn't exist
+  mkdir -p "$(dirname "$LLAMA_CPP_DIR")"
   
-  IOS_SETUP_DONE=false
-  ANDROID_SETUP_DONE=false
-  
-  # 1. Check for pre-packaged iOS binaries
-  if [ -d "$PACKAGED_IOS_FRAMEWORK" ] && 
-     { [ -d "$PACKAGED_IOS_FRAMEWORK/ios-arm64/llama.framework" ] || 
-       [ -d "$PACKAGED_IOS_FRAMEWORK/ios-arm64_x86_64-simulator/llama.framework" ]; }; then
-    echo -e "${GREEN}Using pre-packaged iOS binaries...${NC}"
+  # Check if the directory already exists as a git repository
+  if [ -d "$LLAMA_CPP_DIR/.git" ]; then
+    echo -e "${YELLOW}llama.cpp repository exists, updating...${NC}"
     
-    # Copy the framework
-    cp -R "$PACKAGED_IOS_FRAMEWORK" "ios/libs/llamacpp.xcframework"
-    cp -R "$PACKAGED_IOS_FRAMEWORK" "ios/framework/build-apple/llama.xcframework"
+    # Get current commit hash
+    cd "$LLAMA_CPP_DIR"
+    CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "none")
     
-    # Copy only essential headers
-    if [ -d "$PACKAGED_IOS_FRAMEWORK/ios-arm64/llama.framework/Headers" ]; then
-      cp -n "$PACKAGED_IOS_FRAMEWORK/ios-arm64/llama.framework/Headers/llama-cpp.h" "ios/include/" 2>/dev/null || true
-    elif [ -d "$PACKAGED_IOS_FRAMEWORK/ios-arm64_x86_64-simulator/llama.framework/Headers" ]; then
-      cp -n "$PACKAGED_IOS_FRAMEWORK/ios-arm64_x86_64-simulator/llama.framework/Headers/llama-cpp.h" "ios/include/" 2>/dev/null || true
+    # If already at the correct commit, no need to update
+    if [ "$CURRENT_COMMIT" = "$LLAMA_CPP_COMMIT" ]; then
+      echo -e "${GREEN}llama.cpp is already at the correct commit: ${LLAMA_CPP_COMMIT}${NC}"
+      cd "$PACKAGE_DIR"
+      return 0
     fi
     
-    IOS_SETUP_DONE=true
-    echo -e "${GREEN}iOS framework setup complete from pre-packaged binaries.${NC}"
+    # Otherwise, fetch and checkout the correct commit
+    echo -e "${YELLOW}llama.cpp is at commit $CURRENT_COMMIT, updating to $LLAMA_CPP_COMMIT${NC}"
+    git fetch origin --quiet
+    git checkout "$LLAMA_CPP_COMMIT" --quiet
+    cd "$PACKAGE_DIR"
+  else
+    # Properly handle submodule initialization
+    echo -e "${YELLOW}Initializing llama.cpp repository...${NC}"
+    
+    # Check if the directory exists but is not a git repository
+    if [ -d "$LLAMA_CPP_DIR" ]; then
+      echo -e "${YELLOW}Directory exists but is not a git repository. Removing...${NC}"
+      rm -rf "$LLAMA_CPP_DIR"
+    fi
+    
+    # Clone the repository directly (safer than trying to use submodule commands)
+    echo -e "${YELLOW}Cloning llama.cpp repository...${NC}"
+    git clone https://github.com/ggml-org/llama.cpp.git "$LLAMA_CPP_DIR"
+    
+    # Checkout the specific commit
+    cd "$LLAMA_CPP_DIR"
+    git checkout "$LLAMA_CPP_COMMIT" --quiet
+    cd "$PACKAGE_DIR"
+    
+    # Recommend setting up as a proper submodule for future use
+    echo -e "${YELLOW}Repository cloned and configured. For proper development workflow:${NC}"
+    echo -e "${YELLOW}1. If you want to register this as a git submodule, run:${NC}"
+    echo -e "${YELLOW}   git submodule add https://github.com/ggml-org/llama.cpp.git cpp/llama.cpp${NC}"
+    echo -e "${YELLOW}   cd cpp/llama.cpp && git checkout $LLAMA_CPP_COMMIT && cd -${NC}"
+    echo -e "${YELLOW}   git add .gitmodules cpp/llama.cpp${NC}"
+    echo -e "${YELLOW}   git commit -m \"Add llama.cpp as submodule at version $LLAMA_CPP_COMMIT\"${NC}"
   fi
   
-  # 2. Check for pre-packaged Android binaries
-  if [ -d "$PACKAGED_ANDROID_LIBS" ] && [ -d "$PACKAGED_ANDROID_LIBS/includes" ]; then
-    echo -e "${GREEN}Using pre-packaged Android binaries...${NC}"
-    
-    # Copy includes if there are files to copy
-    if [ "$(ls -A "$PACKAGED_ANDROID_LIBS/includes/" 2>/dev/null)" ]; then
-      cp -R "$PACKAGED_ANDROID_LIBS/includes/"* "android/src/main/cpp/includes/"
-    else
-      echo -e "${YELLOW}Warning: includes directory is empty. No header files to copy.${NC}"
-    fi
-    
-    # Copy libs for each architecture
-    if [ -f "$PACKAGED_ANDROID_LIBS/arm64-v8a/libllama.so" ]; then
-      cp "$PACKAGED_ANDROID_LIBS/arm64-v8a/libllama.so" "android/src/main/jniLibs/arm64-v8a/"
-    fi
-    if [ -f "$PACKAGED_ANDROID_LIBS/armeabi-v7a/libllama.so" ]; then
-      cp "$PACKAGED_ANDROID_LIBS/armeabi-v7a/libllama.so" "android/src/main/jniLibs/armeabi-v7a/"
-    fi
-    if [ -f "$PACKAGED_ANDROID_LIBS/x86/libllama.so" ]; then
-      cp "$PACKAGED_ANDROID_LIBS/x86/libllama.so" "android/src/main/jniLibs/x86/"
-    fi
-    if [ -f "$PACKAGED_ANDROID_LIBS/x86_64/libllama.so" ]; then
-      cp "$PACKAGED_ANDROID_LIBS/x86_64/libllama.so" "android/src/main/jniLibs/x86_64/"
-    fi
-    
-    ANDROID_SETUP_DONE=true
-    echo -e "${GREEN}Android libraries setup complete from pre-packaged binaries.${NC}"
+  # Setup directories for Android
+  mkdir -p "android/src/main/cpp/includes"
+  mkdir -p "android/src/main/jniLibs/arm64-v8a"
+  mkdir -p "android/src/main/jniLibs/armeabi-v7a"
+  mkdir -p "android/src/main/jniLibs/x86"
+  mkdir -p "android/src/main/jniLibs/x86_64"
+  
+  echo -e "${GREEN}Successfully set up llama.cpp repository to commit: ${LLAMA_CPP_COMMIT}${NC}"
+  return 0
+}
+
+# Check if llama.cpp repository is set up correctly
+check_llama_cpp_repository() {
+  echo -e "${YELLOW}Checking llama.cpp repository...${NC}"
+  
+  if [ ! -d "$LLAMA_CPP_DIR" ]; then
+    echo -e "${RED}llama.cpp repository not found at: $LLAMA_CPP_DIR${NC}"
+    return 1
   fi
   
-  # 3. If iOS binaries weren't packaged, try downloading them
-  if [ "$IOS_SETUP_DONE" = false ]; then
-    echo -e "${YELLOW}Pre-packaged iOS binaries not found, trying to download...${NC}"
-    "$SCRIPT_DIR/download_prebuilt.sh" ios
-    DOWNLOAD_RESULT=$?
+  if [ ! -d "$LLAMA_CPP_DIR/.git" ]; then
+    echo -e "${RED}llama.cpp exists but is not a git repository at: $LLAMA_CPP_DIR${NC}"
+    return 1
+  fi
+  
+  # Check if we're on the correct commit
+  cd "$LLAMA_CPP_DIR"
+  CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "none")
+  
+  echo -e "Commit: ${GREEN}$CURRENT_COMMIT${NC}"
+  
+  # Check if we're on the desired version
+  if [ "$CURRENT_COMMIT" = "$LLAMA_CPP_COMMIT" ]; then
+    echo -e "${GREEN}✓ llama.cpp is at the correct commit${NC}"
+    cd "$PACKAGE_DIR"
+    return 0
+  else
+    echo -e "${RED}✗ llama.cpp is NOT at the expected commit${NC}"
+    echo -e "${YELLOW}Expected commit: $LLAMA_CPP_COMMIT${NC}"
+    echo -e "${YELLOW}Current commit:  $CURRENT_COMMIT${NC}"
+    cd "$PACKAGE_DIR"
+    return 1
+  fi
+}
+
+# Clean everything
+clean_all() {
+  echo -e "${YELLOW}Cleaning all llama.cpp related files and directories...${NC}"
+  
+  # Clean iOS framework using the iOS script
+  "$SCRIPT_DIR/llama_cpp_ios.sh" clean
+  
+  # For the git repository, reset to the correct commit
+  if [ -d "$LLAMA_CPP_DIR/.git" ]; then
+    echo -e "${YELLOW}Resetting llama.cpp repository to clean state...${NC}"
+    cd "$LLAMA_CPP_DIR"
+    git fetch origin --quiet
+    git checkout "$LLAMA_CPP_COMMIT" --quiet --force
+    git clean -fdx --quiet
+    cd "$PACKAGE_DIR"
+  fi
+  
+  echo -e "${GREEN}All cleaned successfully${NC}"
+  return 0
+}
+
+# Show version information
+show_version() {
+  echo -e "${YELLOW}llama.cpp version information:${NC}"
+  echo -e "Commit: ${GREEN}$LLAMA_CPP_COMMIT${NC}"
+  echo -e "Tag: ${GREEN}$LLAMA_CPP_TAG${NC}"
+  
+  # Check actual repository version
+  if [ -d "$LLAMA_CPP_DIR/.git" ]; then
+    cd "$LLAMA_CPP_DIR"
+    CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "none")
+    CURRENT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "no tag")
     
-    # Check if iOS framework was downloaded successfully
-    if [ ! -d "ios/libs/llamacpp.xcframework" ] || 
-       { [ ! -d "ios/libs/llamacpp.xcframework/ios-arm64/llama.framework" ] && 
-         [ ! -d "ios/libs/llamacpp.xcframework/ios-arm64_x86_64-simulator/llama.framework" ] &&
-         [ ! -d "ios/libs/llamacpp.xcframework/xros-arm64/llama.framework" ]; } ||
-       [ $DOWNLOAD_RESULT -ne 0 ]; then
-      echo -e "${YELLOW}iOS prebuilt binaries not found or download failed.${NC}"
-      echo -e "${YELLOW}Will need to initialize llama.cpp repository...${NC}"
+    echo -e "Current commit: ${GREEN}$CURRENT_COMMIT${NC}"
+    echo -e "Current tag: ${GREEN}$CURRENT_TAG${NC}"
+    
+    if [ "$CURRENT_COMMIT" != "$LLAMA_CPP_COMMIT" ]; then
+      echo -e "${YELLOW}Warning: Current commit doesn't match expected commit${NC}"
+    fi
+    cd "$PACKAGE_DIR"
+  else
+    echo -e "${YELLOW}llama.cpp repository not initialized${NC}"
+  fi
+  
+  # Show iOS framework version
+  "$SCRIPT_DIR/llama_cpp_ios.sh" version
+  
+  return 0
+}
+
+# Main function
+main() {
+  if [ $# -eq 0 ]; then
+    echo "Usage: $0 {init|check|clean|version} [--force]"
+    echo "  init    - Initialize llama.cpp repository and iOS framework"
+    echo "  check   - Check if repository and iOS framework are present and valid"
+    echo "  clean   - Clean everything (reset repository and remove iOS framework)"
+    echo "  version - Show version information"
+    echo ""
+    echo "Options:"
+    echo "  --force - Force redownload even if files exist"
+    exit 1
+  fi
+  
+  if ! check_requirements; then
+    echo -e "${RED}Error: Required tools are missing${NC}"
+    exit 1
+  fi
+  
+  local command="$1"
+  shift
+  
+  case "$command" in
+    "init")
+      setup_llama_cpp_submodule
+      # Pass remaining arguments to iOS script
+      "$SCRIPT_DIR/llama_cpp_ios.sh" init "$@"
+      ;;
+    "check")
+      check_llama_cpp_repository
+      source_result=$?
       
-      # Initialize llama.cpp repository for building from source
-      "$SCRIPT_DIR/llama_cpp_version.sh" init
-      "$SCRIPT_DIR/llama_cpp_version.sh" status
-    else
-      echo -e "${GREEN}iOS prebuilt framework downloaded successfully.${NC}"
+      "$SCRIPT_DIR/llama_cpp_ios.sh" check
+      ios_result=$?
       
-      # Copy framework to the framework directory if not already there
-      if [ ! -d "ios/framework/build-apple/llama.xcframework" ] && [ -d "ios/libs/llamacpp.xcframework" ]; then
-        echo -e "${YELLOW}Copying framework to ios/framework/build-apple/...${NC}"
-        cp -R "ios/libs/llamacpp.xcframework" "ios/framework/build-apple/llama.xcframework"
+      if [ $source_result -eq 0 ] && [ $ios_result -eq 0 ]; then
+        echo -e "${GREEN}All checks passed successfully${NC}"
+        return 0
+      else
+        echo -e "${RED}Some checks failed${NC}"
+        return 1
       fi
-      
-      echo -e "${YELLOW}Setting up iOS include files...${NC}"
-      # Try to find headers in any available slices - only copy essential headers
-      if [ -d "ios/libs/llamacpp.xcframework/ios-arm64/llama.framework/Headers" ]; then
-        cp -n "ios/libs/llamacpp.xcframework/ios-arm64/llama.framework/Headers/llama-cpp.h" "ios/include/" 2>/dev/null || true
-      elif [ -d "ios/libs/llamacpp.xcframework/ios-arm64_x86_64-simulator/llama.framework/Headers" ]; then
-        cp -n "ios/libs/llamacpp.xcframework/ios-arm64_x86_64-simulator/llama.framework/Headers/llama-cpp.h" "ios/include/" 2>/dev/null || true
-      elif [ -d "ios/libs/llamacpp.xcframework/xros-arm64/llama.framework/Headers" ]; then
-        cp -n "ios/libs/llamacpp.xcframework/xros-arm64/llama.framework/Headers/llama-cpp.h" "ios/include/" 2>/dev/null || true
-      elif [ -d "ios/libs/llamacpp.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Headers" ]; then
-        cp -n "ios/libs/llamacpp.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Headers/llama-cpp.h" "ios/include/" 2>/dev/null || true
-      fi
-      
-      IOS_SETUP_DONE=true
-    fi
-  fi
-  
-  # 4. If Android binaries weren't packaged and we haven't initialized git already, initialize now
-  if [ "$ANDROID_SETUP_DONE" = false ] && [ ! -d "cpp/llama.cpp/.git" ]; then
-    echo -e "${YELLOW}Setting up llama.cpp repository for Android build...${NC}"
-    "$SCRIPT_DIR/llama_cpp_version.sh" init
-    "$SCRIPT_DIR/llama_cpp_version.sh" status
-  fi
-  
-  echo -e "${GREEN}Setup completed successfully${NC}"
-fi
+      ;;
+    "clean")
+      clean_all
+      ;;
+    "version")
+      show_version
+      ;;
+    *)
+      echo "Unknown command: $command"
+      echo "Usage: $0 {init|check|clean|version} [--force]"
+      exit 1
+      ;;
+  esac
+}
+
+# Run main with all arguments
+main "$@"

@@ -91,25 +91,8 @@ jobs:
         if: ${{ inputs.run_native_build == false }}
         run: |
           if [ ! -d "cpp/llama.cpp" ]; then
-            chmod +x scripts/llama_cpp_version.sh
-            scripts/llama_cpp_version.sh init
-          fi
-      
-      - name: Set up iOS XCFramework (if needed)
-        if: ${{ inputs.run_native_build == false }}
-        run: |
-          if [ ! -d "ios/libs/llamacpp.xcframework" ]; then
-            chmod +x scripts/download_prebuilt.sh
-            scripts/download_prebuilt.sh ios
-          fi
-          
-          # Ensure iOS directories exist
-          mkdir -p ios/framework ios/include
-          
-          # Copy iOS include files if needed
-          if [ ! -f "ios/include/llama.h" ] && [ -d "cpp/llama.cpp" ]; then
-            cp cpp/llama.cpp/include/llama.h ios/include/
-            cp cpp/llama.cpp/include/llama-cpp.h ios/include/
+            chmod +x scripts/llama_cpp_source.sh
+            scripts/llama_cpp_source.sh init
           fi
       
       - name: Build TypeScript Files

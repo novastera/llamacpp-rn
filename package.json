@@ -39,14 +39,11 @@
     "example": "npm --prefix example",
     "bootstrap": "npm --prefix example install && npm install && npm --prefix example run pods",
     "setup-llama-cpp": "bash scripts/setupLlamaCpp.sh init",
-    "postinstall": "bash scripts/setupLlamaCpp.sh init",
-    "llama-status": "bash scripts/llama_cpp_version.sh status",
-    "llama-init": "bash scripts/llama_cpp_version.sh init",
-    "llama-tags": "bash scripts/llama_cpp_version.sh list-tags",
+    "llama-status": "bash scripts/llama_cpp_source.sh status",
+    "llama-init": "bash scripts/llama_cpp_source.sh init",
+    "llama-tags": "bash scripts/llama_cpp_source.sh list-tags",
     "llama-from-source": "LLAMACPPRN_BUILD_FROM_SOURCE=true npm run setup-llama-cpp",
     "llama-prebuilt": "npm run setup-llama-cpp",
-    "package-prebuilt": "bash scripts/package-prebuilt.sh",
-    "cleanup-frameworks": "bash scripts/download_prebuilt.sh clean",
     "clean": "bash scripts/setupLlamaCpp.sh clean"
   },
   "keywords": [

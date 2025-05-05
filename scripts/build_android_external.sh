@@ -13,20 +13,43 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 # Source the version information
-. "$SCRIPT_DIR/build_tool_versions.sh"
+. "$SCRIPT_DIR/used_version.sh"
+
+# Define prebuilt directory for all intermediary files
+PREBUILT_DIR="$PROJECT_ROOT/prebuilt"
+PREBUILT_LIBS_DIR="$PREBUILT_DIR/libs"
+PREBUILT_EXTERNAL_DIR="$PREBUILT_LIBS_DIR/external"
 
 # Define directories
-THIRD_PARTY_DIR="$PROJECT_ROOT/third_party"
+THIRD_PARTY_DIR="$PREBUILT_DIR/third_party"
 OPENCL_HEADERS_DIR="$THIRD_PARTY_DIR/OpenCL-Headers"
-OPENCL_INCLUDE_DIR="$THIRD_PARTY_DIR/opencl/include"
-OPENCL_LIB_DIR="$THIRD_PARTY_DIR/opencl/lib"
+OPENCL_INCLUDE_DIR="$PREBUILT_EXTERNAL_DIR/opencl/include"
+OPENCL_LIB_DIR="$PREBUILT_EXTERNAL_DIR/opencl/lib"
 VULKAN_HEADERS_DIR="$THIRD_PARTY_DIR/Vulkan-Headers"
-VULKAN_INCLUDE_DIR="$THIRD_PARTY_DIR/vulkan/include"
+VULKAN_INCLUDE_DIR="$PREBUILT_EXTERNAL_DIR/vulkan/include"
+
+# Define llama.cpp paths
+LLAMA_CPP_DIR="$PROJECT_ROOT/cpp/llama.cpp"
 
 echo -e "${YELLOW}Setting up external dependencies for Android builds...${NC}"
 
 # Create necessary directories
+mkdir -p "$PREBUILT_DIR"
+mkdir -p "$PREBUILT_LIBS_DIR"
+mkdir -p "$PREBUILT_EXTERNAL_DIR"
 mkdir -p "$OPENCL_INCLUDE_DIR" "$OPENCL_LIB_DIR" "$VULKAN_INCLUDE_DIR"
+
+# Verify llama.cpp exists as a git repository
+if [ ! -d "$LLAMA_CPP_DIR/.git" ]; then
+  echo -e "${YELLOW}llama.cpp not found as a git repository at $LLAMA_CPP_DIR${NC}"
+  echo -e "${YELLOW}Running setupLlamaCpp.sh to initialize it...${NC}"
+  "$SCRIPT_DIR/setupLlamaCpp.sh" init
+  
+  if [ ! -d "$LLAMA_CPP_DIR/.git" ]; then
+    echo -e "${RED}Failed to initialize llama.cpp${NC}"
+    exit 1
+  fi
+fi
 
 # Setup OpenCL dependencies
 echo -e "${YELLOW}Setting up OpenCL dependencies...${NC}"
@@ -177,3 +200,4 @@ if [ -n "$ANDROID_NDK_HOME" ]; then
 fi
 
 echo -e "${GREEN}✅ External dependencies setup complete${NC}"
+echo -e "${GREEN}All external libraries are available in: $PREBUILT_EXTERNAL_DIR${NC}"
