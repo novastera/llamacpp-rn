@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <mutex>
+#include "rn-llama.hpp"
 
 // Forward declarations for C++ only
 struct llama_model;
@@ -33,12 +34,13 @@ public:
 
 private:
   // Helper methods
-  jsi::Object createModelObject(jsi::Runtime& runtime, llama_model* model, llama_context* ctx);
+  jsi::Object createModelObject(jsi::Runtime& runtime, rn_llama_context* rn_ctx);
   std::string normalizeFilePath(const std::string& path);
 
 private:
   // Module state
   std::mutex mutex_;
+  std::unique_ptr<rn_llama_context> rn_ctx_;
 };
 
 } // namespace facebook::react 

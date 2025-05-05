@@ -16,7 +16,7 @@
 #include <condition_variable>
 #include <memory>
 
-// Include RN-llama integration
+// Include rn-completion integration
 #include "rn-utils.hpp"
 #include "rn-llama.hpp"
 
@@ -35,10 +35,8 @@
 
 namespace facebook::react {
 
-LlamaCppModel::LlamaCppModel(llama_model* model, llama_context* ctx)
-    : model_(model), ctx_(ctx), should_stop_completion_(false), is_predicting_(false) {
-    
-    // Initialize helpers if needed
+LlamaCppModel::LlamaCppModel(rn_llama_context* rn_ctx)
+    : rn_ctx_(rn_ctx), should_stop_completion_(false), is_predicting_(false) {
     initHelpers();
 }
 
@@ -52,7 +50,6 @@ LlamaCppModel::~LlamaCppModel() {
 }
 
 void LlamaCppModel::release() {
-  
   // Cancel any ongoing predictions
   if (is_predicting_) {
     should_stop_completion_ = true;
@@ -66,40 +63,44 @@ void LlamaCppModel::release() {
   }
 
   // Clean up our resources
-  if (ctx_) {
-    llama_free(ctx_);
-    ctx_ = nullptr;
-  }
-  
-  if (model_) {
-    llama_model_free(model_);
-    model_ = nullptr;
+  if (rn_ctx_) {
+    if (rn_ctx_->ctx) {
+      llama_free(rn_ctx_->ctx);
+      rn_ctx_->ctx = nullptr;
+    }
+    
+    if (rn_ctx_->model) {
+      llama_model_free(rn_ctx_->model);
+      rn_ctx_->model = nullptr;
+    }
+    
+    // Note: rn_ctx_ itself is owned by the module, so we don't delete it here
+    rn_ctx_ = nullptr;
   }
 }
 
 int32_t LlamaCppModel::getVocabSize() const {
-  if (!model_) {
+  if (!rn_ctx_ || !rn_ctx_->model) {
     throw std::runtime_error("Model not loaded");
   }
   
-  const llama_vocab* vocab = llama_model_get_vocab(model_);
-  return llama_vocab_n_tokens(vocab);
+  return llama_vocab_n_tokens(rn_ctx_->vocab);
 }
 
 int32_t LlamaCppModel::getContextSize() const {
-  if (!ctx_) {
+  if (!rn_ctx_ || !rn_ctx_->ctx) {
     throw std::runtime_error("Context not initialized");
   }
   
-  return llama_n_ctx(ctx_);
+  return llama_n_ctx(rn_ctx_->ctx);
 }
 
 int32_t LlamaCppModel::getEmbeddingSize() const {
-  if (!model_) {
+  if (!rn_ctx_ || !rn_ctx_->model) {
     throw std::runtime_error("Model not loaded");
   }
   
-  return llama_model_n_embd(model_);
+  return llama_model_n_embd(rn_ctx_->model);
 }
 
 bool LlamaCppModel::shouldStopCompletion() const {
@@ -115,18 +116,16 @@ void LlamaCppModel::setShouldStopCompletion(bool value) {
 }
 
 std::vector<int32_t> LlamaCppModel::tokenize(const std::string& text) {
-  if (!model_) {
+  if (!rn_ctx_ || !rn_ctx_->model) {
     throw std::runtime_error("Model not loaded");
   }
-  
-  const llama_vocab* vocab = llama_model_get_vocab(model_);
   
   // Parameters for tokenization
   bool add_bos = false;
   bool parse_special = false;
   
   // First get the number of tokens needed
-  int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), nullptr, 0, add_bos, parse_special);
+  int n_tokens = llama_tokenize(rn_ctx_->vocab, text.c_str(), text.length(), nullptr, 0, add_bos, parse_special);
   if (n_tokens < 0) {
     n_tokens = -n_tokens; // Convert negative value (indicates insufficient buffer)
   }
@@ -135,13 +134,13 @@ std::vector<int32_t> LlamaCppModel::tokenize(const std::string& text) {
   std::vector<llama_token> tokens(n_tokens);
   
   // Do the actual tokenization
-  n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), add_bos, parse_special);
+  n_tokens = llama_tokenize(rn_ctx_->vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), add_bos, parse_special);
   if (n_tokens < 0) {
     n_tokens = -n_tokens; // Handle negative return value
     tokens.resize(n_tokens);
     
     // Retry with the correct size
-    int retry_result = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), add_bos, parse_special);
+    int retry_result = llama_tokenize(rn_ctx_->vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), add_bos, parse_special);
     if (retry_result != n_tokens) {
       throw std::runtime_error("Failed to tokenize text: inconsistent token count");
     }
@@ -154,25 +153,21 @@ std::vector<int32_t> LlamaCppModel::tokenize(const std::string& text) {
 }
 
 std::vector<float> LlamaCppModel::embedding(const std::string& text) {
-  
-  if (!model_ || !ctx_) {
+  if (!rn_ctx_ || !rn_ctx_->model || !rn_ctx_->ctx) {
     throw std::runtime_error("Model or context not initialized");
   }
   
   // Set the context parameters to compute embeddings
-  llama_set_embeddings(ctx_, true);
+  llama_set_embeddings(rn_ctx_->ctx, true);
   
   // Ensure we're using the right pooling method
   // Prefer MEAN pooling for embeddings
-  if (llama_pooling_type(ctx_) == LLAMA_POOLING_TYPE_UNSPECIFIED) {
-    llama_set_causal_attn(ctx_, false);
+  if (llama_pooling_type(rn_ctx_->ctx) == LLAMA_POOLING_TYPE_UNSPECIFIED) {
+    llama_set_causal_attn(rn_ctx_->ctx, false);
   }
 
-  // Get the vocab
-  const llama_vocab* vocab = llama_model_get_vocab(model_);
-  
   // Clear the KV cache
-  llama_kv_self_clear(ctx_);
+  llama_kv_self_clear(rn_ctx_->ctx);
   
   // Same tokenization parameters as the tokenize method for consistency
   bool add_bos = false;
@@ -180,12 +175,12 @@ std::vector<float> LlamaCppModel::embedding(const std::string& text) {
   
   // Tokenize the text
   std::vector<llama_token> tokens(text.size() + 4); // Allocate a reasonable initial size
-  int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), add_bos, parse_special);
+  int n_tokens = llama_tokenize(rn_ctx_->vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), add_bos, parse_special);
   
   // Handle negative return value (token buffer too small)
   if (n_tokens < 0) {
     tokens.resize(-n_tokens);
-    n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), add_bos, parse_special);
+    n_tokens = llama_tokenize(rn_ctx_->vocab, text.c_str(), text.length(), tokens.data(), tokens.size(), add_bos, parse_special);
     if (n_tokens < 0) {
       throw std::runtime_error("Tokenization failed: " + std::to_string(n_tokens));
     }
@@ -198,7 +193,7 @@ std::vector<float> LlamaCppModel::embedding(const std::string& text) {
   llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
   batch.logits[n_tokens - 1] = true; // Only need logits for the last token
   
-  if (llama_decode(ctx_, batch)) {
+  if (llama_decode(rn_ctx_->ctx, batch)) {
     throw std::runtime_error("Failed to decode text for embedding");
   }
   
@@ -206,7 +201,7 @@ std::vector<float> LlamaCppModel::embedding(const std::string& text) {
   const int32_t embd_size = getEmbeddingSize();
   
   // Get the embeddings
-  float* embeddings_data = llama_get_embeddings(ctx_);
+  float* embeddings_data = llama_get_embeddings(rn_ctx_->ctx);
   
   if (embeddings_data == nullptr) {
     throw std::runtime_error("Failed to get embeddings");
@@ -440,7 +435,7 @@ CompletionOptions LlamaCppModel::parseCompletionOptions(jsi::Runtime& rt, const 
 
 // Modify the completion function to use this helper
 CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std::function<void(jsi::Runtime&, const char*)> partialCallback, jsi::Runtime* runtime) {  
-  if (!model_ || !ctx_) {
+  if (!rn_ctx_ || !rn_ctx_->model || !rn_ctx_->ctx) {
     CompletionResult result;
     result.content = "";
     result.success = false;
@@ -449,13 +444,13 @@ CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std
     return result;
   }
   // Clear the context KV cache
-  llama_kv_self_clear(ctx_);
+  llama_kv_self_clear(rn_ctx_->ctx);
   // Create a temporary rn_llama_context that wraps our model and context
   rn_llama_context rn_ctx;
-  rn_ctx.model = model_;
-  rn_ctx.ctx = ctx_;
+  rn_ctx.model = rn_ctx_->model;
+  rn_ctx.ctx = rn_ctx_->ctx;
   rn_ctx.model_loaded = true;
-  rn_ctx.vocab = llama_model_get_vocab(model_);
+  rn_ctx.vocab = rn_ctx_->vocab;
   
   // Initialize sampler params (used by run_completion)
   rn_ctx.params.sampling.temp = options.temperature;
@@ -676,7 +671,7 @@ jsi::Value LlamaCppModel::releaseJsi(jsi::Runtime& rt, const jsi::Value* args, s
 // Function to test token-by-token processing in a simplified manner
 jsi::Value LlamaCppModel::testProcessTokensJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count) {
   try {
-    if (!model_ || !ctx_) {
+    if (!rn_ctx_ || !rn_ctx_->model || !rn_ctx_->ctx) {
       throw std::runtime_error("Model or context not initialized");
     }
     
@@ -689,10 +684,10 @@ jsi::Value LlamaCppModel::testProcessTokensJsi(jsi::Runtime& rt, const jsi::Valu
     }
     
     // Clear KV cache
-    llama_kv_self_clear(ctx_);
+    llama_kv_self_clear(rn_ctx_->ctx);
     
     // Tokenize the text
-    const llama_vocab* vocab = llama_model_get_vocab(model_);
+    const llama_vocab* vocab = rn_ctx_->vocab;
     
     // Create a buffer for tokenization - with clearing the KV cache, is_first is true
     std::vector<llama_token> tokens(text.size() + 4);
@@ -742,7 +737,7 @@ jsi::Value LlamaCppModel::testProcessTokensJsi(jsi::Runtime& rt, const jsi::Valu
       tokenResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, token_text));
       
       // Process the token
-      int decode_result = llama_decode(ctx_, batch);
+      int decode_result = llama_decode(rn_ctx_->ctx, batch);
       
       tokenResult.setProperty(rt, "success", jsi::Value(decode_result == 0));
       tokenResult.setProperty(rt, "result", jsi::Value(decode_result));

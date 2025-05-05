@@ -16,12 +16,7 @@
 
 // Include rn-utils.hpp which has the CompletionResult definition
 #include "rn-utils.hpp"
-
-// Forward declarations for llama.cpp types
-struct llama_model;
-struct llama_context;
-struct common_sampler;
-struct common_speculative;
+#include "rn-llama.hpp"
 
 namespace facebook::react {
 
@@ -64,7 +59,7 @@ struct ToolCall {
 // Main model class that wraps llama.cpp
 class LlamaCppModel : public jsi::HostObject {
 public:
-  LlamaCppModel(llama_model* model, llama_context* ctx);
+  LlamaCppModel(rn_llama_context* rn_ctx);
   ~LlamaCppModel();
   
   // Implement HostObject methods
@@ -97,9 +92,8 @@ public:
   jsi::Value testProcessTokensJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count);
   
 private:
-  // Core llama.cpp model and context
-  llama_model* model_;
-  llama_context* ctx_;
+  // Core llama.cpp context
+  rn_llama_context* rn_ctx_;
   
   // State management
   std::mutex mutex_;

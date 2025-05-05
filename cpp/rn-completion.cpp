@@ -195,8 +195,8 @@ CompletionResult run_completion(
             }
         }
         
-        RN_INF("Processing prompt with %d tokens, n_predict = %d", 
-            (int)state.prompt_tokens.size(), state.n_predict);
+        /*RN_INF("Processing prompt with %d tokens, n_predict = %d", 
+            (int)state.prompt_tokens.size(), state.n_predict);*/
         
         // Process the prompt
         for (int i = 0; i < (int)state.prompt_tokens.size(); ++i) {
@@ -297,9 +297,9 @@ CompletionResult run_completion(
         const int64_t t_end_generation = ggml_time_us();
         const double generation_time_ms = (t_end_generation - t_start_generation) / 1000.0;
         
-        RN_INF("Completion finished: %d tokens generated in %.2f ms (%.2f tokens/s)",
+        /*RN_INF("Completion finished: %d tokens generated in %.2f ms (%.2f tokens/s)",
             state.n_decoded, generation_time_ms, 
-            state.n_decoded > 0 ? (state.n_decoded * 1000.0) / generation_time_ms : 0);
+            state.n_decoded > 0 ? (state.n_decoded * 1000.0) / generation_time_ms : 0);*/
         
         // Set the result
         result.content = state.generated_text;

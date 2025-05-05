@@ -23,7 +23,7 @@ Pod::Spec.new do |s|
                    "cpp/SystemUtils.cpp",
                    "cpp/rn-utils.hpp",
                    "cpp/rn-llama.hpp",
-                   "cpp/rn-llama.cpp",
+                   "cpp/rn-completion.cpp",
                    "cpp/llama.cpp/common/common.h",
                    "cpp/llama.cpp/common/build-info.cpp",
                    "cpp/llama.cpp/common/json-schema-to-grammar.cpp",

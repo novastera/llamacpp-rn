@@ -20,12 +20,6 @@ using json = nlohmann::ordered_json;
 
 #define DEFAULT_OAICOMPAT_MODEL "gpt-3.5-turbo"
 
-// Debug/log macros with proper variadic argument handling
-#define RN_INF(fmt, ...) fprintf(stderr, "INFO: rn-llama %12.*s: " fmt "\n", 12, __func__, ##__VA_ARGS__)
-#define RN_WRN(fmt, ...) fprintf(stderr, "WARN: rn-llama %12.*s: " fmt "\n", 12, __func__, ##__VA_ARGS__)
-#define RN_ERR(fmt, ...) fprintf(stderr, "ERROR: rn-llama %12.*s: " fmt "\n", 12, __func__, ##__VA_ARGS__)
-#define RN_DBG(fmt, ...) fprintf(stderr, "DEBUG: rn-llama %12.*s: " fmt "\n", 12, __func__, ##__VA_ARGS__)
-
 const static std::string build_info("b" + std::to_string(LLAMA_BUILD_NUMBER) + "-" + LLAMA_COMMIT);
 
 // Error types simplified for a library context
@@ -141,7 +135,6 @@ static T json_value(const json & body, const std::string & key, const T & defaul
         try {
             return body.at(key);
         } catch (NLOHMANN_JSON_NAMESPACE::detail::type_error const &) {
-            RN_WRN("Wrong type supplied for parameter '%s'. Expected type of default value, using default", key.c_str());
             return default_value;
         }
     } else {
