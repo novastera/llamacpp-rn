@@ -49,6 +49,7 @@ export interface LlamaModelParams {
   // Additional options
   logits_all?: boolean;        // return logits for all tokens
   chat_template?: string;      // override chat template
+  use_jinja?: boolean;        // use Jinja template parser
   verbose?: number;            // verbosity level (0 = silent, 1 = info, 2+ = debug)
   
   // LoRA adapters

@@ -240,6 +240,7 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
     if (SystemUtils::setIfExists(runtime, options, "chat_template", chat_template)) {
       params.chat_template = chat_template;
     }
+    SystemUtils::setIfExists(runtime, options, "use_jinja", params.use_jinja);
     
     // Support for LoRA adapters
     if (options.hasProperty(runtime, "lora_adapters") && options.getProperty(runtime, "lora_adapters").isObject()) {
@@ -276,20 +277,25 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
       throw std::runtime_error("Failed to initialize model and context");
     }
     
-    // Get raw pointers and release ownership from shared_ptr
-    llama_model* model = result.model.release();
-    llama_context* ctx = result.context.release();
+    // Create and initialize rn_llama_context
+    rn_ctx_ = std::make_unique<rn_llama_context>();
+    rn_ctx_->model = result.model.release();
+    rn_ctx_->ctx = result.context.release();
+    rn_ctx_->model_loaded = true;
+    rn_ctx_->vocab = llama_model_get_vocab(rn_ctx_->model);
+    rn_ctx_->params = params;
     
-    
-    // Handle any LoRA adapters that were loaded
-    // In this implementation, we don't need to do anything special since the adapters
-    // have already been applied by common_init_from_params
-    
-   //fprintf(stderr, "Model loaded successfully with vocab size: %d\n", 
-   //         llama_vocab_n_tokens(llama_model_get_vocab(model)));
+    // Initialize chat templates
+    rn_ctx_->chat_templates = common_chat_templates_init(rn_ctx_->model, params.chat_template);
+    try {
+      common_chat_format_example(rn_ctx_->chat_templates.get(), params.use_jinja);
+    } catch (const std::exception & e) {
+      // Log warning and fallback to chatml
+      rn_ctx_->chat_templates = common_chat_templates_init(rn_ctx_->model, "chatml");
+    }
     
     // Create the model object and return it
-    return createModelObject(runtime, model, ctx);
+    return createModelObject(runtime, rn_ctx_.get());
   } catch (const std::exception& e) {
     fprintf(stderr, "initLlama error: %s\n", e.what());
     throw jsi::JSError(runtime, e.what());
@@ -362,9 +368,9 @@ jsi::Value LlamaCppRn::jsonSchemaToGbnf(jsi::Runtime &runtime, jsi::Object schem
   }
 }
 
-jsi::Object LlamaCppRn::createModelObject(jsi::Runtime& runtime, llama_model* model, llama_context* ctx) {
+jsi::Object LlamaCppRn::createModelObject(jsi::Runtime& runtime, rn_llama_context* rn_ctx) {
   // Create a shared_ptr to a new LlamaCppModel instance
-  auto llamaModel = std::make_shared<LlamaCppModel>(model, ctx);
+  auto llamaModel = std::make_shared<LlamaCppModel>(rn_ctx);
   
   // Create a host object from the LlamaCppModel instance
   return jsi::Object::createFromHostObject(runtime, std::move(llamaModel));

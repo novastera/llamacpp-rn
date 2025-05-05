@@ -16,7 +16,7 @@ struct llama_vocab;
 
 namespace facebook::react {
 
-// RN-Llama context adapter structure
+// rn-completion context adapter structure
 struct rn_llama_context {
     // Model parameters
     common_params params;
