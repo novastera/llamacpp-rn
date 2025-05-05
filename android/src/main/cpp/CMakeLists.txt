@@ -155,19 +155,34 @@ file(GLOB_RECURSE LLAMACPPRN_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
 # Additional llama.cpp common files needed for json-schema-to-grammar and chat functionality
 set(LLAMA_CPP_COMMON_SOURCES
+    ${LLAMA_CPP_DIR}/common/build-info.cpp
     ${LLAMA_CPP_DIR}/common/json-schema-to-grammar.cpp
+    ${LLAMA_CPP_DIR}/common/json-schema-to-grammar.h
     ${LLAMA_CPP_DIR}/common/common.cpp
+    ${LLAMA_CPP_DIR}/common/common.h
     ${LLAMA_CPP_DIR}/common/chat.cpp
+    ${LLAMA_CPP_DIR}/common/chat.h
     ${LLAMA_CPP_DIR}/common/log.cpp
+    ${LLAMA_CPP_DIR}/common/log.h
     ${LLAMA_CPP_DIR}/common/sampling.cpp
+    ${LLAMA_CPP_DIR}/common/sampling.h
+    ${LLAMA_CPP_DIR}/common/ngram-cache.cpp
+    ${LLAMA_CPP_DIR}/common/ngram-cache.h
+    ${LLAMA_CPP_DIR}/common/base64.hpp
+    ${LLAMA_CPP_DIR}/common/json.hpp
+    ${LLAMA_CPP_DIR}/common/speculative.cpp
+    ${LLAMA_CPP_DIR}/common/speculative.h
 )
 
 # Set the source files for the library
 set(SOURCE_FILES
     # Module implementation
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/LlamaCppRnModule.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/LlamaCppRnModule.h 
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/LlamaCppModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/LlamaCppModel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/SystemUtils.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/SystemUtils.cpp
     
     # Add rn-completion files
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/rn-utils.hpp
@@ -176,6 +191,10 @@ set(SOURCE_FILES
     
     # Add the common sources
     ${LLAMA_CPP_COMMON_SOURCES}
+    
+    # Add minja template files
+    ${LLAMA_CPP_DIR}/common/minja/chat-template.hpp
+    ${LLAMA_CPP_DIR}/common/minja/minja.hpp
 )
 
 # Include paths
