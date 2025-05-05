@@ -170,11 +170,12 @@ CompletionOptions LlamaCppModel::parseCompletionOptions(jsi::Runtime& rt, const 
   }
   
   // Extract chat template options
-  if (obj.hasProperty(rt, "jinja") && !obj.getProperty(rt, "jinja").isUndefined()) {
+  // jinja is set in the model init as in server.cpp start
+  /*if (obj.hasProperty(rt, "jinja") && !obj.getProperty(rt, "jinja").isUndefined()) {
     options.use_jinja = obj.getProperty(rt, "jinja").asBool();
   } else if (obj.hasProperty(rt, "use_jinja") && !obj.getProperty(rt, "use_jinja").isUndefined()) {
     options.use_jinja = obj.getProperty(rt, "use_jinja").asBool();
-  }
+  }*/
   
   if (obj.hasProperty(rt, "chat_template") && !obj.getProperty(rt, "chat_template").isUndefined()) {
     options.chat_template = obj.getProperty(rt, "chat_template").asString(rt).utf8(rt);
@@ -324,21 +325,26 @@ CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std
     result.error_type = RN_ERROR_MODEL_LOAD;
     return result;
   }
+  
+  // Lock the mutex during completion to avoid concurrent accesses
+  std::lock_guard<std::mutex> lock(rn_ctx_->mutex);
+  
   // Clear the context KV cache
   llama_kv_self_clear(rn_ctx_->ctx);
-  // Create a temporary rn_llama_context that wraps our model and context
-  rn_llama_context rn_ctx;
-  rn_ctx.model = rn_ctx_->model;
-  rn_ctx.ctx = rn_ctx_->ctx;
-  rn_ctx.model_loaded = true;
-  rn_ctx.vocab = rn_ctx_->vocab;
   
-  // Initialize sampler params (used by run_completion)
-  rn_ctx.params.sampling.temp = options.temperature;
-  rn_ctx.params.sampling.top_p = options.top_p;
-  rn_ctx.params.sampling.top_k = options.top_k;
-  rn_ctx.params.sampling.min_p = options.min_p;
-  rn_ctx.params.n_predict = options.n_predict;
+  // Store original sampling parameters to restore later
+  float orig_temp = rn_ctx_->params.sampling.temp;
+  float orig_top_p = rn_ctx_->params.sampling.top_p;
+  float orig_top_k = rn_ctx_->params.sampling.top_k;
+  float orig_min_p = rn_ctx_->params.sampling.min_p;
+  int orig_n_predict = rn_ctx_->params.n_predict;
+  
+  // Set sampling parameters from options
+  rn_ctx_->params.sampling.temp = options.temperature;
+  rn_ctx_->params.sampling.top_p = options.top_p;
+  rn_ctx_->params.sampling.top_k = options.top_k;
+  rn_ctx_->params.sampling.min_p = options.min_p;
+  rn_ctx_->params.n_predict = options.n_predict;
   
   // Check for a partial callback
   auto callback_adapter = [&partialCallback, runtime](const std::string& token, bool is_done) -> bool {
@@ -352,28 +358,43 @@ CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std
   CompletionResult result;
   
   try {
+    // Set the predicting flag to prevent interruption
+    is_predicting_ = true;
+    should_stop_completion_ = false;
+    
     if (!options.messages.empty()) {
       // Chat completion (with messages)
-      result = run_chat_completion(&rn_ctx, options, callback_adapter);
+      result = run_chat_completion(rn_ctx_, options, callback_adapter);
     } else {
       // Regular completion (with prompt)
-      result = run_completion(&rn_ctx, options, callback_adapter);
+      result = run_completion(rn_ctx_, options, callback_adapter);
     }
+    
+    // Reset the predicting flag
+    is_predicting_ = false;
   } catch (const std::exception& e) {
+    is_predicting_ = false;
     result.success = false;
     result.error_msg = std::string("Completion failed: ") + e.what();
     result.error_type = RN_ERROR_INFERENCE;
   }
   
+  // Restore original parameters
+  rn_ctx_->params.sampling.temp = orig_temp;
+  rn_ctx_->params.sampling.top_p = orig_top_p;
+  rn_ctx_->params.sampling.top_k = orig_top_k;
+  rn_ctx_->params.sampling.min_p = orig_min_p;
+  rn_ctx_->params.n_predict = orig_n_predict;
+  
   return result;
 }
 
 // Helper to convert from the rn-utils CompletionResult to a JSI object
-jsi::Object LlamaCppModel::completionResultToJsi(jsi::Runtime& rt, const CompletionResult& result, bool withJinja) {
+jsi::Object LlamaCppModel::completionResultToJsi(jsi::Runtime& rt, const CompletionResult& result) {
   jsi::Object jsResult(rt);
 
 
-  if (withJinja) {
+  if (rn_ctx_->params.use_jinja) {
     // should parse the result.content as a json object
     try {
       // Check if the content might be JSON
@@ -456,7 +477,7 @@ jsi::Value LlamaCppModel::completionJsi(jsi::Runtime& rt, const jsi::Value* args
     CompletionResult result = completion(options, partialCallback, &rt);
     
     // Convert the result to a JSI object using our helper
-    return completionResultToJsi(rt, result, options.use_jinja);
+    return completionResultToJsi(rt, result);
   } catch (const std::exception& e) {
     throw jsi::JSError(rt, e.what());
   }
