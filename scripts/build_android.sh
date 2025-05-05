@@ -29,6 +29,7 @@ print_usage() {
   echo "  --clean-prebuilt       Clean entire prebuilt directory for a fresh start"
   echo "  --install-deps         Install dependencies (OpenCL, etc.)"
   echo "  --install-ndk          Install Android NDK version $NDK_VERSION"
+  echo "  --glslc-path=[path]    Specify a custom path to the GLSLC compiler"
 }
 
 # Default values
@@ -40,6 +41,7 @@ CLEAN_BUILD=false
 CLEAN_PREBUILT=false
 INSTALL_DEPS=false
 INSTALL_NDK=false
+CUSTOM_GLSLC_PATH=""
 
 # Parse arguments
 for arg in "$@"; do
@@ -74,6 +76,9 @@ for arg in "$@"; do
       ;;
     --install-ndk)
       INSTALL_NDK=true
+      ;;
+    --glslc-path=*)
+      CUSTOM_GLSLC_PATH="${arg#*=}"
       ;;
     *)
       echo -e "${RED}Unknown argument: $arg${NC}"
@@ -330,11 +335,21 @@ if [ "$INSTALL_DEPS" = true ]; then
         fi
       fi
       
-      # Setup Vulkan shader generation using GLSLC - crucial for cross-compilation
+      # Setup Vulkan shader compilation with GLSLC - crucial for cross-compilation
       echo -e "${YELLOW}Setting up Vulkan shader compiler (GLSLC)...${NC}"
       
-      # First, check if GLSLC_EXECUTABLE is already set from the environment
-      if [ -n "$GLSLC_EXECUTABLE" ] && [ -f "$GLSLC_EXECUTABLE" ]; then
+      # First, check if a custom GLSLC path was provided
+      if [ -n "$CUSTOM_GLSLC_PATH" ]; then
+        if [ -f "$CUSTOM_GLSLC_PATH" ]; then
+          echo -e "${GREEN}Using custom GLSLC: $CUSTOM_GLSLC_PATH${NC}"
+          GLSLC_EXECUTABLE="$CUSTOM_GLSLC_PATH"
+          chmod +x "$GLSLC_EXECUTABLE" || true
+        else
+          echo -e "${RED}Custom GLSLC path provided but file does not exist: $CUSTOM_GLSLC_PATH${NC}"
+          GLSLC_EXECUTABLE=""
+        fi
+      # If not, try to find GLSLC in the environment
+      elif [ -n "$GLSLC_EXECUTABLE" ] && [ -f "$GLSLC_EXECUTABLE" ]; then
         echo -e "${GREEN}Using GLSLC from environment: $GLSLC_EXECUTABLE${NC}"
         chmod +x "$GLSLC_EXECUTABLE" || true
       else
@@ -356,14 +371,38 @@ if [ "$INSTALL_DEPS" = true ]; then
         # If we didn't find GLSLC in the standard location, search more broadly
         if [ -z "$GLSLC_EXECUTABLE" ]; then
           echo -e "${YELLOW}Searching for GLSLC in the NDK...${NC}"
-          GLSLC_EXECUTABLE=$(find "$NDK_PATH" -name "glslc" -type f -executable | head -1)
+          
+          # Use different find syntax based on OS
+          if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS version - doesn't support -executable flag
+            GLSLC_EXECUTABLE=$(find "$NDK_PATH" -name "glslc" -type f -perm +111 2>/dev/null | head -1)
+          else
+            # Linux version
+            GLSLC_EXECUTABLE=$(find "$NDK_PATH" -name "glslc" -type f -executable 2>/dev/null | head -1)
+          fi
           
           if [ -n "$GLSLC_EXECUTABLE" ]; then
             echo -e "${GREEN}Found GLSLC at: $GLSLC_EXECUTABLE${NC}"
             chmod +x "$GLSLC_EXECUTABLE" || true
           else
             echo -e "${YELLOW}GLSLC not found in NDK, will use system GLSLC if available${NC}"
-            GLSLC_EXECUTABLE=$(which glslc || echo "")
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+              # Try standard macOS locations
+              for path in "/usr/local/bin/glslc" "/opt/homebrew/bin/glslc" "/usr/bin/glslc"; do
+                if [ -f "$path" ]; then
+                  GLSLC_EXECUTABLE="$path"
+                  echo -e "${GREEN}Found system GLSLC at: $GLSLC_EXECUTABLE${NC}"
+                  break
+                fi
+              done
+              
+              if [ -z "$GLSLC_EXECUTABLE" ]; then
+                GLSLC_EXECUTABLE=$(which glslc 2>/dev/null || echo "")
+              fi
+            else
+              # Try which on Linux
+              GLSLC_EXECUTABLE=$(which glslc 2>/dev/null || echo "")
+            fi
             
             if [ -z "$GLSLC_EXECUTABLE" ]; then
               echo -e "${RED}GLSLC not found in system. This may cause issues with Vulkan shader compilation.${NC}"
@@ -605,11 +644,21 @@ setup_vulkan() {
       fi
     fi
     
-    # Setup Vulkan shader generation using GLSLC - crucial for cross-compilation
+    # Setup Vulkan shader compilation with GLSLC - crucial for cross-compilation
     echo -e "${YELLOW}Setting up Vulkan shader compiler (GLSLC)...${NC}"
     
-    # First, check if GLSLC_EXECUTABLE is already set from the environment
-    if [ -n "$GLSLC_EXECUTABLE" ] && [ -f "$GLSLC_EXECUTABLE" ]; then
+    # First, check if a custom GLSLC path was provided
+    if [ -n "$CUSTOM_GLSLC_PATH" ]; then
+      if [ -f "$CUSTOM_GLSLC_PATH" ]; then
+        echo -e "${GREEN}Using custom GLSLC: $CUSTOM_GLSLC_PATH${NC}"
+        GLSLC_EXECUTABLE="$CUSTOM_GLSLC_PATH"
+        chmod +x "$GLSLC_EXECUTABLE" || true
+      else
+        echo -e "${RED}Custom GLSLC path provided but file does not exist: $CUSTOM_GLSLC_PATH${NC}"
+        GLSLC_EXECUTABLE=""
+      fi
+    # If not, try to find GLSLC in the environment
+    elif [ -n "$GLSLC_EXECUTABLE" ] && [ -f "$GLSLC_EXECUTABLE" ]; then
       echo -e "${GREEN}Using GLSLC from environment: $GLSLC_EXECUTABLE${NC}"
       chmod +x "$GLSLC_EXECUTABLE" || true
     else
@@ -631,14 +680,38 @@ setup_vulkan() {
       # If we didn't find GLSLC in the standard location, search more broadly
       if [ -z "$GLSLC_EXECUTABLE" ]; then
         echo -e "${YELLOW}Searching for GLSLC in the NDK...${NC}"
-        GLSLC_EXECUTABLE=$(find "$NDK_PATH" -name "glslc" -type f -executable | head -1)
+        
+        # Use different find syntax based on OS
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+          # macOS version - doesn't support -executable flag
+          GLSLC_EXECUTABLE=$(find "$NDK_PATH" -name "glslc" -type f -perm +111 2>/dev/null | head -1)
+        else
+          # Linux version
+          GLSLC_EXECUTABLE=$(find "$NDK_PATH" -name "glslc" -type f -executable 2>/dev/null | head -1)
+        fi
         
         if [ -n "$GLSLC_EXECUTABLE" ]; then
           echo -e "${GREEN}Found GLSLC at: $GLSLC_EXECUTABLE${NC}"
           chmod +x "$GLSLC_EXECUTABLE" || true
         else
           echo -e "${YELLOW}GLSLC not found in NDK, will use system GLSLC if available${NC}"
-          GLSLC_EXECUTABLE=$(which glslc || echo "")
+          if [[ "$OSTYPE" == "darwin"* ]]; then
+            # Try standard macOS locations
+            for path in "/usr/local/bin/glslc" "/opt/homebrew/bin/glslc" "/usr/bin/glslc"; do
+              if [ -f "$path" ]; then
+                GLSLC_EXECUTABLE="$path"
+                echo -e "${GREEN}Found system GLSLC at: $GLSLC_EXECUTABLE${NC}"
+                break
+              fi
+            done
+            
+            if [ -z "$GLSLC_EXECUTABLE" ]; then
+              GLSLC_EXECUTABLE=$(which glslc 2>/dev/null || echo "")
+            fi
+          else
+            # Try which on Linux
+            GLSLC_EXECUTABLE=$(which glslc 2>/dev/null || echo "")
+          fi
           
           if [ -z "$GLSLC_EXECUTABLE" ]; then
             echo -e "${RED}GLSLC not found in system. This may cause issues with Vulkan shader compilation.${NC}"
