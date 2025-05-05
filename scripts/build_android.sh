@@ -7,7 +7,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 # Source the version information
-. "$SCRIPT_DIR/build_tool_versions.sh"
+. "$SCRIPT_DIR/used_version.sh"
 
 # Colors for output
 RED='\033[0;31m'
@@ -26,6 +26,7 @@ print_usage() {
   echo "  --vulkan               Enable Vulkan GPU acceleration (default)"
   echo "  --debug                Build in debug mode"
   echo "  --clean                Clean previous builds before building"
+  echo "  --clean-prebuilt       Clean entire prebuilt directory for a fresh start"
   echo "  --install-deps         Install dependencies (OpenCL, etc.)"
   echo "  --install-ndk          Install Android NDK version $NDK_VERSION"
 }
@@ -36,6 +37,7 @@ BUILD_OPENCL=true
 BUILD_VULKAN=true  # Enable Vulkan by default
 BUILD_TYPE="Release"
 CLEAN_BUILD=false
+CLEAN_PREBUILT=false
 INSTALL_DEPS=false
 INSTALL_NDK=false
 
@@ -64,6 +66,9 @@ for arg in "$@"; do
     --clean)
       CLEAN_BUILD=true
       ;;
+    --clean-prebuilt)
+      CLEAN_PREBUILT=true
+      ;;
     --install-deps)
       INSTALL_DEPS=true
       ;;
@@ -78,6 +83,11 @@ for arg in "$@"; do
   esac
 done
 
+# Define prebuilt directory for all intermediary files
+PREBUILT_DIR="$PROJECT_ROOT/prebuilt"
+PREBUILT_LIBS_DIR="$PREBUILT_DIR/libs"
+PREBUILT_EXTERNAL_DIR="$PREBUILT_LIBS_DIR/external"
+
 # Define directories
 ANDROID_DIR="$PROJECT_ROOT/android"
 ANDROID_JNI_DIR="$ANDROID_DIR/src/main/jniLibs"
@@ -85,16 +95,19 @@ ANDROID_CPP_DIR="$ANDROID_DIR/src/main/cpp"
 CPP_DIR="$PROJECT_ROOT/cpp"
 LLAMA_CPP_DIR="$CPP_DIR/llama.cpp"
 
-# Third-party directories
-THIRD_PARTY_DIR="$PROJECT_ROOT/third_party"
+# Third-party directories in prebuilt directory
+THIRD_PARTY_DIR="$PREBUILT_DIR/third_party"
 OPENCL_HEADERS_DIR="$THIRD_PARTY_DIR/OpenCL-Headers"
 OPENCL_LOADER_DIR="$THIRD_PARTY_DIR/OpenCL-ICD-Loader"
-OPENCL_INCLUDE_DIR="$THIRD_PARTY_DIR/opencl/include"
-OPENCL_LIB_DIR="$THIRD_PARTY_DIR/opencl/lib"
+OPENCL_INCLUDE_DIR="$PREBUILT_EXTERNAL_DIR/opencl/include"
+OPENCL_LIB_DIR="$PREBUILT_EXTERNAL_DIR/opencl/lib"
 VULKAN_HEADERS_DIR="$THIRD_PARTY_DIR/Vulkan-Headers"
-VULKAN_INCLUDE_DIR="$THIRD_PARTY_DIR/vulkan/include"
+VULKAN_INCLUDE_DIR="$PREBUILT_EXTERNAL_DIR/vulkan/include"
 
 # Create necessary directories
+mkdir -p "$PREBUILT_DIR"
+mkdir -p "$PREBUILT_LIBS_DIR"
+mkdir -p "$PREBUILT_EXTERNAL_DIR"
 mkdir -p "$ANDROID_JNI_DIR/arm64-v8a"
 mkdir -p "$ANDROID_JNI_DIR/x86_64"
 mkdir -p "$ANDROID_CPP_DIR/include"
@@ -487,12 +500,28 @@ fi
 # Verify llama.cpp exists
 if [ ! -d "$LLAMA_CPP_DIR" ]; then
   echo -e "${RED}llama.cpp not found at $LLAMA_CPP_DIR${NC}"
-  echo -e "${YELLOW}Running llama_cpp_version.sh to initialize it...${NC}"
-  "$SCRIPT_DIR/llama_cpp_version.sh" init
+  echo -e "${YELLOW}Running setupLlamaCpp.sh to initialize it...${NC}"
+  "$SCRIPT_DIR/setupLlamaCpp.sh" init
   if [ ! -d "$LLAMA_CPP_DIR" ]; then
     echo -e "${RED}Failed to initialize llama.cpp${NC}"
     exit 1
   fi
+fi
+
+# Check that we're using the correct version
+if [ -d "$LLAMA_CPP_DIR/.git" ]; then
+  cd "$LLAMA_CPP_DIR"
+  CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "none")
+  cd - > /dev/null
+  
+  if [ "$CURRENT_COMMIT" != "$LLAMA_CPP_COMMIT" ]; then
+    echo -e "${YELLOW}llama.cpp is at commit $CURRENT_COMMIT, but we need $LLAMA_CPP_COMMIT${NC}"
+    echo -e "${YELLOW}Running setupLlamaCpp.sh to update it...${NC}"
+    "$SCRIPT_DIR/setupLlamaCpp.sh" init
+  fi
+else
+  echo -e "${YELLOW}llama.cpp is not a git repository. Running setupLlamaCpp.sh to properly initialize it...${NC}"
+  "$SCRIPT_DIR/setupLlamaCpp.sh" init
 fi
 
 # Copy necessary headers
@@ -654,7 +683,7 @@ build_for_abi() {
   local ABI=$1
   echo -e "${YELLOW}Building for $ABI...${NC}"
   
-  local BUILD_DIR="$PROJECT_ROOT/build-android-$ABI"
+  local BUILD_DIR="$PREBUILT_DIR/build-android-$ABI"
   
   # Clean build directory if requested
   if [ "$CLEAN_BUILD" = true ] && [ -d "$BUILD_DIR" ]; then
@@ -920,6 +949,7 @@ EOF
     
     # Create the shared library
     echo -e "${YELLOW}Creating shared library with: $CLANG_EXEC${NC}"
+    # Place the intermediate shared library in the prebuilt directory
     if ! "$CLANG_EXEC" $COMPILER_FLAGS -shared -fPIC -o "$BUILD_DIR/libllama.so" \
       -Wl,--whole-archive $LIBS_STRING \
       -Wl,--no-whole-archive -landroid -llog $OPENCL_LINK_ARG $VULKAN_LINK_ARG; then
@@ -928,14 +958,30 @@ EOF
       exit 1
     fi
     
-    # Copy library to JNI directory
+    # Copy library to JNI directory (keep final libraries in original location)
     cp "$BUILD_DIR/libllama.so" "$ANDROID_JNI_DIR/$ABI/"
     echo -e "${GREEN}✅ Successfully built libllama.so for $ABI${NC}"
+    echo -e "${GREEN}✅ Final library copied to $ANDROID_JNI_DIR/$ABI/libllama.so${NC}"
   else
     echo -e "${RED}❌ Failed to build static library for $ABI${NC}"
     exit 1
   fi
 }
+
+# Clean prebuilt directory if requested
+if [ "$CLEAN_PREBUILT" = true ]; then
+  echo -e "${YELLOW}Cleaning entire prebuilt directory for a fresh start...${NC}"
+  rm -rf "$PREBUILT_DIR"
+  echo -e "${GREEN}Prebuilt directory cleaned${NC}"
+  
+  # Recreate essential directories
+  mkdir -p "$PREBUILT_DIR"
+  mkdir -p "$PREBUILT_LIBS_DIR"
+  mkdir -p "$PREBUILT_EXTERNAL_DIR"
+  mkdir -p "$OPENCL_INCLUDE_DIR"
+  mkdir -p "$OPENCL_LIB_DIR"
+  mkdir -p "$VULKAN_INCLUDE_DIR"
+fi
 
 # Start the build process
 echo -e "${YELLOW}Starting Android build process...${NC}"
@@ -991,6 +1037,12 @@ if [ -f "$ANDROID_JNI_DIR/arm64-v8a/libllama.so" ]; then
     fi
   fi
 fi
+
+# Information about directories
+echo -e "${YELLOW}=== Directory Information ===${NC}"
+echo -e "Final library files: ${GREEN}$ANDROID_JNI_DIR/${NC}"
+echo -e "Build intermediates: ${GREEN}$PREBUILT_DIR/${NC}"
+echo -e "External dependencies: ${GREEN}$PREBUILT_EXTERNAL_DIR/${NC}"
 
 echo -e "${YELLOW}=======================${NC}"
 

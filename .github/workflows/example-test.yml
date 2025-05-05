@@ -87,25 +87,8 @@ jobs:
       - name: Setup llama.cpp
         if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
         run: |
-          chmod +x scripts/llama_cpp_version.sh
-          scripts/llama_cpp_version.sh init
-      
-      - name: Verify iOS Framework
-        if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
-        run: |
-          if [ ! -d "ios/libs/llamacpp.xcframework" ]; then
-            echo "iOS framework not found, downloading..."
-            chmod +x scripts/download_prebuilt.sh
-            scripts/download_prebuilt.sh ios
-          fi
-          
-          # Verify the XCFramework is available
-          if [ -d "ios/libs/llamacpp.xcframework" ]; then
-            echo "✅ XCFramework available for integration"
-          else
-            echo "❌ XCFramework not found at ios/libs/llamacpp.xcframework"
-            exit 1
-          fi
+          chmod +x scripts/llama_cpp_source.sh
+          scripts/llama_cpp_source.sh init
       
       - name: Build TypeScript Files
         if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
@@ -213,8 +196,8 @@ jobs:
       - name: Setup llama.cpp Repository
         if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
         run: |
-          chmod +x scripts/llama_cpp_version.sh
-          scripts/llama_cpp_version.sh init
+          chmod +x scripts/llama_cpp_source.sh
+          scripts/llama_cpp_source.sh init
           
           # Verify the repository is available
           if [ -d "cpp/llama.cpp" ]; then

@@ -4,14 +4,6 @@
 
 set -e
 
-# The specific llama.cpp commit hash we want to use
-# Using a specific commit hash ensures a consistent build
-LLAMA_CPP_COMMIT="2f567611c0234bbca0a4009762acb47b56866095"  # Commit as specified by user
-
-# The tag to use for prebuilt binaries
-# This might differ from the commit hash format
-LLAMA_CPP_TAG="b5265"  # Tag format for binary downloads
-
 # Path to the llama.cpp submodule
 LLAMA_CPP_DIR="cpp/llama.cpp"
 

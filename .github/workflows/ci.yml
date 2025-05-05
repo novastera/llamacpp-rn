@@ -17,7 +17,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          submodules: false  # We'll handle submodules through the postinstall script
+          submodules: false  # We'll handle llama.cpp setup with our scripts
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -75,11 +75,11 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Create prebuilt directory
+        run: mkdir -p prebuilt
+
       - name: Install Android NDK and Dependencies
         run: |
-          # Make scripts executable
-          chmod +x scripts/*.sh
-          
           # Install NDK first
           scripts/build_android.sh --install-ndk
  
@@ -168,6 +168,13 @@ jobs:
             fi
           fi
       
+      - name: Upload Android Library Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-libraries
+          path: android/src/main/jniLibs/
+          retention-days: 1
+          
       - name: Validate Android Library Structure
         run: |
           # Check if basic structure exists
@@ -207,15 +214,29 @@ jobs:
         run: |
           chmod +x scripts/*.sh
       
-      - name: Validate iOS Setup
+      - name: Setup iOS Framework
         run: |
-          # Verify the framework
-          if [ ! -d "ios/libs/llamacpp.xcframework" ]; then
-            echo "❌ iOS framework not found at ios/libs/llamacpp.xcframework"
+          # Initialize the llama.cpp repository
+          scripts/setupLlamaCpp.sh init
+          
+          # Verify the iOS xcframework was set up correctly
+          if [ ! -d "ios/framework/build-apple/llama.xcframework" ]; then
+            echo "❌ iOS framework not found at ios/framework/build-apple/llama.xcframework"
             exit 1
           else
-            echo "✅ iOS framework verified"
+            echo "✅ iOS framework downloaded successfully"
+            
+            # List available slices
+            echo "Available iOS framework slices:"
+            ls -la ios/framework/build-apple/llama.xcframework/
           fi
+      
+      - name: Upload iOS Framework Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-framework
+          path: ios/framework/build-apple/llama.xcframework/
+          retention-days: 1
       
       - name: Validate iOS Podspec
         run: |
@@ -248,6 +269,18 @@ jobs:
         with:
           name: repo-state
           path: .
+          
+      - name: Download Android Libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: android-libraries
+          path: android/src/main/jniLibs/
+          
+      - name: Download iOS Framework
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-framework
+          path: ios/framework/build-apple/llama.xcframework/
       
       - name: Restore file permissions
         run: |
