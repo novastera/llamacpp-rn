@@ -52,7 +52,6 @@ LlamaCppModel::~LlamaCppModel() {
 }
 
 void LlamaCppModel::release() {
-  std::lock_guard<std::mutex> lock(mutex_);
   
   // Cancel any ongoing predictions
   if (is_predicting_) {
@@ -155,7 +154,6 @@ std::vector<int32_t> LlamaCppModel::tokenize(const std::string& text) {
 }
 
 std::vector<float> LlamaCppModel::embedding(const std::string& text) {
-  std::lock_guard<std::mutex> lock(mutex_);
   
   if (!model_ || !ctx_) {
     throw std::runtime_error("Model or context not initialized");
@@ -441,9 +439,7 @@ CompletionOptions LlamaCppModel::parseCompletionOptions(jsi::Runtime& rt, const 
 }
 
 // Modify the completion function to use this helper
-CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std::function<void(jsi::Runtime&, const char*)> partialCallback, jsi::Runtime* runtime) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  
+CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std::function<void(jsi::Runtime&, const char*)> partialCallback, jsi::Runtime* runtime) {  
   if (!model_ || !ctx_) {
     CompletionResult result;
     result.content = "";
@@ -452,7 +448,8 @@ CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std
     result.error_type = RN_ERROR_MODEL_LOAD;
     return result;
   }
-  
+  // Clear the context KV cache
+  llama_kv_self_clear(ctx_);
   // Create a temporary rn_llama_context that wraps our model and context
   rn_llama_context rn_ctx;
   rn_ctx.model = model_;
