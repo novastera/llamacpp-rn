@@ -336,13 +336,6 @@ CompletionResult run_chat_completion(
         return result;
     }
     //should be in the model init TOMOVE
-    rn_ctx->chat_templates = common_chat_templates_init(rn_ctx->model, options.chat_template);
-    try {
-      common_chat_format_example(rn_ctx->chat_templates.get(), options.use_jinja);
-    } catch (const std::exception & e) {
-      // Log warning
-      rn_ctx->chat_templates = common_chat_templates_init(rn_ctx->model, "chatml");
-    }
     try {
         // Convert chat options to JSON
         json data = options.to_chat_json();

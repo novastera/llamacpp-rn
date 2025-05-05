@@ -97,7 +97,7 @@ private:
   CompletionOptions parseCompletionOptions(jsi::Runtime& rt, const jsi::Object& obj);
 
   // Helper to convert completion result to JSI object
-  jsi::Object completionResultToJsi(jsi::Runtime& rt, const CompletionResult& result, bool withJinja = false);
+  jsi::Object completionResultToJsi(jsi::Runtime& rt, const CompletionResult& result);
 
   // Initialize utility functions and handlers
   void initHelpers();
