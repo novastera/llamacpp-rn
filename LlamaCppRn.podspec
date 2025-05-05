@@ -41,6 +41,7 @@ Pod::Spec.new do |s|
                    "cpp/llama.cpp/common/minja/minja.hpp",
                    "cpp/llama.cpp/llama.cpp",
                    "cpp/llama.cpp/common/json.hpp",
+                   "cpp/llama.cpp/common/base64.hpp",
                    "cpp/llama.cpp/common/speculative.cpp",
                    "cpp/llama.cpp/common/speculative.h"
                    

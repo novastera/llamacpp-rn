@@ -23,13 +23,17 @@ export function loadLlamaModelInfo(
   n_context: number;
   n_embd: number;
   description: string;
+  gpuSupported: boolean;
+  optimalGpuLayers?: number;
+  quant_type?: string;
+  architecture?: string;
 }> {
   return LlamaCppRn.loadLlamaModelInfo(modelPath);
 }
 
 // Function to convert JSON Schema to GBNF grammar
-export function jsonSchemaToGbnf(schema: Record<string, any>): Promise<string> {
-  return LlamaCppRn.jsonSchemaToGbnf(schema);
+export function jsonSchemaToGbnf(params: { schema: string }): Promise<string> {
+  return LlamaCppRn.jsonSchemaToGbnf(params);
 }
 
 // Export types for users of the module
@@ -40,4 +44,5 @@ export type {
   LlamaMessage,
   LlamaTool,
   LlamaContextType,
+  LlamaContextMethods,
 };
