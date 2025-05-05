@@ -78,7 +78,6 @@ export interface LlamaCompletionParams {
   chat_template?: string;      // optional chat template name to use
 
   // Tool calling parameters
-  jinja?: boolean;             // Enable Jinja template parser
   tool_choice?: string | 'auto' | 'none'; // Tool choice mode
   tools?: LlamaTool[];         // Available tools
 
@@ -162,7 +161,7 @@ export interface LlamaContextMethods {
   }): Promise<{
     tokens: (number | {id: number, piece: string | number[]})[]
   }>;
-  
+
   // New detokenize method
   detokenize(options: {
     tokens: number[]
