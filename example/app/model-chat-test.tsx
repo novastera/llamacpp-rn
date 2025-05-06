@@ -344,13 +344,13 @@ export default function ModelChatTest() {
     type: 'function',
     function: {
       name: 'weather',
-      description: 'Gets the weather from a specific city',
+      description: 'Gets the current weather information for a specific city',
       parameters: {
         type: 'object',
         properties: {
           city: {
             type: 'string',
-            description: 'The city for the weather.',
+            description: 'The city name for which to get weather information',
           },
         },
         required: ['city'],
@@ -358,9 +358,6 @@ export default function ModelChatTest() {
     },
   };
 
-  // Weather system prompt
-  const weatherSystemPrompt = 'You are a helpful assistant that can give the weather in a specific city. If the user asks for weather and a city is not provided, you must ask which city they want. If the city is provided make the call to the weather tool.';
-  
   // Handle tool call
   const handleToolCall = async (toolCall: any) => {
     console.log('Tool call received:', toolCall);
@@ -408,6 +405,29 @@ export default function ModelChatTest() {
     }
   };
 
+  // Handle model loaded event
+  const handleModelLoaded = (state: ModelState) => {
+    // Set appropriate initial system message based on mode
+    let initialMessages: Message[] = [];
+    
+    if (state.mode === 'tools') {
+      // System message for the weather tool
+      initialMessages = [{
+        role: 'system',
+        content: 'You are a helpful assistant that can access the current weather information. When a user asks about the weather in a specific city, use the weather tool to fetch that information. If no city is specified, ask the user which city they want to know about.'
+      }];
+    } else {
+      // Default system message
+      initialMessages = [{
+        role: 'system',
+        content: 'You are a helpful AI assistant.'
+      }];
+    }
+    
+    setMessages(initialMessages);
+    setModelState(state);
+  };
+
   // Handle model unload
   const handleUnload = async () => {
     if (modelState?.instance) {
@@ -447,76 +467,71 @@ export default function ModelChatTest() {
     setStreamingTokens([]);
     
     try {
-      const formattedMessages = [...messages, userMessage];
+      // Get current messages including the new user message
+      const currentMessages = [...messages, userMessage];
       
       const completionOptions: any = {
-        messages: formattedMessages,
+        messages: currentMessages,
         temperature: 0.3,
         top_p: 0.85,
         top_k: 40,
         max_tokens: 400,
         stop: ["</s>", "<|im_end|>", "<|eot_id|>"],
-        n_gpu_layers: 0,
       };
-
+      
+      // Add tools and tool configuration only in tools mode
       if (modelState.mode === 'tools') {
         completionOptions.tools = [weatherTool];
-        completionOptions.jinja = true;
         completionOptions.tool_choice = "auto";
       }
 
+      // Get the initial assistant response
       const response = await modelState.instance.completion(
         completionOptions,
         (data: { token: string }) => {
-          console.log('Streaming token received:', {
-            token: data.token,
-            timestamp: new Date().toISOString(),
-            tokenLength: data.token.length
-          });
-          handleStreamingToken(data.token);
+          //handleStreamingToken(data.token);
         }
       );
 
+      console.log('Response with tool calls:', response);
+
+      // Add the assistant response to the messages
+      const assistantMessage: Message = { 
+        role: 'assistant', 
+        content: response.text || 'Sorry, I couldn\'t generate a response.' 
+      };
+      
+      // Check if there are tool calls to process
       if (response.tool_calls && response.tool_calls.length > 0) {
         // Add assistant message with the tool call request
-        const assistantMessage: Message = { 
-          role: 'assistant', 
-          content: response.text || 'I need to use a tool to answer that.'
-        };
         setMessages(prev => [...prev, assistantMessage]);
         
-        // Handle each tool call sequentially
-        const toolResponses = [];
+        // Process all tool calls sequentially
+        const toolMessages: Message[] = [];
+        
         for (const toolCall of response.tool_calls) {
-          console.log('Processing tool call:', toolCall);
           const toolResponse = await handleToolCall(toolCall);
-          toolResponses.push(toolResponse);
+          toolMessages.push(toolResponse);
         }
         
-        // Now get a follow-up response from the model with the tool results
+        // Add all tool responses to messages
+        setMessages(prev => [...prev, ...toolMessages]);
+        
+        // Now get a follow-up response with the tool results included
         const allMessages = [
-          ...messages, 
-          userMessage, 
+          ...currentMessages,
           assistantMessage,
-          ...toolResponses
+          ...toolMessages
         ];
         
-        console.log('Getting final response with tool results. Message count:', allMessages.length);
-        
-        // Get the final response
+        // Make a second completion call with the tool results
         const finalResponse = await modelState.instance.completion({
           ...completionOptions,
           messages: allMessages,
         },
         (data: { token: string }) => {
-          console.log('Final response token received:', {
-            token: data.token,
-            timestamp: new Date().toISOString(),
-            tokenLength: data.token.length
-          });
           handleStreamingToken(data.token);
         });
-        
         // Add the final assistant response
         const finalMessage: Message = { 
           role: 'assistant', 
@@ -524,10 +539,7 @@ export default function ModelChatTest() {
         };
         setMessages(prev => [...prev, finalMessage]);
       } else {
-        const assistantMessage: Message = { 
-          role: 'assistant', 
-          content: response.text || 'Sorry, I couldn\'t generate a response.' 
-        };
+        // No tool calls - just add the assistant message
         setMessages(prev => [...prev, assistantMessage]);
       }
     } catch (err) {
@@ -711,7 +723,7 @@ export default function ModelChatTest() {
   // Render the appropriate interface based on model state and mode
   const renderInterface = () => {
     if (!modelState) {
-      return <ModelLoader onModelLoaded={setModelState} />;
+      return <ModelLoader onModelLoaded={handleModelLoaded} />;
     }
 
     return (
