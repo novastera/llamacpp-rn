@@ -4,6 +4,7 @@
 #include "chat.h"
 #include "llama.h"
 #include "sampling.h"
+#include "rn-utils.hpp"  // For gen_tool_call_id
 
 #include <string>
 #include <vector>
@@ -64,6 +65,10 @@ struct completion_state {
     common_sampler* sampler = nullptr;
     std::vector<std::string> antiprompt; // Storing stop words here
     
+    // Chat format and tools info
+    int chat_format = -1;  // Store the chat format for proper parsing
+    common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;  // Default to auto
+
     ~completion_state() {
         if (sampler) {
             common_sampler_free(sampler);
@@ -171,8 +176,20 @@ CompletionResult run_completion(
         state.n_ctx = llama_n_ctx(rn_ctx->ctx);
         state.n_predict = options.n_predict > 0 ? options.n_predict : params.n_predict;
         state.n_remaining = state.n_predict;
-        state.stream = options.stream;
         
+        // Initialize tool-related fields in state
+        if (data.contains("chat_format")) {
+            state.chat_format = data["chat_format"].get<int>();
+        }
+        
+        // Parse tool_choice
+        if (options.tool_choice == "auto") {
+            state.tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
+        } else if (options.tool_choice == "none") {
+            state.tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE;
+        } else if (options.tool_choice == "required") {
+            state.tool_choice = COMMON_CHAT_TOOL_CHOICE_REQUIRED;
+        }
         // Initialize the sampler
         state.sampler = common_sampler_init(rn_ctx->model, params.sampling);
         if (!state.sampler) {
@@ -270,7 +287,7 @@ CompletionResult run_completion(
             bool should_stop = check_stop_conditions(state, state.antiprompt, token_text, options.ignore_eos);
             
             // Handle stream mode
-            if (state.stream && callback && !should_stop) {
+            if (callback && !should_stop) {
                 std::string text_to_send = state.generated_text.substr(state.n_sent_text);
                 state.n_sent_text = state.generated_text.size();
                 
@@ -309,7 +326,7 @@ CompletionResult run_completion(
         
         // Final callback with is_done=true
         if (callback) {
-            callback(state.stream ? "" : state.generated_text, true);
+            callback(state.generated_text, true);
         }
         
         return result;

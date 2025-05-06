@@ -84,6 +84,11 @@ struct CompletionOptions {
             j["grammar"] = grammar;
             j["grammar_lazy"] = grammar_lazy;
         }
+        // Add tools and tool_choice if available
+        if (!tools.empty()) {
+            j["tools"] = tools;
+            j["tool_choice"] = tool_choice;
+        }
         return j;
     }
 
@@ -113,6 +118,11 @@ struct CompletionOptions {
             j["chat_template"] = chat_template;
         }
         
+        // Add tools and tool_choice if available
+        if (!tools.empty()) {
+            j["tools"] = tools;
+            j["tool_choice"] = tool_choice;
+        }
         return j;
     }
 };
@@ -447,12 +457,8 @@ static json oaicompat_completion_params_parse(
     json llama_params;
 
     auto tools = json_value(body, "tools", json());
-    auto stream = json_value(body, "stream", false);
 
     if (tools.is_array() && !tools.empty()) {
-        if (stream) {
-            throw std::runtime_error("Cannot use tools with stream");
-        }
         if (!use_jinja) {
             throw std::runtime_error("tools param requires --jinja flag");
         }
