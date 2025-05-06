@@ -169,8 +169,8 @@ const findModel = async (): Promise<string | null> => {
     
     // Try both models, but prioritize Llama-3.2-1B over Mistral
     const modelNames = [
+      'Mistral-7B-Instruct-v0.3.Q4_K_M.gguf',   // Mistral as fallback
       'Llama-3.2-1B-Instruct-Q4_K_M.gguf',     // Now prioritizing Llama-3.2-1B
-      'Mistral-7B-Instruct-v0.3.Q4_K_M.gguf'   // Mistral as fallback
     ];
     
     // Try each model in our preferred order
@@ -489,7 +489,7 @@ export default function ModelChatTest() {
       const response = await modelState.instance.completion(
         completionOptions,
         (data: { token: string }) => {
-          //handleStreamingToken(data.token);
+          handleStreamingToken(data.token);
         }
       );
 
