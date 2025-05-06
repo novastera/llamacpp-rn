@@ -484,7 +484,7 @@ export default function ModelChatTest() {
         completionOptions.tools = [weatherTool];
         completionOptions.tool_choice = "auto";
       }
-
+      console.log('Completion options:', completionOptions);
       // Get the initial assistant response
       const response = await modelState.instance.completion(
         completionOptions,
@@ -528,6 +528,9 @@ export default function ModelChatTest() {
         const finalResponse = await modelState.instance.completion({
           ...completionOptions,
           messages: allMessages,
+          // Disable tools for the final response to prevent infinite loops
+          tools: undefined,
+          tool_choice: undefined
         },
         (data: { token: string }) => {
           handleStreamingToken(data.token);

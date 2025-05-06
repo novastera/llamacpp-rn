@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "llama.h"
+#include "chat.h"
 #include "rn-utils.hpp"
 
 #include <functional>
@@ -16,10 +17,18 @@ struct llama_vocab;
 
 namespace facebook::react {
 
-// rn-completion context adapter structure
+// Extend common_params with additional fields needed by our implementation
+struct rn_common_params : common_params {
+    bool debug = false;
+    common_chat_format chat_format = COMMON_CHAT_FORMAT_CONTENT_ONLY;
+    common_reasoning_format reasoning_format = COMMON_REASONING_FORMAT_NONE;
+    bool use_jinja = false;
+};
+
+// Main context structure for React Native integration
 struct rn_llama_context {
-    // Model parameters
-    common_params params;
+    // Model parameters - use our extended params structure
+    rn_common_params params;
     
     // Core llama.cpp components
     llama_model* model = nullptr;

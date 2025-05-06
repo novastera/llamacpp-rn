@@ -393,49 +393,76 @@ CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std
 jsi::Object LlamaCppModel::completionResultToJsi(jsi::Runtime& rt, const CompletionResult& result) {
   jsi::Object jsResult(rt);
 
-
-  if (rn_ctx_->params.use_jinja) {
-    // should parse the result.content as a json object
+  if (rn_ctx_ && rn_ctx_->params.use_jinja && result.success) {
     try {
-      // Check if the content might be JSON
-      if (!result.content.empty() && result.content[0] == '{') {
-        // Try to parse as JSON
-        json content_json = json::parse(result.content);
+      // Use the stored chat format from params
+      common_chat_format format = rn_ctx_->params.chat_format;
+      
+      // Parse the response using llama.cpp's chat parser
+      common_chat_msg parsed = common_chat_parse(result.content, format);
+      
+      // Check if we have tool calls
+      if (!parsed.tool_calls.empty()) {
+        // Create a JSI array of tool calls
+        jsi::Array toolCallsArray(rt, parsed.tool_calls.size());
         
-        // Convert parsed JSON to JSI object
-        // Option 1: Add all properties from the JSON to the result object
-        for (auto& [key, value] : content_json.items()) {
-          if (value.is_string()) {
-            jsResult.setProperty(rt, key.c_str(), jsi::String::createFromUtf8(rt, value.get<std::string>()));
-          } else if (value.is_number_integer()) {
-            jsResult.setProperty(rt, key.c_str(), jsi::Value(value.get<int>()));
-          } else if (value.is_number_float()) {
-            jsResult.setProperty(rt, key.c_str(), jsi::Value(value.get<double>()));
-          } else if (value.is_boolean()) {
-            jsResult.setProperty(rt, key.c_str(), jsi::Value(value.get<bool>()));
-          } else if (value.is_object() || value.is_array()) {
-            // For nested objects/arrays, convert to string
-            jsResult.setProperty(rt, key.c_str(), jsi::String::createFromUtf8(rt, value.dump()));
+        for (size_t i = 0; i < parsed.tool_calls.size(); i++) {
+          const auto& tool_call = parsed.tool_calls[i];
+          jsi::Object toolCall(rt);
+          
+          // Set tool call properties
+          toolCall.setProperty(rt, "name", jsi::String::createFromUtf8(rt, tool_call.name));
+          toolCall.setProperty(rt, "arguments", jsi::String::createFromUtf8(rt, tool_call.arguments));
+          
+          // Set ID (use existing ID or generate one)
+          std::string id = tool_call.id;
+          if (id.empty()) {
+            id = gen_tool_call_id();
           }
+          toolCall.setProperty(rt, "id", jsi::String::createFromUtf8(rt, id));
+          
+          toolCallsArray.setValueAtIndex(rt, i, toolCall);
         }
         
-        // Always include the original text for compatibility
-        if (!jsResult.hasProperty(rt, "text")) {
-          jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.content));
+        jsResult.setProperty(rt, "tool_calls", toolCallsArray);
+        
+        // Also add raw text for compatibility
+        jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.content));
+        
+        // If there's reasoning content, add it
+        if (!parsed.reasoning_content.empty()) {
+          jsResult.setProperty(rt, "reasoning", jsi::String::createFromUtf8(rt, parsed.reasoning_content));
         }
-      } else {
-        // Not JSON, just use the content directly
+        
+        return jsResult;
+      }
+      // Check if we have content
+      else if (!parsed.content.empty()) {
+        jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, parsed.content));
+        
+        // If there's reasoning content, add it
+        if (!parsed.reasoning_content.empty()) {
+          jsResult.setProperty(rt, "reasoning", jsi::String::createFromUtf8(rt, parsed.reasoning_content));
+        }
+      }
+      // Fallback to using raw text
+      else {
         jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.content));
       }
     } catch (const std::exception& e) {
-      // Not valid JSON, just use the content directly
+      // Handle parsing failure gracefully
       jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.content));
+      // Add error information only in debug builds
+      #ifdef DEBUG
+      jsResult.setProperty(rt, "parse_error", jsi::String::createFromUtf8(rt, e.what()));
+      #endif
     }
   } else {
+    // Just use the content as plain text
     jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.content));
   }
 
-    // Add status related fields
+  // Add status related fields
   if (!result.success) {
     jsResult.setProperty(rt, "error", jsi::String::createFromUtf8(rt, result.error_msg));
   }
@@ -443,7 +470,6 @@ jsi::Object LlamaCppModel::completionResultToJsi(jsi::Runtime& rt, const Complet
   // Set token count fields
   jsResult.setProperty(rt, "prompt_tokens", jsi::Value(result.n_prompt_tokens));
   jsResult.setProperty(rt, "generated_tokens", jsi::Value(result.n_predicted_tokens));
-  
   
   return jsResult;
 }
@@ -506,72 +532,63 @@ jsi::Value LlamaCppModel::tokenizeJsi(jsi::Runtime& rt, const jsi::Value* args, 
     // Parameter for llama_tokenize
     bool parse_special = true;
     
-    if (!rn_ctx_ || !rn_ctx_->model) {
-      throw std::runtime_error("Model not loaded");
+    if (!rn_ctx_ || !rn_ctx_->model || !rn_ctx_->vocab) {
+      throw std::runtime_error("Model not loaded or vocab not available");
     }
     
-    // First get the number of tokens needed
-    int n_tokens = llama_tokenize(rn_ctx_->vocab, content.c_str(), content.length(), nullptr, 0, add_special, parse_special);
-    if (n_tokens < 0) {
-      n_tokens = -n_tokens; // Convert negative value (indicates insufficient buffer)
-    }
+    // Use the common_token_to_piece function from llama.cpp for more consistent tokenization
+    std::vector<llama_token> tokens;
     
-    // Allocate space for tokens
-    std::vector<llama_token> tokens(n_tokens);
-    
-    // Do the actual tokenization
-    n_tokens = llama_tokenize(rn_ctx_->vocab, content.c_str(), content.length(), tokens.data(), tokens.size(), add_special, parse_special);
-    if (n_tokens < 0) {
-      n_tokens = -n_tokens; // Handle negative return value
-      tokens.resize(n_tokens);
-      
-      // Retry with the correct size
-      int retry_result = llama_tokenize(rn_ctx_->vocab, content.c_str(), content.length(), tokens.data(), tokens.size(), add_special, parse_special);
-      if (retry_result != n_tokens) {
-        throw std::runtime_error("Failed to tokenize text: inconsistent token count");
-      }
+    if (content.empty()) {
+      // Handle empty content specially
+      tokens = {};
     } else {
+      // First determine how many tokens are needed 
+      int n_tokens = llama_tokenize(rn_ctx_->vocab, content.c_str(), content.length(), nullptr, 0, add_special, parse_special);
+      if (n_tokens < 0) {
+        n_tokens = -n_tokens; // Convert negative value (indicates insufficient buffer)
+      }
+      
+      // Allocate buffer and do the actual tokenization
+      tokens.resize(n_tokens);
+      n_tokens = llama_tokenize(rn_ctx_->vocab, content.c_str(), content.length(), tokens.data(), tokens.size(), add_special, parse_special);
+      
+      if (n_tokens < 0) {
+        throw std::runtime_error("Tokenization failed: insufficient buffer");
+      }
+      
+      // Resize to the actual number of tokens used
       tokens.resize(n_tokens);
     }
     
-    // Create result object
+    // Create result object with tokens array
     jsi::Object result(rt);
-    
-    // Create tokens array with appropriate size
     jsi::Array tokensArray(rt, tokens.size());
     
-    // Process tokens in a single loop
+    // Fill the tokens array with token IDs and text
     for (size_t i = 0; i < tokens.size(); i++) {
       if (with_pieces) {
-        // Create token object with id and piece
+        // Create an object with ID and piece text 
         jsi::Object tokenObj(rt);
-        tokenObj.setProperty(rt, "id", jsi::Value((double)tokens[i]));
+        tokenObj.setProperty(rt, "id", jsi::Value((int)tokens[i]));
         
-        // Get token piece
-        std::string piece = common_token_to_piece(rn_ctx_->ctx, tokens[i]);
+        // Get the text piece for this token
+        std::string piece = common_token_to_piece(rn_ctx_->vocab, tokens[i]);
+        tokenObj.setProperty(rt, "text", jsi::String::createFromUtf8(rt, piece));
         
-        // Check if the piece is valid UTF-8, using the function from rn-utils.hpp
-        if (is_valid_utf8(piece)) {
-          tokenObj.setProperty(rt, "piece", jsi::String::createFromUtf8(rt, piece));
-        } else {
-          // Create an array of byte values for non-UTF8 pieces
-          jsi::Array byteArray(rt, piece.size());
-          for (size_t j = 0; j < piece.size(); j++) {
-            byteArray.setValueAtIndex(rt, j, jsi::Value((double)(unsigned char)piece[j]));
-          }
-          tokenObj.setProperty(rt, "piece", byteArray);
-        }
         tokensArray.setValueAtIndex(rt, i, tokenObj);
       } else {
-        // Just use the token ID
-        tokensArray.setValueAtIndex(rt, i, jsi::Value((double)tokens[i]));
+        // Just add the token ID
+        tokensArray.setValueAtIndex(rt, i, jsi::Value((int)tokens[i]));
       }
     }
     
     result.setProperty(rt, "tokens", tokensArray);
+    result.setProperty(rt, "count", jsi::Value((int)tokens.size()));
+    
     return result;
   } catch (const std::exception& e) {
-    throw jsi::JSError(rt, e.what());
+    throw jsi::JSError(rt, std::string("Tokenization error: ") + e.what());
   }
 }
 
@@ -583,43 +600,52 @@ jsi::Value LlamaCppModel::detokenizeJsi(jsi::Runtime& rt, const jsi::Value* args
   try {
     jsi::Object options = args[0].getObject(rt);
     
+    // Extract required tokens parameter
     if (!options.hasProperty(rt, "tokens") || !options.getProperty(rt, "tokens").isObject()) {
       throw jsi::JSError(rt, "detokenize requires a 'tokens' array field");
     }
     
-    jsi::Array tokensArray = options.getProperty(rt, "tokens").getObject(rt).getArray(rt);
+    auto tokensVal = options.getProperty(rt, "tokens").getObject(rt);
+    if (!tokensVal.isArray(rt)) {
+      throw jsi::JSError(rt, "tokens must be an array");
+    }
+    
+    jsi::Array tokensArr = tokensVal.getArray(rt);
+    int token_count = tokensArr.size(rt);
+    
+    if (!rn_ctx_ || !rn_ctx_->model || !rn_ctx_->vocab) {
+      throw std::runtime_error("Model not loaded or vocab not available");
+    }
+    
+    // Create a vector of token IDs
     std::vector<llama_token> tokens;
-    tokens.reserve(tokensArray.size(rt));
+    tokens.reserve(token_count);
     
-    for (size_t i = 0; i < tokensArray.size(rt); i++) {
-      jsi::Value token = tokensArray.getValueAtIndex(rt, i);
-      if (!token.isNumber()) {
-        throw jsi::JSError(rt, "tokens array must contain only numbers");
+    for (int i = 0; i < token_count; i++) {
+      auto val = tokensArr.getValueAtIndex(rt, i);
+      if (val.isNumber()) {
+        tokens.push_back(static_cast<llama_token>(val.asNumber()));
+      } else if (val.isObject() && val.getObject(rt).hasProperty(rt, "id")) {
+        auto id = val.getObject(rt).getProperty(rt, "id");
+        if (id.isNumber()) {
+          tokens.push_back(static_cast<llama_token>(id.asNumber()));
+        }
       }
-      tokens.push_back(static_cast<llama_token>(token.getNumber()));
     }
     
-    if (!rn_ctx_ || !rn_ctx_->ctx) {
-      throw std::runtime_error("Context not initialized");
-    }
-    
-    // Pre-allocate content with a reasonable size estimate
-    // Each token typically expands to 1-4 characters, but we'll use a conservative estimate of 4
-    std::string content;
-    content.reserve(tokens.size() * 4);
-    
-    // Perform detokenization
-    for (const auto& token : tokens) {
-      content += common_token_to_piece(rn_ctx_->ctx, token);
+    // Use common_token_to_piece for each token and concatenate the results
+    std::string result_text;
+    for (auto token : tokens) {
+      result_text += common_token_to_piece(rn_ctx_->vocab, token);
     }
     
     // Create result object
     jsi::Object result(rt);
-    result.setProperty(rt, "content", jsi::String::createFromUtf8(rt, content));
+    result.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result_text));
     
     return result;
   } catch (const std::exception& e) {
-    throw jsi::JSError(rt, e.what());
+    throw jsi::JSError(rt, std::string("Detokenization error: ") + e.what());
   }
 }
 
@@ -632,187 +658,136 @@ int32_t LlamaCppModel::getEmbeddingSize() const {
   return llama_model_n_embd(rn_ctx_->model);
 }
 
-// Update the embeddingJsi method
+// Fixed embeddingJsi method with corrected API calls
 jsi::Value LlamaCppModel::embeddingJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count) {
-  if (count < 1) {
-    throw jsi::JSError(rt, "embedding requires input text or options object");
-  }
-  
-  // Parse input parameters
-  std::string text;
-  bool add_bos_token = true;
-  std::string encoding_format = "float";
-  
-  // Check if the input is a string or an object
-  if (args[0].isString()) {
-    text = args[0].getString(rt).utf8(rt);
-  } else if (args[0].isObject()) {
-    jsi::Object options = args[0].getObject(rt);
-    
-    // Check for content or input properties (for OpenAI compatibility)
-    if (options.hasProperty(rt, "content") && options.getProperty(rt, "content").isString()) {
-      text = options.getProperty(rt, "content").getString(rt).utf8(rt);
-    } else if (options.hasProperty(rt, "input") && options.getProperty(rt, "input").isString()) {
-      text = options.getProperty(rt, "input").getString(rt).utf8(rt);
-    } else {
-      throw jsi::JSError(rt, "embedding requires a 'content' or 'input' string property");
-    }
-    
-    // Check for additional options
-    if (options.hasProperty(rt, "add_bos_token") && options.getProperty(rt, "add_bos_token").isBool()) {
-      add_bos_token = options.getProperty(rt, "add_bos_token").getBool();
-    }
-    
-    if (options.hasProperty(rt, "encoding_format") && options.getProperty(rt, "encoding_format").isString()) {
-      encoding_format = options.getProperty(rt, "encoding_format").getString(rt).utf8(rt);
-      // Validate encoding format options
-      if (encoding_format != "float" && encoding_format != "base64") {
-        throw jsi::JSError(rt, "encoding_format must be 'float' or 'base64'");
-      }
-    }
-  } else {
-    throw jsi::JSError(rt, "embedding requires a string or options object");
-  }
-  
-  if (text.empty()) {
-    throw jsi::JSError(rt, "Input text cannot be empty");
+  if (count < 1 || !args[0].isObject()) {
+    throw jsi::JSError(rt, "embedding requires an options object with 'content' field");
   }
   
   try {
-    // Check model initialization
-    if (!rn_ctx_ || !rn_ctx_->model || !rn_ctx_->ctx) {
-      throw std::runtime_error("Model or context not initialized");
+    jsi::Object options = args[0].getObject(rt);
+    
+    // Extract required content parameter
+    if (!options.hasProperty(rt, "content") || !options.getProperty(rt, "content").isString()) {
+      throw jsi::JSError(rt, "embedding requires a 'content' string field");
+    }
+    std::string content = options.getProperty(rt, "content").getString(rt).utf8(rt);
+    
+    // Check optional parameters
+    std::string encoding = "float";
+    if (options.hasProperty(rt, "encoding") && options.getProperty(rt, "encoding").isString()) {
+      encoding = options.getProperty(rt, "encoding").getString(rt).utf8(rt);
     }
     
-    // Clear the KV cache
-    llama_kv_self_clear(rn_ctx_->ctx);
-    
-    // Generate embedding directly here
-    const llama_model* model = llama_get_model(rn_ctx_->ctx);
-    const llama_vocab* vocab = llama_model_get_vocab(model);
-    const int n_embd = llama_model_n_embd(model);
+    // Check model and context
+    if (!rn_ctx_ || !rn_ctx_->model || !rn_ctx_->ctx || !rn_ctx_->vocab) {
+      throw std::runtime_error("Model not loaded or context not initialized");
+    }
     
     // Tokenize the input text
-    llama_tokens tokens = common_tokenize(vocab, text, add_bos_token, true);
+    std::vector<llama_token> tokens;
+    int n_tokens = llama_tokenize(rn_ctx_->vocab, content.c_str(), content.length(), nullptr, 0, true, true);
+    if (n_tokens < 0) {
+      n_tokens = -n_tokens;
+    }
+    tokens.resize(n_tokens);
+    n_tokens = llama_tokenize(rn_ctx_->vocab, content.c_str(), content.length(), tokens.data(), n_tokens, true, true);
+    if (n_tokens < 0) {
+      throw std::runtime_error("Tokenization failed for embedding");
+    }
+    tokens.resize(n_tokens);
+    
     if (tokens.empty()) {
-      throw std::runtime_error("Input content cannot be tokenized properly");
+      throw jsi::JSError(rt, "No tokens generated from input text");
     }
     
-    // Create and populate the batch
-    llama_batch batch = llama_batch_init(tokens.size(), 0, 1);
-    for (size_t i = 0; i < tokens.size(); i++) {
-      common_batch_add(batch, tokens[i], i, {0}, true);
+    // Clear the context KV cache to ensure clean embedding
+    llama_kv_self_clear(rn_ctx_->ctx);
+    
+    // Evaluate tokens one by one
+    for (int i = 0; i < (int)tokens.size(); i++) {
+      llama_token token = tokens[i];
+      llama_batch batch = { 
+        /* n_tokens    */ 1,
+        /* token       */ &token,
+        /* embd        */ nullptr,
+        /* pos         */ &i,
+        /* n_seq_id    */ nullptr,
+        /* seq_id      */ nullptr,
+        /* logits      */ nullptr
+      };
+      
+      if (llama_decode(rn_ctx_->ctx, batch) != 0) {
+        throw std::runtime_error("Failed to decode token for embedding");
+      }
     }
     
-    // Set embedding mode
-    llama_set_embeddings(rn_ctx_->ctx, true);
-    
-    // Process the batch
-    if (llama_decode(rn_ctx_->ctx, batch) != 0) {
-      llama_batch_free(batch);
-      throw std::runtime_error("Failed to process embeddings batch");
+    // Get embedding size from the model
+    const llama_model* model = llama_get_model(rn_ctx_->ctx);
+    int n_embd = llama_n_embd(model);
+    if (n_embd <= 0) {
+      throw std::runtime_error("Invalid embedding dimension");
     }
     
-    // Get the pooling type and extract embeddings
-    enum llama_pooling_type pooling_type = llama_pooling_type(rn_ctx_->ctx);
-    std::vector<float> embeddings;
-    
-    if (pooling_type == LLAMA_POOLING_TYPE_NONE) {
-      // Without pooling, return embedding for the last token
-      for (int i = 0; i < batch.n_tokens; ++i) {
-        if (!batch.logits[i]) {
-          continue;
-        }
-        
-        const float* embd = llama_get_embeddings_ith(rn_ctx_->ctx, i);
-        if (embd == NULL) {
-          llama_batch_free(batch);
-          throw std::runtime_error("Failed to get embeddings");
-        }
-        
-        embeddings.assign(embd, embd + n_embd);
-        break; // We only extract one embedding here
+    // Use correct pooling type constants
+    enum llama_pooling_type pooling_type = LLAMA_POOLING_TYPE_LAST;
+    if (options.hasProperty(rt, "pooling") && options.getProperty(rt, "pooling").isString()) {
+      std::string pooling = options.getProperty(rt, "pooling").getString(rt).utf8(rt);
+      if (pooling == "mean" || pooling == "average") {
+        pooling_type = LLAMA_POOLING_TYPE_MEAN;
+      } else if (pooling == "cls" || pooling == "first") {
+        pooling_type = LLAMA_POOLING_TYPE_CLS;
       }
-    } else {
-      // With pooling, get the pooled embedding
-      const float* embd = llama_get_embeddings_seq(rn_ctx_->ctx, 0);
-      if (embd == NULL) {
-        llama_batch_free(batch);
-        throw std::runtime_error("Failed to get pooled embeddings");
-      }
-      
-      // Normalize the embedding
-      embeddings.resize(n_embd);
-      common_embd_normalize(embd, embeddings.data(), n_embd, 2);
     }
     
-    llama_batch_free(batch);
+    // Extract embedding using the available API
+    std::vector<float> embedding_vec(n_embd);
+    const float* embd = llama_get_embeddings_seq(rn_ctx_->ctx, 0); // 0 for the first/only sequence
     
-    // Token count for usage reporting
-    int token_count = tokens.size();
-    
-    // Determine if we should return OpenAI-like format
-    bool openai_format = (count > 1 && args[1].isBool() && args[1].getBool());
-    
-    if (openai_format) {
-      // Create OpenAI-compatible response format
-      jsi::Object response(rt);
-      jsi::Array data(rt, 1);
-      jsi::Object embeddingObj(rt);
-      
-      // Handle base64 encoding if requested
-      if (encoding_format == "base64") {
-        // Convert embedding to base64
-        const char* data_ptr = reinterpret_cast<const char*>(embeddings.data());
-        size_t data_size = embeddings.size() * sizeof(float);
-        std::string base64str = base64::encode(data_ptr, data_size);
-        
-        // Set the base64 encoded string
-        embeddingObj.setProperty(rt, "embedding", jsi::String::createFromUtf8(rt, base64str));
-        embeddingObj.setProperty(rt, "encoding_format", jsi::String::createFromUtf8(rt, "base64"));
-      } else {
-        // Create the embedding array for float format
-        jsi::Array embeddingArray(rt, embeddings.size());
-        for (size_t i = 0; i < embeddings.size(); i++) {
-          embeddingArray.setValueAtIndex(rt, i, jsi::Value((double)embeddings[i]));
-        }
-        embeddingObj.setProperty(rt, "embedding", embeddingArray);
-      }
-      
-      // Set common properties
-      embeddingObj.setProperty(rt, "index", jsi::Value(0));
-      embeddingObj.setProperty(rt, "object", jsi::String::createFromUtf8(rt, "embedding"));
-      
-      // Add embedding object to data array
-      data.setValueAtIndex(rt, 0, embeddingObj);
-      
-      // Set up response properties
-      response.setProperty(rt, "data", data);
-      response.setProperty(rt, "model", jsi::String::createFromUtf8(rt, "llama"));
-      response.setProperty(rt, "object", jsi::String::createFromUtf8(rt, "list"));
-      
-      // Add usage information
-      jsi::Object usage(rt);
-      usage.setProperty(rt, "prompt_tokens", jsi::Value(token_count));
-      usage.setProperty(rt, "total_tokens", jsi::Value(token_count));
-      response.setProperty(rt, "usage", usage);
-      
-      return response;
-    } else {
-      // For non-OpenAI format, base64 is not applicable
-      if (encoding_format == "base64") {
-        throw jsi::JSError(rt, "base64 encoding format is only supported with OpenAI format");
-      }
-      
-      // Return simple embedding array
-      jsi::Array result(rt, embeddings.size());
-      for (size_t i = 0; i < embeddings.size(); i++) {
-        result.setValueAtIndex(rt, i, jsi::Value((double)embeddings[i]));
-      }
-      return result;
+    if (!embd) {
+      throw std::runtime_error("Failed to extract embeddings");
     }
+    
+    // Copy embeddings to our vector
+    std::copy(embd, embd + n_embd, embedding_vec.begin());
+    
+    // Create result JSON object
+    jsi::Object response(rt);
+    
+    // Add embedding data
+    jsi::Object embeddingObj(rt);
+    
+    // Create embedding array
+    jsi::Array embeddingArray(rt, n_embd);
+    for (int i = 0; i < n_embd; i++) {
+      embeddingArray.setValueAtIndex(rt, i, jsi::Value(embedding_vec[i]));
+    }
+    
+    embeddingObj.setProperty(rt, "object", jsi::String::createFromUtf8(rt, "embedding"));
+    embeddingObj.setProperty(rt, "embedding", embeddingArray);
+    embeddingObj.setProperty(rt, "index", jsi::Value(0));
+    
+    // Create model info
+    jsi::Object modelObj(rt);
+    modelObj.setProperty(rt, "id", jsi::String::createFromUtf8(rt, "llamacpp"));
+    
+    // Create usage info with explicit casts
+    jsi::Object usage(rt);
+    usage.setProperty(rt, "prompt_tokens", jsi::Value((int)tokens.size()));
+    usage.setProperty(rt, "total_tokens", jsi::Value((int)tokens.size()));
+    
+    // Assemble the response
+    jsi::Array dataArray(rt, 1);
+    dataArray.setValueAtIndex(rt, 0, embeddingObj);
+    
+    response.setProperty(rt, "object", jsi::String::createFromUtf8(rt, "list"));
+    response.setProperty(rt, "data", dataArray);
+    response.setProperty(rt, "model", modelObj);
+    response.setProperty(rt, "usage", usage);
+    
+    return response;
   } catch (const std::exception& e) {
-    throw jsi::JSError(rt, e.what());
+    throw jsi::JSError(rt, std::string("Embedding error: ") + e.what());
   }
 }
 

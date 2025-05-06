@@ -84,7 +84,7 @@ example/ios/Pods/
 example/android/app/build/
 
 # Project specific
-CURSOR_RULES.md
+.cursor.json
 .cursor/ 
 
 .llamacpp-temp

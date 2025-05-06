@@ -41,6 +41,11 @@ size_t find_partial_stop_string(const std::string& stop_word, const std::string&
 
 // Struct to track prediction completion state
 struct completion_state {
+    rn_llama_context* rn_ctx = nullptr;
+    const llama_model* model = nullptr;
+    llama_context* ctx = nullptr;
+    llama_model_params* params = nullptr;
+    
     bool stream = false;
     bool has_next_token = true;
     bool has_new_line = false;
@@ -55,6 +60,7 @@ struct completion_state {
     size_t n_sent_text = 0;
     size_t last_nl_pos = 0;
     
+    std::string prompt;
     std::string generated_text;
     std::string stopping_word;
     bool stop_found = false;
@@ -66,7 +72,7 @@ struct completion_state {
     std::vector<std::string> antiprompt; // Storing stop words here
     
     // Chat format and tools info
-    int chat_format = -1;  // Store the chat format for proper parsing
+    common_chat_format chat_format = COMMON_CHAT_FORMAT_CONTENT_ONLY;  // Store the chat format for proper parsing
     common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;  // Default to auto
 
     ~completion_state() {
@@ -149,6 +155,14 @@ CompletionResult run_completion(
     }
     
     try {
+        // Initialize state with context values
+        state.rn_ctx = rn_ctx;
+        state.model = rn_ctx->model;
+        state.ctx = rn_ctx->ctx;
+        state.params = (struct llama_model_params *)&rn_ctx->params.model;
+        state.prompt = options.prompt;
+        state.chat_format = rn_ctx->params.chat_format;
+        
         // Convert CompletionOptions to JSON for processing
         json data = options.to_json();
         // Prepare the sampling parameters
@@ -176,11 +190,6 @@ CompletionResult run_completion(
         state.n_ctx = llama_n_ctx(rn_ctx->ctx);
         state.n_predict = options.n_predict > 0 ? options.n_predict : params.n_predict;
         state.n_remaining = state.n_predict;
-        
-        // Initialize tool-related fields in state
-        if (data.contains("chat_format")) {
-            state.chat_format = data["chat_format"].get<int>();
-        }
         
         // Parse tool_choice
         if (options.tool_choice == "auto") {
@@ -211,9 +220,6 @@ CompletionResult run_completion(
                 }
             }
         }
-        
-        /*RN_INF("Processing prompt with %d tokens, n_predict = %d", 
-            (int)state.prompt_tokens.size(), state.n_predict);*/
         
         // Process the prompt
         for (int i = 0; i < (int)state.prompt_tokens.size(); ++i) {
@@ -250,7 +256,7 @@ CompletionResult run_completion(
             llama_token token_id = common_sampler_sample(state.sampler, rn_ctx->ctx, -1);
             
             // Extract the token text
-            std::string token_text = common_token_to_piece(rn_ctx->ctx, token_id);
+            std::string token_text = common_token_to_piece(rn_ctx->vocab, token_id);
             
             // Add to generated text
             state.generated_text += token_text;
@@ -314,10 +320,6 @@ CompletionResult run_completion(
         const int64_t t_end_generation = ggml_time_us();
         const double generation_time_ms = (t_end_generation - t_start_generation) / 1000.0;
         
-        /*RN_INF("Completion finished: %d tokens generated in %.2f ms (%.2f tokens/s)",
-            state.n_decoded, generation_time_ms, 
-            state.n_decoded > 0 ? (state.n_decoded * 1000.0) / generation_time_ms : 0);*/
-        
         // Set the result
         result.content = state.generated_text;
         result.tokens = state.generated_tokens;
@@ -352,23 +354,30 @@ CompletionResult run_chat_completion(
         result.error_type = RN_ERROR_MODEL_LOAD;
         return result;
     }
-    //should be in the model init TOMOVE
+    
     try {
         // Convert chat options to JSON
         json data = options.to_chat_json();
         
-        // Parse into llama_params
+        // Parse into llama_params with proper chat template handling
         json llama_params = oaicompat_completion_params_parse(
             data, 
-            rn_ctx->params.use_jinja, 
+            rn_ctx->params.use_jinja,
             rn_ctx->params.reasoning_format,
             rn_ctx->chat_templates.get()
         );
         
-        // Debug information for parameters
         // Now run standard completion with the processed parameters
         CompletionOptions processed_options = options;
         processed_options.prompt = llama_params["prompt"].get<std::string>();
+        
+        // Store the chat format for proper parsing
+        if (llama_params.contains("chat_format") && llama_params["chat_format"].is_number_integer()) {
+            int format_int = llama_params["chat_format"].get<int>();
+            if (format_int >= 0 && format_int < COMMON_CHAT_FORMAT_COUNT) {
+                rn_ctx->params.chat_format = static_cast<common_chat_format>(format_int);
+            }
+        }
         
         // Copy any stop words from the processed parameters
         if (llama_params.contains("stop") && llama_params["stop"].is_array()) {
@@ -378,6 +387,14 @@ CompletionResult run_chat_completion(
             }
         }
         
+        // Add any additional stops from the chat template
+        if (llama_params.contains("additional_stops") && llama_params["additional_stops"].is_array()) {
+            for (const auto& stop : llama_params["additional_stops"]) {
+                processed_options.stop.push_back(stop.get<std::string>());
+            }
+        }
+        
+        // Run the completion with the processed options
         return run_completion(rn_ctx, processed_options, callback);
         
     } catch (const std::exception& e) {
