@@ -283,15 +283,36 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
     rn_ctx_->ctx = result.context.release();
     rn_ctx_->model_loaded = true;
     rn_ctx_->vocab = llama_model_get_vocab(rn_ctx_->model);
-    rn_ctx_->params = params;
     
-    // Initialize chat templates
-    rn_ctx_->chat_templates = common_chat_templates_init(rn_ctx_->model, params.chat_template);
+    // Create a rn_common_params from the common_params
+    rn_common_params rn_params;
+    // Copy the base class fields
+    static_cast<common_params&>(rn_params) = params;
+    // Set additional fields
+    rn_params.use_jinja = params.use_jinja;
+    rn_params.reasoning_format = COMMON_REASONING_FORMAT_NONE;
+    rn_params.chat_format = COMMON_CHAT_FORMAT_CONTENT_ONLY;
+    // Now assign to the context
+    rn_ctx_->params = rn_params;
+    
+    // Initialize chat templates with proper error handling
     try {
-      common_chat_format_example(rn_ctx_->chat_templates.get(), params.use_jinja);
-    } catch (const std::exception & e) {
-      // Log warning and fallback to chatml
-      rn_ctx_->chat_templates = common_chat_templates_init(rn_ctx_->model, "chatml");
+        rn_ctx_->chat_templates = common_chat_templates_init(rn_ctx_->model, params.chat_template);
+        if (!rn_ctx_->chat_templates) {
+            throw std::runtime_error("Failed to initialize chat templates");
+        }
+        
+        // Test the chat template with an example
+        if (params.use_jinja) {
+            common_chat_format_example(rn_ctx_->chat_templates.get(), true);
+        }
+    } catch (const std::exception& e) {
+        // Log warning and fallback to chatml
+        fprintf(stderr, "Warning: Failed to initialize chat template: %s. Falling back to chatml.\n", e.what());
+        rn_ctx_->chat_templates = common_chat_templates_init(rn_ctx_->model, "chatml");
+        if (!rn_ctx_->chat_templates) {
+            throw std::runtime_error("Failed to initialize fallback chatml template");
+        }
     }
     
     // Create the model object and return it
