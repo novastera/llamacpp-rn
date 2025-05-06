@@ -74,15 +74,17 @@ jobs:
       
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          sdk-version: 35
+          build-tools-version: 35.0.0
+          ndk-version: 27.2.12479018
+          cmake-version: 3.22.1
 
       - name: Create prebuilt directory
         run: mkdir -p prebuilt
 
       - name: Install Android NDK and Dependencies
         run: |
-          # Install NDK first
-          scripts/build_android.sh --install-ndk
- 
           # Then use our dedicated script for external dependency setup
           scripts/build_android_external.sh
           
