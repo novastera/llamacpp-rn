@@ -60,6 +60,7 @@ struct CompletionOptions {
     bool use_jinja = false;
     int seed = -1;
     json tools;         // tools for function calling
+    std::string tool_choice = "auto"; // tool choice mode: "auto", "none", or "required"
 
     // Convert to JSON for the completion API
     json to_json() const {
