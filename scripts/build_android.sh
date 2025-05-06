@@ -28,8 +28,8 @@ print_usage() {
   echo "  --clean                Clean previous builds before building"
   echo "  --clean-prebuilt       Clean entire prebuilt directory for a fresh start"
   echo "  --install-deps         Install dependencies (OpenCL, etc.)"
-  echo "  --install-ndk          Install Android NDK version $NDK_VERSION"
   echo "  --glslc-path=[path]    Specify a custom path to the GLSLC compiler"
+  echo "  --ndk-path=[path]      Specify a custom path to the Android NDK"
 }
 
 # Default values
@@ -40,8 +40,8 @@ BUILD_TYPE="Release"
 CLEAN_BUILD=false
 CLEAN_PREBUILT=false
 INSTALL_DEPS=false
-INSTALL_NDK=false
 CUSTOM_GLSLC_PATH=""
+CUSTOM_NDK_PATH=""
 
 # Parse arguments
 for arg in "$@"; do
@@ -74,11 +74,11 @@ for arg in "$@"; do
     --install-deps)
       INSTALL_DEPS=true
       ;;
-    --install-ndk)
-      INSTALL_NDK=true
-      ;;
     --glslc-path=*)
       CUSTOM_GLSLC_PATH="${arg#*=}"
+      ;;
+    --ndk-path=*)
+      CUSTOM_NDK_PATH="${arg#*=}"
       ;;
     *)
       echo -e "${RED}Unknown argument: $arg${NC}"
@@ -160,16 +160,87 @@ if [ -z "$ANDROID_HOME" ]; then
   fi
 fi
 
-NDK_PATH="$ANDROID_HOME/ndk/$NDK_VERSION"
+# Try to use the user-provided NDK path first
+if [ -n "$CUSTOM_NDK_PATH" ]; then
+  NDK_PATH="$CUSTOM_NDK_PATH"
+  echo -e "${GREEN}Using custom NDK path: $NDK_PATH${NC}"
+  
+  if [ ! -d "$NDK_PATH" ]; then
+    echo -e "${RED}Custom NDK path not found at $NDK_PATH${NC}"
+    exit 1
+  fi
+else
+  # First try to find any available NDK
+  if [ -d "$ANDROID_HOME/ndk" ]; then
+    # Get list of NDK versions sorted by version number (newest first)
+    NEWEST_NDK_VERSION=$(ls -1 "$ANDROID_HOME/ndk" | sort -rV | head -n 1)
+    
+    if [ -n "$NEWEST_NDK_VERSION" ]; then
+      NDK_PATH="$ANDROID_HOME/ndk/$NEWEST_NDK_VERSION"
+      echo -e "${GREEN}Found NDK version $NEWEST_NDK_VERSION, using this version${NC}"
+    else
+      # If no NDK is found, fall back to the version from used_version.sh
+      NDK_PATH="$ANDROID_HOME/ndk/$NDK_VERSION"
+      echo -e "${YELLOW}No NDK versions found in $ANDROID_HOME/ndk, trying to use version $NDK_VERSION from used_version.sh${NC}"
+      
+      if [ ! -d "$NDK_PATH" ]; then
+        echo -e "${RED}NDK version $NDK_VERSION not found at $NDK_PATH${NC}"
+        echo -e "${YELLOW}Please install Android NDK using Android SDK Manager:${NC}"
+        echo -e "${YELLOW}\$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \"ndk;latest\"${NC}"
+        exit 1
+      fi
+    fi
+  # Check for NDK in the old-style location
+  elif [ -d "$ANDROID_HOME/ndk-bundle" ]; then
+    NDK_PATH="$ANDROID_HOME/ndk-bundle"
+    echo -e "${GREEN}Found NDK at ndk-bundle location: $NDK_PATH${NC}"
+  else
+    # Try to find the NDK version specified in used_version.sh as last resort
+    NDK_PATH="$ANDROID_HOME/ndk/$NDK_VERSION"
+    echo -e "${YELLOW}No NDK directory found, trying to use version $NDK_VERSION from used_version.sh${NC}"
+    
+    if [ ! -d "$NDK_PATH" ]; then
+      echo -e "${RED}NDK directory not found at $ANDROID_HOME/ndk or $ANDROID_HOME/ndk-bundle${NC}"
+      echo -e "${RED}NDK version $NDK_VERSION from used_version.sh not found either${NC}"
+      echo -e "${YELLOW}Please install Android NDK using Android SDK Manager:${NC}"
+      echo -e "${YELLOW}\$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \"ndk;latest\"${NC}"
+      exit 1
+    fi
+  fi
+fi
 
-if [ ! -d "$NDK_PATH" ]; then
-  echo -e "${RED}NDK version $NDK_VERSION not found at $NDK_PATH${NC}"
-  echo -e "${YELLOW}Available NDK versions:${NC}"
-  ls -la "$ANDROID_HOME/ndk" || echo "No NDK directory found"
-  echo -e "${YELLOW}Please install NDK $NDK_VERSION using Android SDK Manager:${NC}"
-  echo -e "${YELLOW}\$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \"ndk;$NDK_VERSION\"${NC}"
-  echo -e "${YELLOW}Or use the --install-ndk option${NC}"
-  exit 1
+# Extract the Android platform version from the NDK path
+if [ -d "$NDK_PATH/platforms" ]; then
+  # Get the highest API level available in the NDK
+  ANDROID_PLATFORM=$(ls -1 "$NDK_PATH/platforms" | sort -V | tail -n 1)
+  ANDROID_MIN_SDK=${ANDROID_PLATFORM#android-}
+  echo -e "${GREEN}Using Android platform: $ANDROID_PLATFORM (API level $ANDROID_MIN_SDK)${NC}"
+elif [ -d "$NDK_PATH/toolchains/llvm/prebuilt" ]; then
+  # Try to detect from the LLVM toolchain
+  PLATFORMS_DIR="$NDK_PATH/toolchains/llvm/prebuilt/*/sysroot/usr/lib/android"
+  # Use wildcard expansion to find all available platforms
+  PLATFORM_DIRS=$(ls -d $PLATFORMS_DIR 2>/dev/null | grep -v "cpufeatures" || echo "")
+  
+  if [ -n "$PLATFORM_DIRS" ]; then
+    # Extract the API levels and get the highest one
+    API_LEVELS=$(echo "$PLATFORM_DIRS" | xargs -n1 basename | sort -V)
+    HIGHEST_API=$(echo "$API_LEVELS" | tail -n 1)
+    
+    if [ -n "$HIGHEST_API" ]; then
+      ANDROID_MIN_SDK="$HIGHEST_API"
+      ANDROID_PLATFORM="android-$ANDROID_MIN_SDK"
+      echo -e "${GREEN}Using Android platform: $ANDROID_PLATFORM (API level $ANDROID_MIN_SDK)${NC}"
+    else
+      # Use the default from used_version.sh if we can't determine from NDK
+      echo -e "${YELLOW}Could not detect platform version, using value from used_version.sh: $ANDROID_PLATFORM${NC}"
+    fi
+  else
+    # Use the default from used_version.sh if we can't determine from NDK
+    echo -e "${YELLOW}Could not detect platform version, using value from used_version.sh: $ANDROID_PLATFORM${NC}"
+  fi
+else
+  # Use the default from used_version.sh if we can't determine from NDK
+  echo -e "${YELLOW}Could not detect platform version, using value from used_version.sh: $ANDROID_PLATFORM${NC}"
 fi
 
 # Setup build environment
@@ -177,57 +248,33 @@ CMAKE_TOOLCHAIN_FILE="$NDK_PATH/build/cmake/android.toolchain.cmake"
 echo -e "${GREEN}Using NDK at: $NDK_PATH${NC}"
 echo -e "${GREEN}Using toolchain file: $CMAKE_TOOLCHAIN_FILE${NC}"
 
-# Install NDK if requested
-if [ "$INSTALL_NDK" = true ]; then
-  echo -e "${YELLOW}Installing Android NDK version $NDK_VERSION...${NC}"
-  
-  # Check if Android SDK is available
-  if [ -z "$ANDROID_HOME" ] && [ -z "$ANDROID_SDK_ROOT" ]; then
-    echo -e "${RED}Android SDK not found. Please set ANDROID_HOME or ANDROID_SDK_ROOT.${NC}"
-    exit 1
-  fi
-  
-  # Use sdkmanager to install the NDK
-  SDKMANAGER_CMD="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-  if [ ! -f "$SDKMANAGER_CMD" ]; then
-    SDKMANAGER_CMD="$(find $ANDROID_HOME/cmdline-tools -name sdkmanager | head -1)"
-  fi
-  
-  if [ -z "$SDKMANAGER_CMD" ] || [ ! -f "$SDKMANAGER_CMD" ]; then
-    echo -e "${RED}sdkmanager not found. Please install Android command line tools.${NC}"
-    exit 1
-  fi
-  
-  echo -e "${YELLOW}Using sdkmanager: $SDKMANAGER_CMD${NC}"
-  
-  # Install platforms and build tools
-  echo -e "${YELLOW}Installing Android platform $ANDROID_TARGET_SDK and build tools...${NC}"
-  "$SDKMANAGER_CMD" "platforms;android-$ANDROID_TARGET_SDK" "build-tools;$ANDROID_TARGET_SDK.0.0"
-  
-  # Install specific NDK version
-  echo -e "${YELLOW}Installing NDK version $NDK_VERSION...${NC}"
-  "$SDKMANAGER_CMD" "ndk;$NDK_VERSION"
-  
-  # Set environment variable
-  if [ -n "$GITHUB_ENV" ]; then
-    # If running in GitHub Actions
-    echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> $GITHUB_ENV
-    echo -e "${GREEN}✅ Set ANDROID_NDK_HOME environment variable in GitHub Actions${NC}"
+# Determine NDK host platform
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  if [[ $(uname -m) == "arm64" ]]; then
+    NDK_HOST_TAG="darwin-arm64"
   else
-    # For local development, just print the path
-    echo -e "${GREEN}✅ NDK installed at: $ANDROID_HOME/ndk/$NDK_VERSION${NC}"
-    echo -e "${YELLOW}You may want to set ANDROID_NDK_HOME environment variable:${NC}"
-    echo -e "${YELLOW}export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION${NC}"
+    NDK_HOST_TAG="darwin-x86_64"
   fi
-  
-  # Verify NDK installation
-  if [ -d "$ANDROID_HOME/ndk/$NDK_VERSION" ]; then
-    echo -e "${GREEN}✅ Android NDK $NDK_VERSION successfully installed${NC}"
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+  NDK_HOST_TAG="linux-x86_64"
+elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
+  NDK_HOST_TAG="windows-x86_64"
+else
+  # Fallback detection by checking what directories exist
+  if [ -d "$NDK_PATH/toolchains/llvm/prebuilt/darwin-arm64" ]; then
+    NDK_HOST_TAG="darwin-arm64"
+  elif [ -d "$NDK_PATH/toolchains/llvm/prebuilt/darwin-x86_64" ]; then
+    NDK_HOST_TAG="darwin-x86_64"
+  elif [ -d "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64" ]; then
+    NDK_HOST_TAG="linux-x86_64"
+  elif [ -d "$NDK_PATH/toolchains/llvm/prebuilt/windows-x86_64" ]; then
+    NDK_HOST_TAG="windows-x86_64"
   else
-    echo -e "${RED}❌ Failed to install Android NDK $NDK_VERSION${NC}"
+    echo -e "${RED}Could not determine NDK host platform${NC}"
     exit 1
   fi
 fi
+echo -e "${GREEN}Detected NDK host platform: $NDK_HOST_TAG${NC}"
 
 # Install dependencies if requested
 if [ "$INSTALL_DEPS" = true ]; then
@@ -245,7 +292,7 @@ if [ "$INSTALL_DEPS" = true ]; then
       cp -r "$OPENCL_HEADERS_DIR/CL" "$OPENCL_INCLUDE_DIR/"
       
       # Also copy headers to NDK sysroot as recommended in the docs
-      NDK_SYSROOT_INCLUDE="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include"
+      NDK_SYSROOT_INCLUDE="$NDK_PATH/toolchains/llvm/prebuilt/$NDK_HOST_TAG/sysroot/usr/include"
       if [ -d "$NDK_SYSROOT_INCLUDE" ]; then
         echo -e "${YELLOW}Copying OpenCL headers to NDK sysroot...${NC}"
         mkdir -p "$NDK_SYSROOT_INCLUDE/CL"
@@ -322,7 +369,7 @@ if [ "$INSTALL_DEPS" = true ]; then
       fi
       
       # Copy headers to NDK sysroot
-      NDK_SYSROOT_INCLUDE="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include"
+      NDK_SYSROOT_INCLUDE="$NDK_PATH/toolchains/llvm/prebuilt/$NDK_HOST_TAG/sysroot/usr/include"
       if [ -d "$NDK_SYSROOT_INCLUDE" ]; then
         echo -e "${YELLOW}Copying Vulkan headers to NDK sysroot...${NC}"
         mkdir -p "$NDK_SYSROOT_INCLUDE/vulkan"
@@ -355,7 +402,7 @@ if [ "$INSTALL_DEPS" = true ]; then
       else
         # Try to find GLSLC in the NDK shader-tools
         GLSLC_EXECUTABLE=""
-        NDK_SHADER_TOOLS="$NDK_PATH/shader-tools/linux-x86_64"
+        NDK_SHADER_TOOLS="$NDK_PATH/shader-tools/$NDK_HOST_TAG"
         
         if [ -d "$NDK_SHADER_TOOLS" ]; then
           GLSLC_EXECUTABLE="$NDK_SHADER_TOOLS/glslc"
@@ -485,9 +532,9 @@ if [ "$INSTALL_DEPS" = true ]; then
       # Also copy to NDK sysroot lib directory as recommended in the docs
       local NDK_SYSROOT_LIB
       if [ "$ABI" = "arm64-v8a" ]; then
-        NDK_SYSROOT_LIB="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android"
+        NDK_SYSROOT_LIB="$NDK_PATH/toolchains/llvm/prebuilt/$NDK_HOST_TAG/sysroot/usr/lib/aarch64-linux-android"
       elif [ "$ABI" = "x86_64" ]; then
-        NDK_SYSROOT_LIB="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android"
+        NDK_SYSROOT_LIB="$NDK_PATH/toolchains/llvm/prebuilt/$NDK_HOST_TAG/sysroot/usr/lib/x86_64-linux-android"
       fi
       
       if [ -d "$NDK_SYSROOT_LIB" ]; then
@@ -631,7 +678,7 @@ setup_vulkan() {
     fi
     
     # Copy headers to NDK sysroot
-    NDK_SYSROOT_INCLUDE="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include"
+    NDK_SYSROOT_INCLUDE="$NDK_PATH/toolchains/llvm/prebuilt/$NDK_HOST_TAG/sysroot/usr/include"
     if [ -d "$NDK_SYSROOT_INCLUDE" ]; then
       echo -e "${YELLOW}Copying Vulkan headers to NDK sysroot...${NC}"
       mkdir -p "$NDK_SYSROOT_INCLUDE/vulkan"
@@ -664,7 +711,7 @@ setup_vulkan() {
     else
       # Try to find GLSLC in the NDK shader-tools
       GLSLC_EXECUTABLE=""
-      NDK_SHADER_TOOLS="$NDK_PATH/shader-tools/linux-x86_64"
+      NDK_SHADER_TOOLS="$NDK_PATH/shader-tools/$NDK_HOST_TAG"
       
       if [ -d "$NDK_SHADER_TOOLS" ]; then
         GLSLC_EXECUTABLE="$NDK_SHADER_TOOLS/glslc"
@@ -852,9 +899,9 @@ build_for_abi() {
     # Find Vulkan library for this ABI in the NDK
     NDK_VULKAN_LIB=""
     if [ "$ABI" = "arm64-v8a" ]; then
-      NDK_VULKAN_LIB="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/$ANDROID_MIN_SDK/libvulkan.so"
+      NDK_VULKAN_LIB="$NDK_PATH/toolchains/llvm/prebuilt/$NDK_HOST_TAG/sysroot/usr/lib/aarch64-linux-android/$ANDROID_MIN_SDK/libvulkan.so"
     elif [ "$ABI" = "x86_64" ]; then
-      NDK_VULKAN_LIB="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/$ANDROID_MIN_SDK/libvulkan.so"
+      NDK_VULKAN_LIB="$NDK_PATH/toolchains/llvm/prebuilt/$NDK_HOST_TAG/sysroot/usr/lib/x86_64-linux-android/$ANDROID_MIN_SDK/libvulkan.so"
     fi
     
     # If not found in the primary location, search in the NDK
@@ -929,19 +976,8 @@ EOF
     # Create shared library explicitly
     echo -e "${YELLOW}Creating shared library for $ABI...${NC}"
     
-    # Setup proper clang path based on OS
-    CLANG_PATH="$NDK_PATH/toolchains/llvm/prebuilt"
-    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-      CLANG_PATH="$CLANG_PATH/linux-x86_64"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-      if [[ $(uname -m) == "arm64" ]]; then
-        CLANG_PATH="$CLANG_PATH/darwin-arm64"
-      else
-        CLANG_PATH="$CLANG_PATH/darwin-x86_64"
-      fi
-    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
-      CLANG_PATH="$CLANG_PATH/windows-x86_64"
-    fi
+    # Setup proper clang path using our previously detected NDK host tag
+    CLANG_PATH="$NDK_PATH/toolchains/llvm/prebuilt/$NDK_HOST_TAG"
     
     CLANG_BIN=""
     if [ "$ABI" = "arm64-v8a" ]; then
