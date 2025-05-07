@@ -34,7 +34,7 @@
     "typescript:example": "cd example && tsc --noEmit",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
-    "prepare": "mkdir -p lib && tsc -p tsconfig.build.json",
+    "prepare": "rimraf lib && tsc -p tsconfig.build.json",
     "release": "release-it",
     "example": "npm --prefix example",
     "bootstrap": "npm --prefix example install && npm install && npm --prefix example run pods",
@@ -93,6 +93,7 @@
     "react-native": "0.76.9",
     "react-native-builder-bob": "^0.40.0",
     "release-it": "^19.0.0",
+    "rimraf": "^5.0.5",
     "typescript": "^5.8.3"
   },
   "peerDependencies": {
