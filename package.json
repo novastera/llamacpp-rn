@@ -95,7 +95,7 @@
     "react-native": "0.76.9",
     "react-native-builder-bob": "^0.40.0",
     "release-it": "^19.0.0",
-    "rimraf": "^5.0.5",
+    "rimraf": "^6.0.0",
     "typescript": "^5.8.3"
   },
   "peerDependencies": {
