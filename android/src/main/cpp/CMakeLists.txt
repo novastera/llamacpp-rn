@@ -155,7 +155,7 @@ file(GLOB_RECURSE LLAMACPPRN_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
 # Additional llama.cpp common files needed for json-schema-to-grammar and chat functionality
 set(LLAMA_CPP_COMMON_SOURCES
-    ${LLAMA_CPP_DIR}/common/build-info.cpp
+    ${LLAMA_CPP_DIR}/build-info.cpp
     ${LLAMA_CPP_DIR}/common/json-schema-to-grammar.cpp
     ${LLAMA_CPP_DIR}/common/json-schema-to-grammar.h
     ${LLAMA_CPP_DIR}/common/common.cpp

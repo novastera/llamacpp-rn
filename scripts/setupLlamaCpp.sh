@@ -33,6 +33,30 @@ check_requirements() {
   return 0
 }
 
+# Configure build-info.cpp
+configure_build_info() {
+  echo -e "${YELLOW}Configuring build-info.cpp...${NC}"
+  
+  # Get build info from llama.cpp repository
+  cd "$LLAMA_CPP_DIR"
+  BUILD_NUMBER=$(git rev-list --count HEAD 2>/dev/null || echo "0")
+  BUILD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  BUILD_COMPILER="unknown"
+  BUILD_TARGET="unknown"
+  
+  # Create build-info.cpp in the cpp directory
+  cat > "$PACKAGE_DIR/cpp/build-info.cpp" << EOF
+int LLAMA_BUILD_NUMBER = ${BUILD_NUMBER};
+char const *LLAMA_COMMIT = "${BUILD_COMMIT}";
+char const *LLAMA_COMPILER = "${BUILD_COMPILER}";
+char const *LLAMA_BUILD_TARGET = "${BUILD_TARGET}";
+EOF
+  
+  cd "$PACKAGE_DIR"
+  echo -e "${GREEN}Successfully configured build-info.cpp${NC}"
+  return 0
+}
+
 # Initialize and setup llama.cpp submodule
 setup_llama_cpp_submodule() {
   echo -e "${YELLOW}Setting up llama.cpp submodule (commit: $LLAMA_CPP_COMMIT)...${NC}"
@@ -52,6 +76,7 @@ setup_llama_cpp_submodule() {
     if [ "$CURRENT_COMMIT" = "$LLAMA_CPP_COMMIT" ]; then
       echo -e "${GREEN}llama.cpp is already at the correct commit: ${LLAMA_CPP_COMMIT}${NC}"
       cd "$PACKAGE_DIR"
+      configure_build_info
       return 0
     fi
     
@@ -87,6 +112,9 @@ setup_llama_cpp_submodule() {
     echo -e "${YELLOW}   git add .gitmodules cpp/llama.cpp${NC}"
     echo -e "${YELLOW}   git commit -m \"Add llama.cpp as submodule at version $LLAMA_CPP_COMMIT\"${NC}"
   fi
+  
+  # Configure build-info.cpp
+  configure_build_info
   
   # Setup directories for Android
   mkdir -p "android/src/main/cpp/includes"
@@ -149,6 +177,9 @@ clean_all() {
     git clean -fdx --quiet
     cd "$PACKAGE_DIR"
   fi
+  
+  # Reconfigure build-info.cpp after cleaning
+  configure_build_info
   
   echo -e "${GREEN}All cleaned successfully${NC}"
   return 0
