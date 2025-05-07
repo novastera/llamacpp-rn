@@ -37,8 +37,6 @@ export default function ConsolidatedTest() {
   
   // Test results
   const [testResult, setTestResult] = React.useState<string | null>(null);
-  const [gbnfResult, setGbnfResult] = React.useState<string | null>(null);
-  const [completionResult, setCompletionResult] = React.useState<string | null>(null);
   
   // UI state
   const [loading, setLoading] = React.useState(false);
@@ -60,7 +58,6 @@ export default function ConsolidatedTest() {
       setModuleInfo({
         functions: result.functions,
         hasInitLlama: result.functions?.includes('initLlama') || false,
-        hasJsonSchemaToGbnf: result.functions?.includes('jsonSchemaToGbnf') || false,
         hasLoadLlamaModelInfo: result.functions?.includes('loadLlamaModelInfo') || false,
         hasCompletion: result.functions?.includes('completion') || false
       });
@@ -123,53 +120,6 @@ export default function ConsolidatedTest() {
     } catch (error) {
       console.error('Test model creation failed:', error);
       setError(`Error: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Test JSON Schema to GBNF conversion
-  const testSchemaConversion = async () => {
-    setLoading(true);
-    setError(null);
-    setGbnfResult(null);
-    
-    try {
-      console.log('Converting JSON Schema to GBNF...');
-      
-      // Simple JSON schema
-      const schema = {
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-          age: { type: 'number' },
-          email: { type: 'string' },
-          address: {
-            type: 'object',
-            properties: {
-              street: { type: 'string' },
-              city: { type: 'string' },
-              zip: { type: 'string' }
-            },
-            required: ['street', 'city']
-          },
-          tags: {
-            type: 'array',
-            items: { type: 'string' }
-          }
-        },
-        required: ['name', 'email']
-      };
-      
-      // Call the conversion function
-      const result = await LlamaCppRn.jsonSchemaToGbnf({schema: JSON.stringify(schema)});
-      console.log('Schema conversion result:', result);
-      
-      setGbnfResult(result);
-      setTestResult('GBNF conversion successful!');
-    } catch (error) {
-      console.error('Schema conversion test failed:', error);
-      setError(`Schema conversion error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setLoading(false);
     }
@@ -238,7 +188,6 @@ export default function ConsolidatedTest() {
   const testCompletion = async () => {
     setLoading(true);
     setError(null);
-    setCompletionResult(null);
     
     try {
       if (!modelInstance) {
@@ -262,7 +211,6 @@ export default function ConsolidatedTest() {
         throw new Error(response.text || 'Unknown error during completion');
       }
       
-      setCompletionResult(response.text);
       setTestResult('Completion successful!');
     } catch (error) {
       console.error('Completion error:', error);
@@ -305,7 +253,6 @@ export default function ConsolidatedTest() {
           <View style={styles.moduleInfo}>
             <Text style={styles.infoItem}>Module registered: {moduleInfo.functions?.length > 0 ? '✅' : '❌'}</Text>
             <Text style={styles.infoItem}>Load model info: {moduleInfo.hasLoadLlamaModelInfo ? '✅' : '❌'}</Text>
-            <Text style={styles.infoItem}>GBNF conversion: {moduleInfo.hasJsonSchemaToGbnf ? '✅' : '❌'}</Text>
             <Text style={styles.infoItem}>Inference: {moduleInfo.hasInitLlama ? '✅' : '❌'}</Text>
           </View>
         ) : (
@@ -345,12 +292,6 @@ export default function ConsolidatedTest() {
                 onPress={createTestModel}
                 disabled={loading}
               />
-              <View style={styles.buttonSpacer} />
-              <Button
-                title="Test Schema to GBNF"
-                onPress={testSchemaConversion}
-                disabled={loading || !moduleInfo?.hasJsonSchemaToGbnf}
-              />
             </View>
             
             {loading && <ActivityIndicator style={styles.loader} />}
@@ -364,15 +305,6 @@ export default function ConsolidatedTest() {
             {testResult && (
               <View style={styles.resultContainer}>
                 <Text style={styles.resultText}>{testResult}</Text>
-              </View>
-            )}
-            
-            {gbnfResult && (
-              <View style={styles.gbnfContainer}>
-                <Text style={styles.resultTitle}>GBNF Grammar:</Text>
-                <ScrollView style={styles.codeScroll}>
-                  <Text style={styles.codeText}>{gbnfResult}</Text>
-                </ScrollView>
               </View>
             )}
           </View>
@@ -450,13 +382,6 @@ export default function ConsolidatedTest() {
                   onPress={testCompletion}
                   disabled={loading || !modelInstance}
                 />
-                
-                {completionResult && (
-                  <View style={styles.completionResult}>
-                    <Text style={styles.completionTitle}>Result:</Text>
-                    <Text style={styles.completionText}>{completionResult}</Text>
-                  </View>
-                )}
               </View>
             )}
           </View>
@@ -574,15 +499,6 @@ const styles = StyleSheet.create({
   resultText: {
     color: '#00695c',
   },
-  gbnfContainer: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: '#f0f7ff',
-    borderRadius: 6,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4a8eff',
-    height: 200,
-  },
   modelInfoContainer: {
     backgroundColor: '#e8f5e9',
     borderRadius: 6,
@@ -592,13 +508,6 @@ const styles = StyleSheet.create({
   resultTitle: {
     fontWeight: 'bold',
     marginBottom: 8,
-  },
-  codeScroll: {
-    flex: 1,
-  },
-  codeText: {
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    fontSize: 12,
   },
   gpuInfo: {
     color: '#1565c0',
@@ -618,21 +527,5 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     backgroundColor: '#fff',
     minHeight: 80,
-  },
-  completionResult: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: '#fff',
-    borderRadius: 6,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4caf50',
-  },
-  completionTitle: {
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  completionText: {
-    fontSize: 14,
-    lineHeight: 20,
   },
 }); 

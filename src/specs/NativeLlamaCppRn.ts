@@ -18,55 +18,55 @@ export interface LlamaContextType {
 export interface LlamaModelParams {
   // Model loading parameters
   model: string;               // path to the model file
-  n_ctx?: number;              // context size (default: 2048)
-  n_batch?: number;            // batch size (default: 512)
-  n_ubatch?: number;           // micro batch size for prompt processing
-  n_threads?: number;          // number of threads (default: number of physical CPU cores)
-  n_keep?: number;             // number of tokens to keep from initial prompt
+  n_ctx?: number;             // context size (default: 2048)
+  n_batch?: number;           // batch size (default: 512)
+  n_ubatch?: number;          // micro batch size for prompt processing
+  n_threads?: number;         // number of threads (default: number of physical CPU cores)
+  n_keep?: number;            // number of tokens to keep from initial prompt
   
   // GPU acceleration parameters
-  n_gpu_layers?: number;       // number of layers to store in VRAM (default: 0)
+  n_gpu_layers?: number;      // number of layers to store in VRAM (default: 0)
   
   // Memory management parameters
-  use_mmap?: boolean;          // use mmap for faster loading (default: true)
-  use_mlock?: boolean;         // use mlock to keep model in memory (default: false)
+  use_mmap?: boolean;         // use mmap for faster loading (default: true)
+  use_mlock?: boolean;        // use mlock to keep model in memory (default: false)
   
   // Model behavior parameters
-  vocab_only?: boolean;        // only load the vocabulary, no weights
-  embedding?: boolean;         // use embedding mode (default: false)
-  seed?: number;               // RNG seed for reproducibility
+  vocab_only?: boolean;       // only load the vocabulary, no weights
+  embedding?: boolean;        // use embedding mode (default: false)
+  seed?: number;              // RNG seed for reproducibility
   
   // RoPE parameters
-  rope_freq_base?: number;     // RoPE base frequency (default: 10000.0)
-  rope_freq_scale?: number;    // RoPE frequency scaling factor (default: 1.0)
+  rope_freq_base?: number;    // RoPE base frequency (default: 10000.0)
+  rope_freq_scale?: number;   // RoPE frequency scaling factor (default: 1.0)
   
   // YaRN parameters (RoPE scaling for longer contexts)
-  yarn_ext_factor?: number;    // YaRN extrapolation mix factor
-  yarn_attn_factor?: number;   // YaRN magnitude scaling factor
-  yarn_beta_fast?: number;     // YaRN low correction dim
-  yarn_beta_slow?: number;     // YaRN high correction dim
+  yarn_ext_factor?: number;   // YaRN extrapolation mix factor
+  yarn_attn_factor?: number;  // YaRN magnitude scaling factor
+  yarn_beta_fast?: number;    // YaRN low correction dim
+  yarn_beta_slow?: number;    // YaRN high correction dim
   
   // Additional options
-  logits_all?: boolean;        // return logits for all tokens
-  chat_template?: string;      // override chat template
+  logits_all?: boolean;       // return logits for all tokens
+  chat_template?: string;     // override chat template
   use_jinja?: boolean;        // use Jinja template parser
-  verbose?: number;            // verbosity level (0 = silent, 1 = info, 2+ = debug)
+  verbose?: number;           // verbosity level (0 = silent, 1 = info, 2+ = debug)
   
   // LoRA adapters
   lora_adapters?: Array<{
-    path: string;              // path to LoRA adapter file
-    scale?: number;            // scaling factor for the adapter (default: 1.0)
+    path: string;             // path to LoRA adapter file
+    scale?: number;           // scaling factor for the adapter (default: 1.0)
   }>;
   
   // Grammar-based sampling
-  grammar?: string;            // GBNF grammar for grammar-based sampling
+  grammar?: string;           // GBNF grammar for grammar-based sampling
 }
 
 export interface LlamaCompletionParams {
   // Basic completion parameters
-  prompt?: string;             // text prompt
-  system_prompt?: string;      // system prompt for chat mode (alternative to including it in messages)
-  messages?: LlamaMessage[];   // chat messages
+  prompt?: string;            // text prompt
+  system_prompt?: string;     // system prompt for chat mode (alternative to including it in messages)
+  messages?: LlamaMessage[];  // chat messages
   temperature?: number;        // sampling temperature (default: 0.8)
   top_p?: number;              // top-p sampling (default: 0.95)
   top_k?: number;              // top-k sampling (default: 40)
@@ -84,10 +84,10 @@ export interface LlamaCompletionParams {
   // Advanced parameters (matching llama.cpp server)
   repeat_penalty?: number;     // repetition penalty (default: 1.1)
   repeat_last_n?: number;      // last n tokens to consider for repetition penalty (default: 64)
-  frequency_penalty?: number;  // frequency penalty (default: 0.0)
-  presence_penalty?: number;   // presence penalty (default: 0.0)
-  seed?: number;               // RNG seed (default: -1, random)
-  grammar?: string;            // GBNF grammar for structured output
+  frequency_penalty?: number;   // frequency penalty (default: 0.0)
+  presence_penalty?: number;    // presence penalty (default: 0.0)
+  seed?: number;                // RNG seed (default: -1, random)
+  grammar?: string;             // GBNF grammar for structured output
 }
 
 export interface LlamaMessage {
@@ -97,12 +97,35 @@ export interface LlamaMessage {
   name?: string;
 }
 
+export interface JsonSchemaObject {
+  type: 'object';
+  properties: {
+    [key: string]: JsonSchemaProperty;
+  };
+  required?: string[];
+  description?: string;
+}
+
+export interface JsonSchemaArray {
+  type: 'array';
+  items: JsonSchemaProperty;
+  description?: string;
+}
+
+export type JsonSchemaScalar = {
+  type: 'string' | 'number' | 'boolean' | 'null';
+  enum?: string[];
+  description?: string;
+};
+
+export type JsonSchemaProperty = JsonSchemaObject | JsonSchemaArray | JsonSchemaScalar;
+
 export interface LlamaTool {
   type: 'function';
   function: {
     name: string;
     description?: string;
-    parameters: Record<string, any>;
+    parameters: JsonSchemaObject;
   };
 }
 
@@ -221,8 +244,6 @@ export interface Spec extends TurboModule {
     architecture?: string;
   }>;
 
-  // Convert JSON schema to GBNF grammar
-  jsonSchemaToGbnf(schema: Record<string, any>): Promise<string>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('LlamaCppRn');

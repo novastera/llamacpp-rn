@@ -11,7 +11,6 @@
 #include "LlamaCppModel.h"
 
 // Include the llama.cpp common headers
-#include "json-schema-to-grammar.h"
 #include "chat.h"
 
 #if defined(__ANDROID__) || defined(__linux__)
@@ -39,35 +38,11 @@ static jsi::Value __hostFunction_LlamaCppRnSpecLoadLlamaModelInfo(
   return static_cast<LlamaCppRn *>(&turboModule)->loadLlamaModelInfo(rt, args[0].getString(rt));
 }
 
-/**
- * Converts a JSON Schema to GBNF (Grammar BNF) for constrained generation
- * 
- * @param args - An object with a "schema" property that contains the JSON Schema as a string
- * Example:
- * {
- *   schema: JSON.stringify({
- *     type: "object",
- *     properties: {
- *       name: { type: "string" },
- *       age: { type: "number" }
- *     },
- *     required: ["name"]
- *   })
- * }
- * 
- * @returns A string containing the GBNF grammar
- */
-static jsi::Value __hostFunction_LlamaCppRnSpecJsonSchemaToGbnf(
-    jsi::Runtime &rt, TurboModule &turboModule, const jsi::Value *args, size_t count) {
-  return static_cast<LlamaCppRn *>(&turboModule)->jsonSchemaToGbnf(rt, args[0].getObject(rt));
-}
-
 LlamaCppRn::LlamaCppRn(std::shared_ptr<CallInvoker> jsInvoker)
     : TurboModule(kModuleName, std::move(jsInvoker)) {
   // Initialize and register methods
   methodMap_["initLlama"] = MethodMetadata{1, __hostFunction_LlamaCppRnSpecInitLlama};
   methodMap_["loadLlamaModelInfo"] = MethodMetadata{1, __hostFunction_LlamaCppRnSpecLoadLlamaModelInfo};
-  methodMap_["jsonSchemaToGbnf"] = MethodMetadata{1, __hostFunction_LlamaCppRnSpecJsonSchemaToGbnf};
 }
 
 std::shared_ptr<TurboModule> LlamaCppRn::create(std::shared_ptr<CallInvoker> jsInvoker) {
@@ -331,72 +306,6 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
     return createModelObject(runtime, rn_ctx_.get());
   } catch (const std::exception& e) {
     fprintf(stderr, "initLlama error: %s\n", e.what());
-    throw jsi::JSError(runtime, e.what());
-  }
-}
-
-/**
- * Converts a JSON Schema to GBNF (Grammar BNF) for constrained generation
- * 
- * @param runtime - The JavaScript runtime
- * @param schema - An object with a "schema" property that contains the JSON Schema as a string
- * Example:
- * {
- *   schema: JSON.stringify({
- *     type: "object",
- *     properties: {
- *       name: { type: "string" },
- *       age: { type: "number" }
- *     },
- *     required: ["name"]
- *   })
- * }
- * 
- * @returns A string containing the GBNF grammar
- */
-jsi::Value LlamaCppRn::jsonSchemaToGbnf(jsi::Runtime &runtime, jsi::Object schema) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  
-  try {
-    // Check if schema property exists
-    if (!schema.hasProperty(runtime, "schema")) {
-      throw std::runtime_error("Missing required parameter: schema");
-    }
-
-    // Get the schema property and verify it's a string
-    jsi::Value schemaValue = schema.getProperty(runtime, "schema");
-    if (!schemaValue.isString()) {
-      throw std::runtime_error("Schema must be a string");
-    }
-
-    // Parse the JSON schema
-    std::string jsonSchemaString = schemaValue.asString(runtime).utf8(runtime);
-    
-    // Handle empty schema
-    if (jsonSchemaString.empty()) {
-      throw std::runtime_error("Schema cannot be empty");
-    }
-    
-    // Verify the JSON is valid
-    try {
-      auto parsed_json = nlohmann::json::parse(jsonSchemaString);
-    } catch (const nlohmann::json::exception& e) {
-      throw std::runtime_error(std::string("Invalid JSON in schema: ") + e.what());
-    }
-    
-    // Convert the JSON schema to a GBNF grammar
-    std::string gbnfGrammar;
-    try {
-      gbnfGrammar = json_schema_to_grammar(jsonSchemaString);
-    } catch (const std::exception& e) {
-      throw std::runtime_error(std::string("Failed to convert schema to grammar: ") + e.what());
-    }
-    
-    // Return the GBNF grammar
-    return jsi::String::createFromUtf8(runtime, gbnfGrammar);
-  } catch (const std::exception& e) {
-    // Log the error and rethrow
-    fprintf(stderr, "jsonSchemaToGbnf error: %s\n", e.what());
     throw jsi::JSError(runtime, e.what());
   }
 }
