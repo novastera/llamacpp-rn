@@ -169,20 +169,6 @@ CompletionOptions LlamaCppModel::parseCompletionOptions(jsi::Runtime& rt, const 
     options.grammar = obj.getProperty(rt, "grammar").asString(rt).utf8(rt);
   }
   
-  // Extract chat template options
-  // jinja is set in the model init as in server.cpp start
-  /*if (obj.hasProperty(rt, "jinja") && !obj.getProperty(rt, "jinja").isUndefined()) {
-    options.use_jinja = obj.getProperty(rt, "jinja").asBool();
-  } else if (obj.hasProperty(rt, "use_jinja") && !obj.getProperty(rt, "use_jinja").isUndefined()) {
-    options.use_jinja = obj.getProperty(rt, "use_jinja").asBool();
-  }*/
-  
-  if (obj.hasProperty(rt, "chat_template") && !obj.getProperty(rt, "chat_template").isUndefined()) {
-    options.chat_template = obj.getProperty(rt, "chat_template").asString(rt).utf8(rt);
-  } else if (obj.hasProperty(rt, "template_name") && !obj.getProperty(rt, "template_name").isUndefined()) {
-    options.chat_template = obj.getProperty(rt, "template_name").asString(rt).utf8(rt);
-  }
-  
   if (obj.hasProperty(rt, "ignore_eos") && !obj.getProperty(rt, "ignore_eos").isUndefined()) {
     options.ignore_eos = obj.getProperty(rt, "ignore_eos").asBool();
   }
@@ -213,11 +199,99 @@ CompletionOptions LlamaCppModel::parseCompletionOptions(jsi::Runtime& rt, const 
             auto contentVal = msgObj.getProperty(rt, "content");
             if (contentVal.isString()) {
               msgJson["content"] = contentVal.asString(rt).utf8(rt);
+            } else if (contentVal.isNull()) {
+              msgJson["content"] = nullptr;
             }
           }
           
           if (msgObj.hasProperty(rt, "name")) {
             msgJson["name"] = msgObj.getProperty(rt, "name").asString(rt).utf8(rt);
+          }
+          
+          // Handle tool_calls if present
+          if (msgObj.hasProperty(rt, "tool_calls") && msgObj.getProperty(rt, "tool_calls").isObject()) {
+            auto toolCallsVal = msgObj.getProperty(rt, "tool_calls").getObject(rt);
+            if (toolCallsVal.isArray(rt)) {
+              auto toolCallsArr = toolCallsVal.getArray(rt);
+              json toolCallsJson = json::array();
+              
+              for (size_t j = 0; j < toolCallsArr.size(rt); j++) {
+                auto tcVal = toolCallsArr.getValueAtIndex(rt, j);
+                if (tcVal.isObject()) {
+                  auto tcObj = tcVal.getObject(rt);
+                  json tcJson = json::object();
+                  
+                  if (tcObj.hasProperty(rt, "id")) {
+                    tcJson["id"] = tcObj.getProperty(rt, "id").asString(rt).utf8(rt);
+                  }
+                  
+                  if (tcObj.hasProperty(rt, "type")) {
+                    tcJson["type"] = tcObj.getProperty(rt, "type").asString(rt).utf8(rt);
+                  }
+                  
+                  if (tcObj.hasProperty(rt, "function") && tcObj.getProperty(rt, "function").isObject()) {
+                    auto fnObj = tcObj.getProperty(rt, "function").getObject(rt);
+                    json fnJson = json::object();
+                    
+                    if (fnObj.hasProperty(rt, "name")) {
+                      fnJson["name"] = fnObj.getProperty(rt, "name").asString(rt).utf8(rt);
+                    }
+                    
+                    if (fnObj.hasProperty(rt, "parameters")) {
+                      // For parameters, parse it as a JSON object
+                      auto paramsVal = fnObj.getProperty(rt, "parameters");
+                      if (paramsVal.isObject()) {
+                        try {
+                          // Convert the JSI object directly to nlohmann::json
+                          auto paramsObj = paramsVal.getObject(rt);
+                          json fnParams = json::object();
+                          
+                          // Extract properties directly from the JSI object
+                          jsi::Array propNames = paramsObj.getPropertyNames(rt);
+                          size_t propCount = propNames.size(rt);
+                          for (size_t i = 0; i < propCount; i++) {
+                            jsi::String propName = propNames.getValueAtIndex(rt, i).asString(rt);
+                            std::string key = propName.utf8(rt);
+                            auto value = paramsObj.getProperty(rt, propName);
+                            
+                            if (value.isString()) {
+                              fnParams[key] = value.asString(rt).utf8(rt);
+                            } else if (value.isNumber()) {
+                              fnParams[key] = value.asNumber();
+                            } else if (value.isBool()) {
+                              fnParams[key] = value.getBool();
+                            } else if (value.isNull()) {
+                              fnParams[key] = nullptr;
+                            } else if (value.isObject()) {
+                              if (value.getObject(rt).isArray(rt)) {
+                                fnParams[key] = json::array();
+                              } else {
+                                fnParams[key] = json::object();
+                              }
+                            }
+                          }
+                          
+                          fnJson["parameters"] = fnParams;
+                        } catch (const std::exception&) {
+                          fnJson["parameters"] = json::object();
+                        }
+                      }
+                    }
+                    
+                    tcJson["function"] = fnJson;
+                  }
+                  
+                  toolCallsJson.push_back(tcJson);
+                }
+              }
+              
+              msgJson["tool_calls"] = toolCallsJson;
+            }
+          }
+          
+          // Handle tool_call_id if present
+          if (msgObj.hasProperty(rt, "tool_call_id")) {
+            msgJson["tool_call_id"] = msgObj.getProperty(rt, "tool_call_id").asString(rt).utf8(rt);
           }
           
           messagesJson.push_back(msgJson);
@@ -228,88 +302,102 @@ CompletionOptions LlamaCppModel::parseCompletionOptions(jsi::Runtime& rt, const 
     }
   }
   
-  // Helper function to convert JSI objects to nlohmann::json
-  std::function<nlohmann::json(const jsi::Object&)> jsiObjectToJson;
-  
-  jsiObjectToJson = [&rt, &jsiObjectToJson](const jsi::Object& jsObject) -> nlohmann::json {
-    try {
-      if (jsObject.isArray(rt)) {
-        nlohmann::json jsonArray = nlohmann::json::array();
-        jsi::Array jsArray = jsObject.asArray(rt);
-        size_t size = jsArray.size(rt);
-        
-        for (size_t i = 0; i < size; i++) {
-          jsi::Value value = jsArray.getValueAtIndex(rt, i);
-          if (value.isObject()) {
-            jsonArray.push_back(jsiObjectToJson(value.asObject(rt)));
-          } else if (value.isString()) {
-            jsonArray.push_back(value.asString(rt).utf8(rt));
-          } else if (value.isNumber()) {
-            jsonArray.push_back(value.asNumber());
-          } else if (value.isBool()) {
-            jsonArray.push_back(value.asBool());
-          } else if (value.isNull()) {
-            jsonArray.push_back(nullptr);
-          } else {
-            // Skip unknown types
-            jsonArray.push_back(nullptr);
-          }
-        }
-        return jsonArray;
-      } else {
-        nlohmann::json jsonObj = nlohmann::json::object();
-        jsi::Array propNames = jsObject.getPropertyNames(rt);
-        size_t size = propNames.size(rt);
-        
-        for (size_t i = 0; i < size; i++) {
-          std::string propName = propNames.getValueAtIndex(rt, i).asString(rt).utf8(rt);
-          
-          // Skip if property name is empty
-          if (propName.empty()) {
-            continue;
-          }
-          
-          // Get the property value safely
-          jsi::Value value;
-          try {
-            value = jsObject.getProperty(rt, propName.c_str());
-          } catch (...) {
-            // Skip properties that can't be accessed
-            continue;
-          }
-          
-          // Convert the value based on its type
-          if (value.isObject()) {
-            jsonObj[propName] = jsiObjectToJson(value.asObject(rt));
-          } else if (value.isString()) {
-            jsonObj[propName] = value.asString(rt).utf8(rt);
-          } else if (value.isNumber()) {
-            jsonObj[propName] = value.asNumber();
-          } else if (value.isBool()) {
-            jsonObj[propName] = value.asBool();
-          } else if (value.isNull()) {
-            jsonObj[propName] = nullptr;
-          } else {
-            // Skip unknown types
-            jsonObj[propName] = nullptr;
-          }
-        }
-        return jsonObj;
-      }
-    } catch (const std::exception& e) {
-      // Return empty object on error to avoid crashing
-      if (jsObject.isArray(rt)) {
-        return nlohmann::json::array();
-      } else {
-        return nlohmann::json::object();
-      }
-    }
-  };
-  
   // Extract and parse tools if present
   if (obj.hasProperty(rt, "tools") && obj.getProperty(rt, "tools").isObject()) {
     auto toolsVal = obj.getProperty(rt, "tools").getObject(rt);
-    options.tools = jsiObjectToJson(toolsVal);
+    if (toolsVal.isArray(rt)) {
+      auto toolsArr = toolsVal.getArray(rt);
+      json toolsJson = json::array();
+      
+      for (size_t i = 0; i < toolsArr.size(rt); i++) {
+        auto toolVal = toolsArr.getValueAtIndex(rt, i);
+        if (toolVal.isObject()) {
+          auto toolObj = toolVal.getObject(rt);
+          json toolJson = json::object();
+          
+          if (toolObj.hasProperty(rt, "type")) {
+            toolJson["type"] = toolObj.getProperty(rt, "type").asString(rt).utf8(rt);
+          }
+          
+          if (toolObj.hasProperty(rt, "function") && toolObj.getProperty(rt, "function").isObject()) {
+            auto fnObj = toolObj.getProperty(rt, "function").getObject(rt);
+            json fnJson = json::object();
+            
+            if (fnObj.hasProperty(rt, "name")) {
+              fnJson["name"] = fnObj.getProperty(rt, "name").asString(rt).utf8(rt);
+            }
+            
+            if (fnObj.hasProperty(rt, "description")) {
+              fnJson["description"] = fnObj.getProperty(rt, "description").asString(rt).utf8(rt);
+            }
+            
+            if (fnObj.hasProperty(rt, "parameters")) {
+              // For parameters, parse it as a JSON object
+              auto paramsVal = fnObj.getProperty(rt, "parameters");
+              if (paramsVal.isObject()) {
+                try {
+                  // Convert the JSI object directly to nlohmann::json
+                  auto paramsObj = paramsVal.getObject(rt);
+                  json fnParams = json::object();
+                  
+                  // Extract properties directly from the JSI object
+                  jsi::Array propNames = paramsObj.getPropertyNames(rt);
+                  size_t propCount = propNames.size(rt);
+                  for (size_t i = 0; i < propCount; i++) {
+                    jsi::String propName = propNames.getValueAtIndex(rt, i).asString(rt);
+                    std::string key = propName.utf8(rt);
+                    auto value = paramsObj.getProperty(rt, propName);
+                    
+                    if (value.isString()) {
+                      fnParams[key] = value.asString(rt).utf8(rt);
+                    } else if (value.isNumber()) {
+                      fnParams[key] = value.asNumber();
+                    } else if (value.isBool()) {
+                      fnParams[key] = value.getBool();
+                    } else if (value.isNull()) {
+                      fnParams[key] = nullptr;
+                    } else if (value.isObject()) {
+                      // For nested objects, we use a simplified approach
+                      if (value.getObject(rt).isArray(rt)) {
+                        fnParams[key] = json::array();
+                      } else {
+                        fnParams[key] = json::object();
+                      }
+                    }
+                  }
+                  
+                  fnJson["parameters"] = fnParams;
+                } catch (const std::exception&) {
+                  fnJson["parameters"] = json::object();
+                }
+              }
+            }
+            
+            toolJson["function"] = fnJson;
+          }
+          
+          toolsJson.push_back(toolJson);
+        }
+      }
+      
+      options.tools = toolsJson;
+    }
+  }
+  
+  // Extract tool_choice if present
+  if (obj.hasProperty(rt, "tool_choice") && !obj.getProperty(rt, "tool_choice").isUndefined()) {
+    auto toolChoiceVal = obj.getProperty(rt, "tool_choice");
+    if (toolChoiceVal.isString()) {
+      options.tool_choice = toolChoiceVal.asString(rt).utf8(rt);
+    } else if (toolChoiceVal.isObject()) {
+      // Handle the case where tool_choice is an object with "type": "function", etc.
+      options.tool_choice = "required"; // Default to "required" if a specific tool is selected
+    }
+  }
+  
+  // Extract chat template name if provided
+  if (obj.hasProperty(rt, "chat_template") && !obj.getProperty(rt, "chat_template").isUndefined()) {
+    options.chat_template = obj.getProperty(rt, "chat_template").asString(rt).utf8(rt);
   }
   
   return options;
@@ -393,16 +481,69 @@ CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std
 jsi::Object LlamaCppModel::completionResultToJsi(jsi::Runtime& rt, const CompletionResult& result) {
   jsi::Object jsResult(rt);
 
-  // Just return the raw completion result
-  jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.content));
-  jsResult.setProperty(rt, "prompt_tokens", jsi::Value(result.n_prompt_tokens));
-  jsResult.setProperty(rt, "generated_tokens", jsi::Value(result.n_predicted_tokens));
+  // Check if this is a chat completion
+  if (!result.chat_response.empty()) {
+    // For chat completions, convert the JSON response directly to JSI
+    jsi::Object chatResponse = jsonToJsi(rt, result.chat_response).asObject(rt);
+    
+    // Add tool_calls as a top-level property for compatibility with clients
+    // that expect tool_calls at the top level rather than under choices[0].message
+    if (result.chat_response.contains("choices") && 
+        !result.chat_response["choices"].empty() &&
+        result.chat_response["choices"][0].contains("message") &&
+        result.chat_response["choices"][0]["message"].contains("tool_calls")) {
+        
+      // Always add tool_calls to the top level (don't check if it exists)
+      chatResponse.setProperty(rt, "tool_calls", 
+        jsonToJsi(rt, result.chat_response["choices"][0]["message"]["tool_calls"]));
+    }
+    
+    return chatResponse;
+  }
 
+  // Standard completion result
+  jsResult.setProperty(rt, "content", jsi::String::createFromUtf8(rt, result.content));
+  jsResult.setProperty(rt, "timings", jsi::Object(rt));
+  jsResult.setProperty(rt, "success", jsi::Value(result.success));
+  jsResult.setProperty(rt, "promptTokens", jsi::Value(result.n_prompt_tokens));
+  jsResult.setProperty(rt, "completionTokens", jsi::Value(result.n_predicted_tokens));
+  
   if (!result.success) {
     jsResult.setProperty(rt, "error", jsi::String::createFromUtf8(rt, result.error_msg));
+    jsResult.setProperty(rt, "errorType", jsi::Value((int)result.error_type));
   }
   
   return jsResult;
+}
+
+// Convert a JSON object to a JSI value
+jsi::Value LlamaCppModel::jsonToJsi(jsi::Runtime& rt, const json& j) {
+  if (j.is_null()) {
+    return jsi::Value::null();
+  } else if (j.is_boolean()) {
+    return jsi::Value(j.get<bool>());
+  } else if (j.is_number_integer()) {
+    return jsi::Value(j.get<int>());
+  } else if (j.is_number_float()) {
+    return jsi::Value(j.get<double>());
+  } else if (j.is_string()) {
+    return jsi::String::createFromUtf8(rt, j.get<std::string>());
+  } else if (j.is_array()) {
+    jsi::Array array(rt, j.size());
+    for (size_t i = 0; i < j.size(); i++) {
+      array.setValueAtIndex(rt, i, jsonToJsi(rt, j[i]));
+    }
+    return array;
+  } else if (j.is_object()) {
+    jsi::Object object(rt);
+    for (const auto& item : j.items()) {
+      object.setProperty(rt, item.key().c_str(), jsonToJsi(rt, item.value()));
+    }
+    return object;
+  }
+  
+  // Default case (shouldn't happen)
+  return jsi::Value::undefined();
 }
 
 // JSI method for completions
@@ -655,7 +796,7 @@ jsi::Value LlamaCppModel::embeddingJsi(jsi::Runtime& rt, const jsi::Value* args,
     
     // Get embedding size from the model
     const llama_model* model = llama_get_model(rn_ctx_->ctx);
-    int n_embd = llama_n_embd(model);
+    int n_embd = llama_model_n_embd(model);
     if (n_embd <= 0) {
       throw std::runtime_error("Invalid embedding dimension");
     }

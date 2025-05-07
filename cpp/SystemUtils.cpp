@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <cinttypes> // For PRId64 macros
 
 // Platform-specific includes
 #if defined(__APPLE__)
