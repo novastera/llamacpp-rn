@@ -393,83 +393,14 @@ CompletionResult LlamaCppModel::completion(const CompletionOptions& options, std
 jsi::Object LlamaCppModel::completionResultToJsi(jsi::Runtime& rt, const CompletionResult& result) {
   jsi::Object jsResult(rt);
 
-  if (rn_ctx_ && rn_ctx_->params.use_jinja && result.success) {
-    try {
-      // Use the stored chat format from params
-      common_chat_format format = rn_ctx_->params.chat_format;
-      
-      // Parse the response using llama.cpp's chat parser
-      common_chat_msg parsed = common_chat_parse(result.content, format);
-      
-      // Check if we have tool calls
-      if (!parsed.tool_calls.empty()) {
-        // Create a JSI array of tool calls
-        jsi::Array toolCallsArray(rt, parsed.tool_calls.size());
-        
-        for (size_t i = 0; i < parsed.tool_calls.size(); i++) {
-          const auto& tool_call = parsed.tool_calls[i];
-          jsi::Object toolCall(rt);
-          
-          // Set tool call properties
-          toolCall.setProperty(rt, "name", jsi::String::createFromUtf8(rt, tool_call.name));
-          toolCall.setProperty(rt, "arguments", jsi::String::createFromUtf8(rt, tool_call.arguments));
-          
-          // Set ID (use existing ID or generate one)
-          std::string id = tool_call.id;
-          if (id.empty()) {
-            id = gen_tool_call_id();
-          }
-          toolCall.setProperty(rt, "id", jsi::String::createFromUtf8(rt, id));
-          
-          toolCallsArray.setValueAtIndex(rt, i, toolCall);
-        }
-        
-        jsResult.setProperty(rt, "tool_calls", toolCallsArray);
-        
-        // Also add raw text for compatibility
-        jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.content));
-        
-        // If there's reasoning content, add it
-        if (!parsed.reasoning_content.empty()) {
-          jsResult.setProperty(rt, "reasoning", jsi::String::createFromUtf8(rt, parsed.reasoning_content));
-        }
-        
-        return jsResult;
-      }
-      // Check if we have content
-      else if (!parsed.content.empty()) {
-        jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, parsed.content));
-        
-        // If there's reasoning content, add it
-        if (!parsed.reasoning_content.empty()) {
-          jsResult.setProperty(rt, "reasoning", jsi::String::createFromUtf8(rt, parsed.reasoning_content));
-        }
-      }
-      // Fallback to using raw text
-      else {
-        jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.content));
-      }
-    } catch (const std::exception& e) {
-      // Handle parsing failure gracefully
-      jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.content));
-      // Add error information only in debug builds
-      #ifdef DEBUG
-      jsResult.setProperty(rt, "parse_error", jsi::String::createFromUtf8(rt, e.what()));
-      #endif
-    }
-  } else {
-    // Just use the content as plain text
-    jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.content));
-  }
+  // Just return the raw completion result
+  jsResult.setProperty(rt, "text", jsi::String::createFromUtf8(rt, result.content));
+  jsResult.setProperty(rt, "prompt_tokens", jsi::Value(result.n_prompt_tokens));
+  jsResult.setProperty(rt, "generated_tokens", jsi::Value(result.n_predicted_tokens));
 
-  // Add status related fields
   if (!result.success) {
     jsResult.setProperty(rt, "error", jsi::String::createFromUtf8(rt, result.error_msg));
   }
-  
-  // Set token count fields
-  jsResult.setProperty(rt, "prompt_tokens", jsi::Value(result.n_prompt_tokens));
-  jsResult.setProperty(rt, "generated_tokens", jsi::Value(result.n_predicted_tokens));
   
   return jsResult;
 }

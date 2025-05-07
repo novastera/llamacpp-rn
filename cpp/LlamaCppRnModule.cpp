@@ -176,21 +176,25 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
     
     std::string model_path = SystemUtils::normalizeFilePath(options.getProperty(runtime, "model").asString(runtime).utf8(runtime));
     
-    // Create common_params structure for initialization
-    common_params params = {};
+    // Initialize params with defaults
+    rn_common_params params;
     
+    // Set default sampling parameters
+    params.sampling = common_params_sampling();
+
     // Set model path
     params.model.path = model_path;
     
-    // Set context size and batch parameters
+    // Override defaults with user settings if provided
     SystemUtils::setIfExists(runtime, options, "n_ctx", params.n_ctx);
     SystemUtils::setIfExists(runtime, options, "n_batch", params.n_batch);
     SystemUtils::setIfExists(runtime, options, "n_ubatch", params.n_ubatch);
     SystemUtils::setIfExists(runtime, options, "n_keep", params.n_keep);
     
-    // Memory and resource options
+    // Memory and resource options - MUST respect user settings
     SystemUtils::setIfExists(runtime, options, "use_mmap", params.use_mmap);
     SystemUtils::setIfExists(runtime, options, "use_mlock", params.use_mlock);
+    SystemUtils::setIfExists(runtime, options, "use_jinja", params.use_jinja);
     
     // Extract threading parameters (preserve custom thread logic)
     int n_threads = 0; // 0 = auto
@@ -240,7 +244,6 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
     if (SystemUtils::setIfExists(runtime, options, "chat_template", chat_template)) {
       params.chat_template = chat_template;
     }
-    SystemUtils::setIfExists(runtime, options, "use_jinja", params.use_jinja);
     
     // Support for LoRA adapters
     if (options.hasProperty(runtime, "lora_adapters") && options.getProperty(runtime, "lora_adapters").isObject()) {
