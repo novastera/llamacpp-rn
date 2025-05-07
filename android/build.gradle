@@ -11,8 +11,15 @@ buildscript {
 
 apply plugin: 'com.android.library'
 
-// For Android, we always build from source - but keep the env var for backward compatibility
-def buildFromSource = true
+// Check if we should build from source or use prebuilt libraries
+// This allows developers to set rnllamaBuildFromSource=true in their gradle.properties
+// Default is false for npm package users (use prebuilt libraries)
+def buildFromSource = rootProject.hasProperty('rnllamaBuildFromSource') ? 
+                       rootProject.rnllamaBuildFromSource.toBoolean() : 
+                       System.getenv('RN_LLAMA_BUILD_FROM_SOURCE')?.toBoolean() ?: false
+
+// Log whether we're building from source or using prebuilt libraries
+println "LlamaCppRn: ${buildFromSource ? 'Building from source' : 'Using prebuilt libraries'}"
 
 android {
     namespace "com.novastera.llamacpprn"
@@ -25,16 +32,19 @@ android {
         versionCode 1
         versionName "1.0"
 
-        externalNativeBuild {
-            cmake {
-                arguments "-DANDROID_STL=c++_shared",
-                          "-DCMAKE_BUILD_TYPE=Release",
-                          "-DANDROID_PLATFORM=android-23",
-                          "-DANDROID_CPP_FEATURES=rtti exceptions",
-                          "-DLLAMA_BUILD_EXAMPLES=OFF",
-                          "-DLLAMA_BUILD_SERVER=OFF",
-                          "-DBUILD_SHARED_LIBS=ON"
-                cppFlags "-std=c++17 -frtti -fexceptions -Oz -DRCT_NEW_ARCH_ENABLED=1"
+        // Only include CMake configurations if building from source
+        if (buildFromSource) {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DANDROID_STL=c++_shared",
+                              "-DCMAKE_BUILD_TYPE=Release",
+                              "-DANDROID_PLATFORM=android-23",
+                              "-DANDROID_CPP_FEATURES=rtti exceptions",
+                              "-DLLAMA_BUILD_EXAMPLES=OFF",
+                              "-DLLAMA_BUILD_SERVER=OFF",
+                              "-DBUILD_SHARED_LIBS=ON"
+                    cppFlags "-std=c++17 -frtti -fexceptions -Oz -DRCT_NEW_ARCH_ENABLED=1"
+                }
             }
         }
 
@@ -50,9 +60,12 @@ android {
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path "src/main/cpp/CMakeLists.txt"
+    // Only include CMake build if building from source
+    if (buildFromSource) {
+        externalNativeBuild {
+            cmake {
+                path "src/main/cpp/CMakeLists.txt"
+            }
         }
     }
 

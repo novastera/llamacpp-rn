@@ -899,27 +899,38 @@ build_for_abi() {
     # Find Vulkan library for this ABI in the NDK
     NDK_VULKAN_LIB=""
     if [ "$ABI" = "arm64-v8a" ]; then
+      # First try the expected path for ARM64
       NDK_VULKAN_LIB="$NDK_PATH/toolchains/llvm/prebuilt/$NDK_HOST_TAG/sysroot/usr/lib/aarch64-linux-android/$ANDROID_MIN_SDK/libvulkan.so"
+      
+      # If not found, search for it
+      if [ ! -f "$NDK_VULKAN_LIB" ]; then
+        echo -e "${YELLOW}Vulkan library not found at expected location, searching...${NC}"
+        NDK_VULKAN_LIB=$(find "$NDK_PATH" -name "libvulkan.so" | grep -E "aarch64|arm64" | head -1)
+      fi
     elif [ "$ABI" = "x86_64" ]; then
+      # First try the expected path for x86_64
       NDK_VULKAN_LIB="$NDK_PATH/toolchains/llvm/prebuilt/$NDK_HOST_TAG/sysroot/usr/lib/x86_64-linux-android/$ANDROID_MIN_SDK/libvulkan.so"
-    fi
-    
-    # If not found in the primary location, search in the NDK
-    if [ ! -f "$NDK_VULKAN_LIB" ]; then
-      echo -e "${YELLOW}Vulkan library not found at expected location, searching...${NC}"
-      if [ "$ABI" = "arm64-v8a" ]; then
-        NDK_VULKAN_LIB=$(find "$NDK_PATH" -name "libvulkan.so" | grep "aarch64" | head -1)
-      elif [ "$ABI" = "x86_64" ]; then
+      
+      # If not found, search for it
+      if [ ! -f "$NDK_VULKAN_LIB" ]; then
+        echo -e "${YELLOW}Vulkan library not found at expected location, searching...${NC}"
         NDK_VULKAN_LIB=$(find "$NDK_PATH" -name "libvulkan.so" | grep "x86_64" | head -1)
       fi
     fi
     
-    # Set Vulkan library path if found
-    if [ -f "$NDK_VULKAN_LIB" ]; then
-      echo -e "${GREEN}Found Vulkan library: $NDK_VULKAN_LIB${NC}"
-      CMAKE_FLAGS+=("-DVulkan_LIBRARY=$NDK_VULKAN_LIB")
+    # Set Vulkan library for linking
+    VULKAN_LINK_ARG=""
+    if [ "$BUILD_VULKAN" = true ] && [ -n "$NDK_VULKAN_LIB" ]; then
+      # Verify the architecture to avoid linking issues
+      if file "$NDK_VULKAN_LIB" 2>/dev/null | grep -q "$ABI"; then
+        VULKAN_LINK_ARG="$NDK_VULKAN_LIB"
+        echo -e "${GREEN}Using Vulkan library for linking: $VULKAN_LINK_ARG${NC}"
+      else
+        echo -e "${YELLOW}Found Vulkan library but architecture may not match $ABI: $NDK_VULKAN_LIB${NC}"
+        echo -e "${YELLOW}Skipping explicit Vulkan linking, will use dynamic linking${NC}"
+      fi
     else
-      echo -e "${YELLOW}Vulkan library not found, will try to link dynamically${NC}"
+      echo -e "${YELLOW}No suitable Vulkan library found for $ABI, will link dynamically${NC}"
     fi
     
     echo -e "${GREEN}Vulkan configuration complete${NC}"
@@ -1010,13 +1021,6 @@ EOF
         OPENCL_LINK_ARG="$OPENCL_ABI_LIB_DIR/libOpenCL.so"
         echo -e "${GREEN}Using OpenCL library for linking: $OPENCL_LINK_ARG${NC}"
       fi
-    fi
-    
-    # Set Vulkan library for linking
-    VULKAN_LINK_ARG=""
-    if [ "$BUILD_VULKAN" = true ] && [ -n "$NDK_VULKAN_LIB" ]; then
-      VULKAN_LINK_ARG="$NDK_VULKAN_LIB"
-      echo -e "${GREEN}Using Vulkan library for linking: $VULKAN_LINK_ARG${NC}"
     fi
     
     # Collect all libraries for linking
