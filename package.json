@@ -38,13 +38,15 @@
     "release": "release-it",
     "example": "npm --prefix example",
     "bootstrap": "npm --prefix example install && npm install && npm --prefix example run pods",
-    "setup-llama-cpp": "bash scripts/setupLlamaCpp.sh init",
-    "llama-status": "bash scripts/llama_cpp_source.sh status",
-    "llama-init": "bash scripts/llama_cpp_source.sh init",
+    "setup-llama-cpp": "node scripts/setup-llama-cpp.js",
+    "llama-status": "node scripts/setup-llama-cpp.js check",
+    "llama-init": "node scripts/setup-llama-cpp.js init",
     "llama-tags": "bash scripts/llama_cpp_source.sh list-tags",
-    "llama-from-source": "LLAMACPPRN_BUILD_FROM_SOURCE=true npm run setup-llama-cpp",
-    "llama-prebuilt": "npm run setup-llama-cpp",
-    "clean": "bash scripts/setupLlamaCpp.sh clean"
+    "llama-from-source": "LLAMACPPRN_BUILD_FROM_SOURCE=true node scripts/setup-llama-cpp.js",
+    "llama-prebuilt": "node scripts/setup-llama-cpp.js",
+    "clean": "node scripts/setup-llama-cpp.js clean",
+    "build-android": "node scripts/setup-android.js build-android",
+    "build-android-external": "node scripts/setup-android.js build-android-external"
   },
   "keywords": [
     "react-native",
