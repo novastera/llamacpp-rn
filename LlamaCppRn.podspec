@@ -15,6 +15,7 @@ Pod::Spec.new do |s|
 
   # Only include the necessary implementation files
   s.source_files = "ios/**/*.{h,m,mm}", 
+                   "cpp/build-info.cpp",
                    "cpp/LlamaCppRnModule.h", 
                    "cpp/LlamaCppRnModule.cpp", 
                    "cpp/LlamaCppModel.h", 
@@ -25,7 +26,6 @@ Pod::Spec.new do |s|
                    "cpp/rn-llama.hpp",
                    "cpp/rn-completion.cpp",
                    "cpp/llama.cpp/common/common.h",
-                   "cpp/llama.cpp/common/build-info.cpp",
                    "cpp/llama.cpp/common/json-schema-to-grammar.cpp",
                    "cpp/llama.cpp/common/json-schema-to-grammar.h",
                    "cpp/llama.cpp/common/common.cpp",
