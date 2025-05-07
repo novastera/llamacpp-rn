@@ -19,7 +19,6 @@ A React Native wrapper for [llama.cpp](https://github.com/ggml-org/llama.cpp) fo
 - Automatic CPU/GPU detection
 - Chat completion with templates
 - Embeddings generation
-- Grammar-based output constraints
 - Function/tool calling support
 
 ## What Needs Help

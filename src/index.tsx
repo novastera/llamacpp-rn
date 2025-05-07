@@ -31,11 +31,6 @@ export function loadLlamaModelInfo(
   return LlamaCppRn.loadLlamaModelInfo(modelPath);
 }
 
-// Function to convert JSON Schema to GBNF grammar
-export function jsonSchemaToGbnf(params: { schema: string }): Promise<string> {
-  return LlamaCppRn.jsonSchemaToGbnf(params);
-}
-
 // Export types for users of the module
 export type {
   LlamaModelParams,

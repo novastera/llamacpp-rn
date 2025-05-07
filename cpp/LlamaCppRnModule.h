@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 #include <mutex>
-#include "rn-llama.hpp"
+#include "LlamaCppModel.h"
 
 // Forward declarations for C++ only
 struct llama_model;
@@ -28,9 +28,8 @@ public:
       std::shared_ptr<CallInvoker> jsInvoker);
 
   // JavaScript accessible methods
-  jsi::Value initLlama(jsi::Runtime &runtime, jsi::Object params);
+  jsi::Value initLlama(jsi::Runtime &runtime, jsi::Object options);
   jsi::Value loadLlamaModelInfo(jsi::Runtime &runtime, jsi::String modelPath);
-  jsi::Value jsonSchemaToGbnf(jsi::Runtime &runtime, jsi::Object schema);
 
 private:
   // Helper methods

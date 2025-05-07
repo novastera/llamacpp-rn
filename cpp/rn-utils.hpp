@@ -22,7 +22,6 @@
 using json = nlohmann::ordered_json;
 
 #define DEFAULT_OAICOMPAT_MODEL "gpt-3.5-turbo"
-
 const static std::string build_info("b" + std::to_string(LLAMA_BUILD_NUMBER) + "-" + LLAMA_COMMIT);
 
 // Error types simplified for a library context
@@ -618,8 +617,4 @@ static json oaicompat_completion_params_parse(
 // Function to safely convert JSON to string
 static std::string safe_json_to_str(const json & data) {
     return data.dump(-1, ' ', false, json::error_handler_t::replace);
-}
-
-namespace facebook::react {
-// ... existing code ...
 }
