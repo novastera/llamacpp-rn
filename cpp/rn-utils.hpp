@@ -16,6 +16,8 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <unordered_map>
+#include <functional>
 
 using json = nlohmann::ordered_json;
 
@@ -42,6 +44,7 @@ void common_sampler_free(common_sampler* sampler);
 // CompletionOptions struct to represent parameters for completion requests
 struct CompletionOptions {
     std::string prompt;  // for simple completions
+    std::string model;   // model identifier
     json messages;       // for chat completions
     bool stream = false;
     int n_predict = -1;
@@ -80,6 +83,10 @@ struct CompletionOptions {
             {"seed", seed}
         };
 
+        if (!model.empty()) {
+            j["model"] = model;
+        }
+
         if (!grammar.empty()) {
             j["grammar"] = grammar;
             j["grammar_lazy"] = grammar_lazy;
@@ -94,36 +101,61 @@ struct CompletionOptions {
 
     // Convert to JSON for the chat completion API
     json to_chat_json() const {
-        json j = {
-            {"messages", messages},
-            {"stream", stream},
-            {"temperature", temperature},
-            {"top_p", top_p},
-            {"top_k", top_k},
-            {"min_p", min_p},
-            {"max_tokens", n_predict},
-            {"n_probs", n_probs},
-            {"post_sampling_probs", post_sampling_probs},
-            {"stop", stop},
-            {"ignore_eos", ignore_eos},
-            {"seed", seed}
-        };
-
-        if (!grammar.empty()) {
-            j["grammar"] = grammar;
-            j["grammar_lazy"] = grammar_lazy;
+        json data;
+        
+        // Add messages if provided
+        if (!messages.empty()) {
+            data["messages"] = messages;
+        }
+        
+        // Add model if provided
+        if (!model.empty()) {
+            data["model"] = model;
+        }
+        
+        // Add tools if provided
+        if (!tools.empty()) {
+            data["tools"] = tools;
+        }
+        
+        // Add tool_choice if provided
+        if (!tool_choice.empty()) {
+            if (tool_choice == "none" || tool_choice == "auto" || tool_choice == "required") {
+                data["tool_choice"] = tool_choice;
+            } else {
+                // Assume it's a JSON object
+                try {
+                    data["tool_choice"] = json::parse(tool_choice);
+                } catch (...) {
+                    // Fall back to string if not valid JSON
+                    data["tool_choice"] = tool_choice;
+                }
+            }
+        }
+        
+        // Add other parameters
+        data["temperature"] = temperature;
+        data["top_p"] = top_p;
+        data["max_tokens"] = n_predict;
+        data["stream"] = stream;
+        
+        if (seed >= 0) {
+            data["seed"] = seed;
+        }
+        
+        if (!stop.empty()) {
+            data["stop"] = stop;
         }
         
         if (!chat_template.empty()) {
-            j["chat_template"] = chat_template;
+            data["chat_template"] = chat_template;
         }
         
-        // Add tools and tool_choice if available
-        if (!tools.empty()) {
-            j["tools"] = tools;
-            j["tool_choice"] = tool_choice;
+        if (!grammar.empty()) {
+            data["grammar"] = grammar;
         }
-        return j;
+        
+        return data;
     }
 };
 
@@ -136,6 +168,9 @@ struct CompletionResult {
     int n_prompt_tokens = 0;
     int n_predicted_tokens = 0;
     std::vector<llama_token> tokens;
+    
+    // For chat completions, store the parsed OAI-compatible response
+    json chat_response;
 };
 
 // Utility functions
@@ -173,7 +208,7 @@ static std::string gen_tool_call_id() {
     for (int i = 0; i < 32; ++i) {
         result[i] = str[generator() % str.size()];
     }
-    return result;
+    return "call_" + result;
 }
 
 // Validate that a string is valid UTF-8
@@ -583,4 +618,8 @@ static json oaicompat_completion_params_parse(
 // Function to safely convert JSON to string
 static std::string safe_json_to_str(const json & data) {
     return data.dump(-1, ' ', false, json::error_handler_t::replace);
+}
+
+namespace facebook::react {
+// ... existing code ...
 }

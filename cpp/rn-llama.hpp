@@ -3,6 +3,8 @@
 #include "common.h"
 #include "llama.h"
 #include "chat.h"
+#include "chat-template.hpp"
+#include "json-schema-to-grammar.h"
 #include "rn-utils.hpp"
 
 #include <functional>

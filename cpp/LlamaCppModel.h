@@ -142,6 +142,11 @@ private:
   jsi::Object completionResultToJsi(jsi::Runtime& rt, const CompletionResult& result);
 
   /**
+   * Convert JSON to JSI value
+   */
+  jsi::Value jsonToJsi(jsi::Runtime& rt, const json& j);
+
+  /**
    * Initialize utility functions and handlers
    */
   void initHelpers();

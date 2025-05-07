@@ -12,6 +12,7 @@
 #include <functional>
 #include <mutex>
 #include <condition_variable>
+#include <random>
 
 namespace facebook::react {
 
@@ -359,48 +360,93 @@ CompletionResult run_chat_completion(
         // Convert chat options to JSON
         json data = options.to_chat_json();
         
-        // Parse into llama_params with proper chat template handling
-        json llama_params = oaicompat_completion_params_parse(
-            data, 
-            rn_ctx->params.use_jinja,
-            rn_ctx->params.reasoning_format,
-            rn_ctx->chat_templates.get()
-        );
-        
-        // Now run standard completion with the processed parameters
-        CompletionOptions processed_options = options;
-        processed_options.prompt = llama_params["prompt"].get<std::string>();
-        
-        // Store the chat format for proper parsing
-        if (llama_params.contains("chat_format") && llama_params["chat_format"].is_number_integer()) {
-            int format_int = llama_params["chat_format"].get<int>();
-            if (format_int >= 0 && format_int < COMMON_CHAT_FORMAT_COUNT) {
-                rn_ctx->params.chat_format = static_cast<common_chat_format>(format_int);
-            }
+        // Parse messages from options if they exist
+        std::vector<common_chat_msg> chat_msgs;
+        if (!data["messages"].empty()) {
+            chat_msgs = common_chat_msgs_parse_oaicompat(data["messages"]);
         }
         
-        // Copy any stop words from the processed parameters
-        if (llama_params.contains("stop") && llama_params["stop"].is_array()) {
-            processed_options.stop.clear();
-            for (const auto& stop : llama_params["stop"]) {
-                processed_options.stop.push_back(stop.get<std::string>());
-            }
+        // Apply template
+        common_chat_templates_inputs template_inputs;
+        template_inputs.messages = chat_msgs;
+        template_inputs.add_generation_prompt = true;
+        template_inputs.use_jinja = options.use_jinja;
+        template_inputs.extract_reasoning = true; // Default to true to extract reasoning content if available
+        
+        // Add grammar if present in options
+        if (!options.grammar.empty()) {
+            template_inputs.grammar = options.grammar;
         }
         
-        // Add any additional stops from the chat template
-        if (llama_params.contains("additional_stops") && llama_params["additional_stops"].is_array()) {
-            for (const auto& stop : llama_params["additional_stops"]) {
-                processed_options.stop.push_back(stop.get<std::string>());
-            }
+        // Parse tools if present
+        if (data.contains("tools") && !data["tools"].empty()) {
+            template_inputs.tools = common_chat_tools_parse_oaicompat(data["tools"]);
+            // Check if parallel tool calls are allowed (advanced feature)
+            template_inputs.parallel_tool_calls = data.contains("parallel_tool_calls") ? 
+                json_value(data, "parallel_tool_calls", false) : false;
         }
         
-        // Run the completion with the processed options
-        return run_completion(rn_ctx, processed_options, callback);
+        // Parse tool_choice if present
+        if (data.contains("tool_choice") && !data["tool_choice"].is_null()) {
+            template_inputs.tool_choice = common_chat_tool_choice_parse_oaicompat(
+                data["tool_choice"].is_string() 
+                ? data["tool_choice"].get<std::string>() 
+                : data["tool_choice"].dump());
+        }
         
+        // Apply template
+        auto chat_params = common_chat_templates_apply(rn_ctx->chat_templates.get(), template_inputs);
+        
+        // Set up completion options
+        CompletionOptions cmpl_options = options;
+        cmpl_options.prompt = chat_params.prompt;
+        
+        // Apply grammar if needed
+        if (!chat_params.grammar.empty()) {
+            cmpl_options.grammar = chat_params.grammar;
+        }
+        
+        // Run standard completion with the processed prompt
+        result = run_completion(rn_ctx, cmpl_options, callback);
+        
+        if (result.success) {
+            // Create OpenAI-compatible response
+            json response = {
+                {"id", gen_chatcmplid()},
+                {"object", "chat.completion"},
+                {"created", (int)std::time(nullptr)},
+                {"model", options.model.empty() ? "llamacpp-rn" : options.model}
+            };
+            
+            json choices = json::array();
+            json choice = {
+                {"index", 0},
+                {"message", {
+                    {"role", "assistant"},
+                    {"content", result.content}
+                }},
+                {"finish_reason", "stop"}
+            };
+            
+            choices.push_back(choice);
+            response["choices"] = choices;
+            
+            // Add usage information
+            response["usage"] = {
+                {"prompt_tokens", result.n_prompt_tokens},
+                {"completion_tokens", result.n_predicted_tokens},
+                {"total_tokens", result.n_prompt_tokens + result.n_predicted_tokens}
+            };
+            
+            // Store the response in the result
+            result.chat_response = response;
+        }
+        
+        return result;
     } catch (const std::exception& e) {
         result.success = false;
-        result.error_msg = e.what();
-        result.error_type = RN_ERROR_INVALID_PARAM;
+        result.error_msg = std::string("Chat completion error: ") + e.what();
+        result.error_type = RN_ERROR_GENERAL;
         return result;
     }
 }

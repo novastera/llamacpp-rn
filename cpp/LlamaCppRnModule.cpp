@@ -294,20 +294,29 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
     // Set additional fields
     rn_params.use_jinja = params.use_jinja;
     rn_params.reasoning_format = COMMON_REASONING_FORMAT_NONE;
-    rn_params.chat_format = COMMON_CHAT_FORMAT_CONTENT_ONLY;
+    // Use chatml format by default instead of content-only for better tool support
+    rn_params.chat_format = COMMON_CHAT_FORMAT_GENERIC;
     // Now assign to the context
     rn_ctx_->params = rn_params;
     
     // Initialize chat templates with proper error handling
     try {
-        rn_ctx_->chat_templates = common_chat_templates_init(rn_ctx_->model, params.chat_template);
+        // Get BOS and EOS tokens if provided in options
+        std::string bos_token_override;
+        std::string eos_token_override;
+        
+        SystemUtils::setIfExists(runtime, options, "bos_token", bos_token_override);
+        SystemUtils::setIfExists(runtime, options, "eos_token", eos_token_override);
+        
+        rn_ctx_->chat_templates = common_chat_templates_init(
+            rn_ctx_->model, 
+            params.chat_template,
+            bos_token_override,
+            eos_token_override
+        );
+        
         if (!rn_ctx_->chat_templates) {
             throw std::runtime_error("Failed to initialize chat templates");
-        }
-        
-        // Test the chat template with an example
-        if (params.use_jinja) {
-            common_chat_format_example(rn_ctx_->chat_templates.get(), true);
         }
     } catch (const std::exception& e) {
         // Log warning and fallback to chatml
