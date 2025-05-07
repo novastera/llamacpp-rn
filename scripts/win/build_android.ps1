@@ -13,6 +13,16 @@ $RED = [System.ConsoleColor]::Red
 $GREEN = [System.ConsoleColor]::Green
 $YELLOW = [System.ConsoleColor]::Yellow
 
+# Setup CMake path
+$CMAKE_PATH = "C:\Develop\Android\Sdk\cmake\3.22.1\bin"
+if (Test-Path $CMAKE_PATH) {
+    $env:PATH = "$CMAKE_PATH;$env:PATH"
+    Write-Host "Added CMake to PATH: $CMAKE_PATH" -ForegroundColor $GREEN
+} else {
+    Write-Host "CMake not found at expected path: $CMAKE_PATH" -ForegroundColor $RED
+    exit 1
+}
+
 # Function to check if a command exists
 function Test-Command {
     param (
@@ -31,14 +41,6 @@ function Test-Command {
     }
 }
 
-# Check for required tools
-if (-not (Test-Command "cmake")) {
-    Write-Host "CMake not found. Please install CMake and add it to your PATH." -ForegroundColor $RED
-    Write-Host "You can download it from: https://cmake.org/download/" -ForegroundColor $YELLOW
-    Write-Host "After installation, make sure to add CMake to your PATH." -ForegroundColor $YELLOW
-    exit 1
-}
-
 # Print usage information
 function Print-Usage {
     Write-Host "Usage: $($MyInvocation.MyCommand.Name) [options]"
@@ -52,8 +54,6 @@ function Print-Usage {
     Write-Host "  --clean                Clean previous builds before building"
     Write-Host "  --clean-prebuilt       Clean entire prebuilt directory for a fresh start"
     Write-Host "  --install-deps         Install dependencies (OpenCL, etc.)"
-    Write-Host "  --glslc-path=[path]    Specify a custom path to the GLSLC compiler"
-    Write-Host "  --ndk-path=[path]      Specify a custom path to the Android NDK"
 }
 
 # Default values
@@ -64,8 +64,6 @@ $BUILD_TYPE = "Release"
 $CLEAN_BUILD = $false
 $CLEAN_PREBUILT = $false
 $INSTALL_DEPS = $false
-$CUSTOM_GLSLC_PATH = ""
-$CUSTOM_NDK_PATH = ""
 
 # Parse arguments
 foreach ($arg in $args) {
@@ -97,12 +95,6 @@ foreach ($arg in $args) {
         }
         '^--install-deps$' {
             $INSTALL_DEPS = $true
-        }
-        '^--glslc-path=(.+)$' {
-            $CUSTOM_GLSLC_PATH = $matches[1]
-        }
-        '^--ndk-path=(.+)$' {
-            $CUSTOM_NDK_PATH = $matches[1]
         }
         default {
             Write-Host "Unknown argument: $arg" -ForegroundColor $RED
@@ -161,84 +153,31 @@ if (-not $env:ANDROID_HOME) {
     }
 }
 
-# Try to use the user-provided NDK path first
-if ($CUSTOM_NDK_PATH) {
-    $NDK_PATH = $CUSTOM_NDK_PATH
-    Write-Host "Using custom NDK path: $NDK_PATH" -ForegroundColor $GREEN
-    
-    if (-not (Test-Path $NDK_PATH)) {
-        Write-Host "Custom NDK path not found at $NDK_PATH" -ForegroundColor $RED
-        exit 1
-    }
-}
-else {
-    # First try to find any available NDK
-    $NDK_DIR = Join-Path $env:ANDROID_HOME "ndk"
-    if (Test-Path $NDK_DIR) {
-        # Get list of NDK versions sorted by version number (newest first)
-        $NEWEST_NDK_VERSION = Get-ChildItem $NDK_DIR | Sort-Object -Descending | Select-Object -First 1
-        
-        if ($NEWEST_NDK_VERSION) {
-            $NDK_PATH = Join-Path $NDK_DIR $NEWEST_NDK_VERSION.Name
-            Write-Host "Found NDK version $($NEWEST_NDK_VERSION.Name), using this version" -ForegroundColor $GREEN
-        }
-        else {
-            # If no NDK is found, fall back to the version from environment
-            $NDK_PATH = Join-Path $NDK_DIR $env:NDK_VERSION
-            Write-Host "No NDK versions found in $NDK_DIR, trying to use version $($env:NDK_VERSION) from environment" -ForegroundColor $YELLOW
-            
-            if (-not (Test-Path $NDK_PATH)) {
-                Write-Host "NDK version $($env:NDK_VERSION) not found at $NDK_PATH" -ForegroundColor $RED
-                Write-Host "Please install Android NDK using Android SDK Manager:" -ForegroundColor $YELLOW
-                Write-Host "`$ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat `"ndk;latest`"" -ForegroundColor $YELLOW
-                exit 1
-            }
-        }
-    }
-    else {
-        # Try to find the NDK version specified in environment as last resort
-        $NDK_PATH = Join-Path $NDK_DIR $env:NDK_VERSION
-        Write-Host "No NDK directory found, trying to use version $($env:NDK_VERSION) from environment" -ForegroundColor $YELLOW
-        
-        if (-not (Test-Path $NDK_PATH)) {
-            Write-Host "NDK directory not found at $NDK_DIR" -ForegroundColor $RED
-            Write-Host "NDK version $($env:NDK_VERSION) from environment not found either" -ForegroundColor $RED
-            Write-Host "Please install Android NDK using Android SDK Manager:" -ForegroundColor $YELLOW
-            Write-Host "`$ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat `"ndk;latest`"" -ForegroundColor $YELLOW
-            exit 1
-        }
-    }
+# Find NDK
+$NDK_DIR = Join-Path $env:ANDROID_HOME "ndk"
+if (-not (Test-Path $NDK_DIR)) {
+    Write-Host "NDK directory not found at $NDK_DIR" -ForegroundColor $RED
+    Write-Host "Please install Android NDK using Android SDK Manager:" -ForegroundColor $YELLOW
+    Write-Host "`$ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat `"ndk;latest`"" -ForegroundColor $YELLOW
+    exit 1
 }
 
-# Extract the Android platform version from the NDK path
-$PLATFORMS_DIR = Join-Path $NDK_PATH "platforms"
-if (Test-Path $PLATFORMS_DIR) {
-    # Get the highest API level available in the NDK
-    $ANDROID_PLATFORM = Get-ChildItem $PLATFORMS_DIR | Sort-Object | Select-Object -Last 1
-    if ($ANDROID_PLATFORM) {
-        $ANDROID_MIN_SDK = $ANDROID_PLATFORM.Name -replace "android-", ""
-        Write-Host "Using Android platform: $($ANDROID_PLATFORM.Name) (API level $ANDROID_MIN_SDK)" -ForegroundColor $GREEN
-    }
-    else {
-        Write-Host "No Android platforms found in NDK. Using default API level 21." -ForegroundColor $YELLOW
-        $ANDROID_PLATFORM = "android-21"
-        $ANDROID_MIN_SDK = "21"
-    }
+# Get list of NDK versions sorted by version number (newest first)
+$NEWEST_NDK_VERSION = Get-ChildItem $NDK_DIR | Sort-Object -Descending | Select-Object -First 1
+if (-not $NEWEST_NDK_VERSION) {
+    Write-Host "No NDK versions found in $NDK_DIR" -ForegroundColor $RED
+    Write-Host "Please install Android NDK using Android SDK Manager:" -ForegroundColor $YELLOW
+    Write-Host "`$ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat `"ndk;latest`"" -ForegroundColor $YELLOW
+    exit 1
 }
-else {
-    Write-Host "No platforms directory found in NDK. Using default API level 21." -ForegroundColor $YELLOW
-    $ANDROID_PLATFORM = "android-21"
-    $ANDROID_MIN_SDK = "21"
-}
+
+$NDK_PATH = Join-Path $NDK_DIR $NEWEST_NDK_VERSION.Name
+Write-Host "Found NDK version $($NEWEST_NDK_VERSION.Name), using this version" -ForegroundColor $GREEN
 
 # Setup build environment
 $CMAKE_TOOLCHAIN_FILE = Join-Path $NDK_PATH "build\cmake\android.toolchain.cmake"
 Write-Host "Using NDK at: $NDK_PATH" -ForegroundColor $GREEN
 Write-Host "Using toolchain file: $CMAKE_TOOLCHAIN_FILE" -ForegroundColor $GREEN
-
-# Determine NDK host platform
-$NDK_HOST_TAG = "windows-x86_64"
-Write-Host "Using NDK host platform: $NDK_HOST_TAG" -ForegroundColor $GREEN
 
 # Function to build for a specific ABI
 function Build-ForABI {
@@ -248,15 +187,34 @@ function Build-ForABI {
     
     Write-Host "Building for $ABI..." -ForegroundColor $YELLOW
     
+    # Verify llama.cpp directory
+    if (-not (Test-Path $LLAMA_CPP_DIR)) {
+        Write-Host "llama.cpp directory not found at: $LLAMA_CPP_DIR" -ForegroundColor $RED
+        return $false
+    }
+    
+    # Verify CMakeLists.txt exists
+    if (-not (Test-Path (Join-Path $LLAMA_CPP_DIR "CMakeLists.txt"))) {
+        Write-Host "CMakeLists.txt not found in llama.cpp directory" -ForegroundColor $RED
+        return $false
+    }
+    
     $BUILD_DIR = Join-Path $PREBUILT_DIR "build-android-$ABI"
     
-    # Clean build directory if requested
-    if ($CLEAN_BUILD -and (Test-Path $BUILD_DIR)) {
-        Write-Host "Cleaning previous build for $ABI" -ForegroundColor $YELLOW
-        Remove-Item -Recurse -Force $BUILD_DIR
+    # Clean build directory if requested or if it exists with wrong generator
+    if ($CLEAN_BUILD -or (Test-Path $BUILD_DIR)) {
+        Write-Host "Cleaning build directory for $ABI..." -ForegroundColor $YELLOW
+        if (Test-Path $BUILD_DIR) {
+            Remove-Item -Recurse -Force $BUILD_DIR
+        }
     }
     
     New-Item -ItemType Directory -Force -Path $BUILD_DIR | Out-Null
+    
+    # Get Android platform version from environment
+    $ANDROID_MIN_SDK = if ($env:ANDROID_MIN_SDK) { $env:ANDROID_MIN_SDK } else { "33" }
+    $ANDROID_PLATFORM = "android-$ANDROID_MIN_SDK"
+    Write-Host "Using Android platform: $ANDROID_PLATFORM" -ForegroundColor $GREEN
     
     # Setup CMake flags
     $CMAKE_FLAGS = @(
@@ -267,12 +225,19 @@ function Build-ForABI {
         "-DBUILD_SHARED_LIBS=ON",
         "-DLLAMA_BUILD_TESTS=OFF",
         "-DLLAMA_BUILD_EXAMPLES=OFF",
-        "-DLLAMA_CURL=OFF"
+        "-DLLAMA_CURL=OFF",
+        "-DCMAKE_SYSTEM_NAME=Android",
+        "-DCMAKE_ANDROID_ARCH_ABI=$ABI",
+        "-DCMAKE_ANDROID_NDK=$NDK_PATH",
+        "-DCMAKE_ANDROID_STL_TYPE=c++_shared",
+        "-DCMAKE_MAKE_PROGRAM=ninja",
+        "-G", "Ninja",
+        "-DGGML_USE_OPENCL=ON",
+        "-DGGML_USE_VULKAN=ON"
     )
     
     # Configure OpenCL
     if ($BUILD_OPENCL) {
-        # Add OpenCL configuration
         $OPENCL_ABI_LIB_DIR = Join-Path $OPENCL_LIB_DIR $ABI
         New-Item -ItemType Directory -Force -Path $OPENCL_ABI_LIB_DIR | Out-Null
         
@@ -282,7 +247,6 @@ function Build-ForABI {
         }
         
         $CMAKE_FLAGS += @(
-            "-DLLAMA_OPENCL=ON",
             "-DOPENCL_INCLUDE_DIR=$OPENCL_INCLUDE_DIR",
             "-DOPENCL_LIB_DIR=$OPENCL_ABI_LIB_DIR"
         )
@@ -291,53 +255,78 @@ function Build-ForABI {
     # Configure Vulkan
     if ($BUILD_VULKAN) {
         $CMAKE_FLAGS += @(
-            "-DLLAMA_VULKAN=ON",
             "-DVULKAN_INCLUDE_DIR=$VULKAN_INCLUDE_DIR"
         )
     }
     
-    # Run CMake configuration
-    Write-Host "Configuring CMake for $ABI..." -ForegroundColor $YELLOW
-    Push-Location $BUILD_DIR
-    try {
-        cmake $LLAMA_CPP_DIR $CMAKE_FLAGS
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "CMake configuration failed for $ABI" -ForegroundColor $RED
-            Pop-Location
-            return $false
-        }
-        
-        # Build
-        Write-Host "Building for $ABI..." -ForegroundColor $YELLOW
-        cmake --build . --config $BUILD_TYPE -j $N_CORES
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "Build failed for $ABI" -ForegroundColor $RED
-            Pop-Location
-            return $false
-        }
-        
-        # Copy the built library
-        $LIB_DIR = Join-Path $ANDROID_JNI_DIR $ABI
-        New-Item -ItemType Directory -Force -Path $LIB_DIR | Out-Null
-        
-        $LIB_PATH = Join-Path $BUILD_DIR "libllama.so"
-        if (Test-Path $LIB_PATH) {
-            Copy-Item -Force $LIB_PATH $LIB_DIR
-            Write-Host "Copied libllama.so to $LIB_DIR" -ForegroundColor $GREEN
-        }
-        else {
-            Write-Host "Error: libllama.so not found at $LIB_PATH" -ForegroundColor $RED
-            Pop-Location
-            return $false
-        }
+    # Run CMake configuration with verbose output
+    Write-Host "Running CMake configuration with flags: $($CMAKE_FLAGS -join ' ')" -ForegroundColor $YELLOW
+    
+    # Create a log file for CMake output
+    $logFile = Join-Path $BUILD_DIR "cmake_config.log"
+    
+    # Build the complete CMake command
+    $cmakeArgs = "-DCMAKE_VERBOSE_MAKEFILE=ON", $LLAMA_CPP_DIR
+    $cmakeArgs += $CMAKE_FLAGS
+    
+    # Convert arguments to a single string
+    $cmakeCommand = "cmake " + ($cmakeArgs -join " ")
+    
+    # Run CMake and capture output
+    $process = Start-Process -FilePath "powershell" -ArgumentList "-Command", "cd '$BUILD_DIR'; $cmakeCommand" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $logFile -RedirectStandardError "$logFile.err"
+    
+    # Read and display the output
+    if (Test-Path $logFile) {
+        Write-Host "CMake configuration output:" -ForegroundColor $YELLOW
+        Get-Content $logFile | ForEach-Object { Write-Host $_ }
     }
-    catch {
-        Write-Host "Error during build process for $ABI: $_" -ForegroundColor $RED
+    if (Test-Path "$logFile.err") {
+        Write-Host "CMake error output:" -ForegroundColor $RED
+        Get-Content "$logFile.err" | ForEach-Object { Write-Host $_ }
+    }
+    
+    if ($process.ExitCode -ne 0) {
+        Write-Host "CMake configuration failed with exit code $($process.ExitCode)" -ForegroundColor $RED
         Pop-Location
         return $false
     }
-    finally {
+    
+    # Run the build
+    Write-Host "Building for $ABI..." -ForegroundColor $YELLOW
+    $buildLogFile = Join-Path $BUILD_DIR "cmake_build.log"
+    $buildCommand = "cmake --build . --config $BUILD_TYPE -j $N_CORES -v"
+    
+    $buildProcess = Start-Process -FilePath "powershell" -ArgumentList "-Command", "cd '$BUILD_DIR'; $buildCommand" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $buildLogFile -RedirectStandardError "$buildLogFile.err"
+    
+    # Read and display the build output
+    if (Test-Path $buildLogFile) {
+        Write-Host "Build output:" -ForegroundColor $YELLOW
+        Get-Content $buildLogFile | ForEach-Object { Write-Host $_ }
+    }
+    if (Test-Path "$buildLogFile.err") {
+        Write-Host "Build error output:" -ForegroundColor $RED
+        Get-Content "$buildLogFile.err" | ForEach-Object { Write-Host $_ }
+    }
+    
+    if ($buildProcess.ExitCode -ne 0) {
+        Write-Host "Build failed with exit code $($buildProcess.ExitCode)" -ForegroundColor $RED
         Pop-Location
+        return $false
+    }
+    
+    # Copy the built library
+    $LIB_DIR = Join-Path $ANDROID_JNI_DIR $ABI
+    New-Item -ItemType Directory -Force -Path $LIB_DIR | Out-Null
+    
+    $LIB_PATH = Join-Path $BUILD_DIR "bin\libllama.so"
+    if (Test-Path $LIB_PATH) {
+        Copy-Item -Force $LIB_PATH $LIB_DIR
+        Write-Host "Copied libllama.so to $LIB_DIR" -ForegroundColor $GREEN
+    }
+    else {
+        Write-Host "Error: libllama.so not found at $LIB_PATH" -ForegroundColor $RED
+        Pop-Location
+        return $false
     }
     
     return $true
@@ -373,6 +362,7 @@ $SUCCESS = $true
 foreach ($ABI in $ABIS) {
     if (-not (Build-ForABI $ABI)) {
         $SUCCESS = $false
+        Write-Host "Build failed for $ABI" -ForegroundColor $RED
         break
     }
 }

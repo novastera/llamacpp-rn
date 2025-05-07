@@ -36,6 +36,35 @@ function Check-Requirements {
     return $true
 }
 
+# Configure build-info.cpp
+function Configure-BuildInfo {
+    Write-Host "Configuring build-info.cpp..." -ForegroundColor $YELLOW
+    
+    # Get build info from llama.cpp repository
+    Push-Location $LLAMA_CPP_DIR
+    $BUILD_NUMBER = git rev-list --count HEAD 2>$null
+    if (-not $BUILD_NUMBER) { $BUILD_NUMBER = "0" }
+    $BUILD_COMMIT = git rev-parse --short HEAD 2>$null
+    if (-not $BUILD_COMMIT) { $BUILD_COMMIT = "unknown" }
+    $BUILD_COMPILER = "unknown"
+    $BUILD_TARGET = "unknown"
+    Pop-Location
+    
+    # Create build-info.cpp in the cpp directory
+    $BUILD_INFO_CONTENT = @"
+int LLAMA_BUILD_NUMBER = $BUILD_NUMBER;
+char const *LLAMA_COMMIT = "$BUILD_COMMIT";
+char const *LLAMA_COMPILER = "$BUILD_COMPILER";
+char const *LLAMA_BUILD_TARGET = "$BUILD_TARGET";
+"@
+    
+    $BUILD_INFO_PATH = Join-Path $PACKAGE_DIR "cpp\build-info.cpp"
+    Set-Content -Path $BUILD_INFO_PATH -Value $BUILD_INFO_CONTENT
+    
+    Write-Host "Successfully configured build-info.cpp" -ForegroundColor $GREEN
+    return $true
+}
+
 # Initialize and setup llama.cpp submodule
 function Setup-LlamaCppSubmodule {
     Write-Host "Setting up llama.cpp submodule (commit: $LLAMA_CPP_COMMIT)..." -ForegroundColor $YELLOW
@@ -58,6 +87,7 @@ function Setup-LlamaCppSubmodule {
         if ($CURRENT_COMMIT -eq $LLAMA_CPP_COMMIT) {
             Write-Host "llama.cpp is already at the correct commit: $LLAMA_CPP_COMMIT" -ForegroundColor $GREEN
             Pop-Location
+            Configure-BuildInfo
             return $true
         }
         
@@ -94,6 +124,9 @@ function Setup-LlamaCppSubmodule {
         Write-Host "   git add .gitmodules cpp/llama.cpp" -ForegroundColor $YELLOW
         Write-Host "   git commit -m `"Add llama.cpp as submodule at version $LLAMA_CPP_COMMIT`"" -ForegroundColor $YELLOW
     }
+    
+    # Configure build-info.cpp
+    Configure-BuildInfo
     
     # Setup directories for Android
     $androidDirs = @(
@@ -164,6 +197,9 @@ function Clean-All {
         git clean -fdx --quiet
         Pop-Location
     }
+    
+    # Reconfigure build-info.cpp after cleaning
+    Configure-BuildInfo
     
     Write-Host "All cleaned successfully" -ForegroundColor $GREEN
     return $true

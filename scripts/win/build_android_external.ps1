@@ -9,6 +9,95 @@ $RED = [System.ConsoleColor]::Red
 $GREEN = [System.ConsoleColor]::Green
 $YELLOW = [System.ConsoleColor]::Yellow
 
+# Function to check if a command exists
+function Test-Command {
+    param (
+        [string]$Command
+    )
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'stop'
+    try {
+        if (Get-Command $Command) { return $true }
+    }
+    catch {
+        return $false
+    }
+    finally {
+        $ErrorActionPreference = $oldPreference
+    }
+}
+
+# Setup Visual Studio environment
+Write-Host "Setting up Visual Studio environment..." -ForegroundColor $YELLOW
+
+# Try to find Visual Studio installation
+$VS_PATHS = @(
+    "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community",
+    "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional",
+    "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise",
+    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Community",
+    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Professional",
+    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise",
+    "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools",
+    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
+)
+
+$VS_PATH = $null
+foreach ($path in $VS_PATHS) {
+    if (Test-Path $path) {
+        $VS_PATH = $path
+        break
+    }
+}
+
+if ($VS_PATH) {
+    $VS_DEV_CMD = Join-Path $VS_PATH "Common7\Tools\VsDevCmd.bat"
+    if (Test-Path $VS_DEV_CMD) {
+        Write-Host "Found Visual Studio at: $VS_PATH" -ForegroundColor $GREEN
+        
+        # Create a temporary batch file to set up the environment
+        $tempBatchFile = [System.IO.Path]::GetTempFileName() + ".bat"
+        @"
+@echo off
+set VSCMD_DEBUG=1
+call "$VS_DEV_CMD" -arch=amd64 -host_arch=amd64
+set > "%TEMP%\vs_env.txt"
+"@ | Out-File -FilePath $tempBatchFile -Encoding ASCII
+
+        # Run the batch file
+        cmd /c $tempBatchFile
+
+        # Read the environment variables
+        if (Test-Path "$env:TEMP\vs_env.txt") {
+            Get-Content "$env:TEMP\vs_env.txt" | ForEach-Object {
+                if ($_ -match "=") {
+                    $name, $value = $_.Split("=", 2)
+                    [Environment]::SetEnvironmentVariable($name, $value, [System.EnvironmentVariableTarget]::Process)
+                }
+            }
+            Remove-Item "$env:TEMP\vs_env.txt" -Force
+        }
+        Remove-Item $tempBatchFile -Force
+
+        # Verify cl.exe is available
+        if (Test-Command "cl.exe") {
+            Write-Host "Visual Studio environment setup complete" -ForegroundColor $GREEN
+        } else {
+            Write-Host "Visual Studio environment setup failed - cl.exe not found" -ForegroundColor $RED
+            Write-Host "Please ensure you have installed the C++ development tools" -ForegroundColor $RED
+            exit 1
+        }
+    } else {
+        Write-Host "Visual Studio found but VsDevCmd.bat not found at: $VS_DEV_CMD" -ForegroundColor $RED
+        exit 1
+    }
+} else {
+    Write-Host "Visual Studio not found in standard locations" -ForegroundColor $RED
+    Write-Host "Please install Visual Studio with C++ development tools" -ForegroundColor $RED
+    Write-Host "You can download it from: https://visualstudio.microsoft.com/downloads/" -ForegroundColor $YELLOW
+    exit 1
+}
+
 # Get script directory
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PROJECT_ROOT = Split-Path -Parent (Split-Path -Parent $SCRIPT_DIR)
@@ -23,6 +112,7 @@ $OPENCL_INCLUDE_DIR = Join-Path $PREBUILT_EXTERNAL_DIR "opencl\include"
 $OPENCL_LIB_DIR = Join-Path $PREBUILT_EXTERNAL_DIR "opencl\lib"
 $VULKAN_HEADERS_DIR = Join-Path $THIRD_PARTY_DIR "Vulkan-Headers"
 $VULKAN_INCLUDE_DIR = Join-Path $PREBUILT_EXTERNAL_DIR "vulkan\include"
+$VULKAN_LIB_DIR = Join-Path $PREBUILT_EXTERNAL_DIR "vulkan\lib"
 $LLAMA_CPP_DIR = Join-Path $PROJECT_ROOT "cpp\llama.cpp"
 
 Write-Host "Setting up external dependencies for Android builds..." -ForegroundColor $YELLOW
@@ -195,6 +285,93 @@ if ($env:ANDROID_NDK_HOME) {
         Copy-Item -Recurse -Force (Join-Path $OPENCL_INCLUDE_DIR "CL\*") (Join-Path $NDK_SYSROOT_INCLUDE "CL")
         Write-Host "OpenCL headers copied to NDK sysroot" -ForegroundColor $GREEN
     }
+}
+
+# Function to build OpenCL library for Windows
+function Build-OpenCLWindows {
+    Write-Host "Building OpenCL library for Windows..." -ForegroundColor $YELLOW
+    
+    # Create Windows directory
+    $OPENCL_WINDOWS_DIR = Join-Path $OPENCL_LIB_DIR "windows"
+    Write-Host "Creating directory: $OPENCL_WINDOWS_DIR" -ForegroundColor $YELLOW
+    New-Item -ItemType Directory -Force -Path $OPENCL_WINDOWS_DIR | Out-Null
+    if (-not (Test-Path $OPENCL_WINDOWS_DIR)) {
+        Write-Host "Failed to create directory: $OPENCL_WINDOWS_DIR" -ForegroundColor $RED
+        return $false
+    }
+    
+    # Create Windows stub library
+    $OPENCL_LIB_PATH = Join-Path $OPENCL_WINDOWS_DIR "OpenCL.lib"
+    Write-Host "Creating empty OpenCL stub library at: $OPENCL_LIB_PATH" -ForegroundColor $YELLOW
+    try {
+        $null = New-Item -ItemType File -Force -Path $OPENCL_LIB_PATH
+        if (-not (Test-Path $OPENCL_LIB_PATH)) {
+            Write-Host "Failed to create file: $OPENCL_LIB_PATH" -ForegroundColor $RED
+            return $false
+        }
+        Write-Host "Verified file exists: $OPENCL_LIB_PATH" -ForegroundColor $GREEN
+    }
+    catch {
+        Write-Host "Error creating file $OPENCL_LIB_PATH : $_" -ForegroundColor $RED
+        return $false
+    }
+    
+    Write-Host "Successfully created OpenCL stub library for Windows" -ForegroundColor $GREEN
+    return $true
+}
+
+# Function to build Vulkan library for Windows
+function Build-VulkanWindows {
+    Write-Host "Building Vulkan library for Windows..." -ForegroundColor $YELLOW
+    
+    # Create Windows directory
+    $VULKAN_WINDOWS_DIR = Join-Path $VULKAN_LIB_DIR "windows"
+    Write-Host "Creating directory: $VULKAN_WINDOWS_DIR" -ForegroundColor $YELLOW
+    New-Item -ItemType Directory -Force -Path $VULKAN_WINDOWS_DIR | Out-Null
+    if (-not (Test-Path $VULKAN_WINDOWS_DIR)) {
+        Write-Host "Failed to create directory: $VULKAN_WINDOWS_DIR" -ForegroundColor $RED
+        return $false
+    }
+    
+    # Create Windows stub library
+    $VULKAN_LIB_PATH = Join-Path $VULKAN_WINDOWS_DIR "vulkan-1.lib"
+    Write-Host "Creating empty Vulkan stub library at: $VULKAN_LIB_PATH" -ForegroundColor $YELLOW
+    try {
+        $null = New-Item -ItemType File -Force -Path $VULKAN_LIB_PATH
+        if (-not (Test-Path $VULKAN_LIB_PATH)) {
+            Write-Host "Failed to create file: $VULKAN_LIB_PATH" -ForegroundColor $RED
+            return $false
+        }
+        Write-Host "Verified file exists: $VULKAN_LIB_PATH" -ForegroundColor $GREEN
+    }
+    catch {
+        Write-Host "Error creating file $VULKAN_LIB_PATH : $_" -ForegroundColor $RED
+        return $false
+    }
+    
+    Write-Host "Successfully created Vulkan stub library for Windows" -ForegroundColor $GREEN
+    return $true
+}
+
+# Build Windows libraries
+Write-Host "Building Windows libraries..." -ForegroundColor $YELLOW
+
+# Check if Visual Studio is installed
+if (-not (Test-Command "cl.exe")) {
+    Write-Host "Visual Studio not found. Please install Visual Studio with C++ development tools." -ForegroundColor $RED
+    Write-Host "You can download it from: https://visualstudio.microsoft.com/downloads/" -ForegroundColor $YELLOW
+    exit 1
+}
+
+# Build OpenCL and Vulkan libraries for Windows
+if (-not (Build-OpenCLWindows)) {
+    Write-Host "Failed to build OpenCL library for Windows" -ForegroundColor $RED
+    exit 1
+}
+
+if (-not (Build-VulkanWindows)) {
+    Write-Host "Failed to build Vulkan library for Windows" -ForegroundColor $RED
+    exit 1
 }
 
 Write-Host "External dependencies setup complete" -ForegroundColor $GREEN
