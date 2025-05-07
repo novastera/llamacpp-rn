@@ -107,3 +107,59 @@ ios/libs/build-apple/
 /android/src/main/jniLibs/x86_64/libllama.so
 # Allow prebuilt binaries in prebuilt/ directory for npm packaging
 /prebuilt/
+
+# Build artifacts
+build.ninja
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+compile_commands.json
+llama.pc
+*.so
+*.a
+*.o
+*.obj
+*.dll
+*.lib
+*.exe
+*.dylib
+
+# Android build artifacts
+android/bin/
+android/common/
+android/ggml/
+android/src/
+prebuilt/
+prebuilt/build-*/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Node modules and logs
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.local
+.env.*.local
+llama-version.cmake
+llama-config.cmake
+/ggml
+.ninja_deps
+.ninja_log
