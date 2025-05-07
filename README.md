@@ -20,6 +20,7 @@ A React Native wrapper for [llama.cpp](https://github.com/ggml-org/llama.cpp) fo
 - Chat completion with templates
 - Embeddings generation
 - Grammar-based output constraints
+- Function/tool calling support
 
 ## What Needs Help
 
@@ -43,6 +44,8 @@ npm install @novastera-oss/llamacpp-rn
 
 ## Basic Usage
 
+### Simple Completion
+
 ```typescript
 import { initLlama } from '@novastera-oss/llamacpp-rn';
 
@@ -61,6 +64,67 @@ const result = await context.completion({
 });
 
 console.log('Response:', result.text);
+```
+
+### Chat with Tool Calling
+
+```typescript
+import { initLlama } from '@novastera-oss/llamacpp-rn';
+
+// Initialize the model with appropriate parameters for tool use
+const context = await initLlama({
+  model: 'path/to/model.gguf',
+  n_ctx: 2048,
+  n_batch: 512,
+  use_jinja: true  // Enable template handling for tool calls
+});
+
+// Create a chat with tool calling
+const response = await context.completion({
+  messages: [
+    { role: 'system', content: 'You are a helpful assistant that can access weather data.' },
+    { role: 'user', content: 'What\'s the weather like in Paris?' }
+  ],
+  tools: [
+    {
+      type: 'function',
+      function: {
+        name: 'get_weather',
+        description: 'Get the current weather in a location',
+        parameters: {
+          type: 'object',
+          properties: {
+            location: {
+              type: 'string',
+              description: 'The city and state, e.g. San Francisco, CA'
+            },
+            unit: {
+              type: 'string',
+              enum: ['celsius', 'fahrenheit'],
+              description: 'The unit of temperature to use'
+            }
+          },
+          required: ['location']
+        }
+      }
+    }
+  ],
+  tool_choice: 'auto',
+  temperature: 0.7
+});
+
+// Check if the model wants to call a tool
+if (response.choices?.[0]?.finish_reason === 'tool_calls' || response.tool_calls?.length > 0) {
+  const toolCalls = response.choices?.[0]?.message?.tool_calls || response.tool_calls;
+  
+  // Process each tool call
+  if (toolCalls && toolCalls.length > 0) {
+    console.log('Function call:', toolCalls[0].function.name);
+    console.log('Arguments:', toolCalls[0].function.arguments);
+    
+    // Here you would handle the tool call and then pass the result back in a follow-up completion
+  }
+}
 ```
 
 ## Documentation

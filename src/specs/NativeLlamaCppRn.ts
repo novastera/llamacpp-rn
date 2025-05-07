@@ -107,21 +107,41 @@ export interface LlamaTool {
 }
 
 export interface LlamaCompletionResult {
-  text: string;
-  tokens_predicted: number;
+  text: string;                          // The generated completion text
+  tokens_predicted: number;              // Number of tokens generated
   timings: {
-    predicted_n: number;
-    predicted_ms: number;
-    prompt_n: number;
-    prompt_ms: number;
-    total_ms: number;
+    predicted_n: number;                 // Number of tokens predicted
+    predicted_ms: number;                // Time spent generating tokens (ms)
+    prompt_n: number;                    // Number of tokens in the prompt
+    prompt_ms: number;                   // Time spent processing prompt (ms)
+    total_ms: number;                    // Total time spent (ms)
   };
+  
+  // OpenAI-compatible response fields
+  choices?: Array<{
+    index: number;
+    message: {
+      role: string;
+      content: string;
+      tool_calls?: Array<{
+        id: string;
+        type: string;
+        function: {
+          name: string;
+          arguments: string;
+        }
+      }>
+    };
+    finish_reason: 'stop' | 'length' | 'tool_calls';
+  }>;
+  
+  // Tool calls may appear at different levels based on model response
   tool_calls?: Array<{
-    id: string;
-    type: string;
+    id: string;                          // Unique identifier for the tool call
+    type: string;                        // Type of tool call (e.g. 'function')
     function: {
-      name: string;
-      arguments: string;
+      name: string;                      // Name of the function to call
+      arguments: string;                 // JSON string of arguments for the function
     };
   }>;
 }

@@ -84,6 +84,29 @@ interface LlamaCompletionParams {
 }
 ```
 
+## Tool Definitions
+
+```typescript
+interface LlamaTool {
+  type: 'function';
+  function: {
+    name: string;              // Name of the function
+    description?: string;      // Optional description of what the function does
+    parameters: {              // JSON Schema object describing the parameters
+      type: 'object';          // Must be 'object' type
+      properties: {            // Map of parameter names to their schemas
+        [key: string]: {
+          type: string;        // Data type: string, number, boolean, etc.
+          description?: string; // Parameter description
+          enum?: string[];     // Possible values for enumerated types
+        }
+      };
+      required?: string[];     // Array of required parameter names
+    }
+  }
+}
+```
+
 ## Model Path Handling
 
 The module accepts different path formats depending on the platform:
@@ -101,42 +124,121 @@ The module accepts different path formats depending on the platform:
 ### Completion Result
 ```typescript
 interface LlamaCompletionResult {
-  text: string;
-  tokens_predicted: number;
+  // Basic response fields
+  text: string;                // The generated completion text
+  tokens_predicted: number;    // Number of tokens generated
   timings: {
-    predicted_n: number;
-    predicted_ms: number;
-    prompt_n: number;
-    prompt_ms: number;
-    total_ms: number;
+    predicted_n: number;      // Number of tokens predicted
+    predicted_ms: number;     // Time spent generating tokens (ms)
+    prompt_n: number;         // Number of tokens in the prompt
+    prompt_ms: number;        // Time spent processing prompt (ms)
+    total_ms: number;         // Total time spent (ms)
   };
+  
+  // OpenAI-compatible format - a structured format similar to OpenAI's API
+  choices?: Array<{
+    index: number;             // Index of the choice (usually 0)
+    message: {
+      role: string;            // Role of the message (e.g., 'assistant')
+      content: string;         // Content of the message
+      tool_calls?: Array<{     // Tool calls if any were generated
+        id: string;            // Unique identifier for the tool call
+        type: string;          // Type of tool (e.g., 'function')
+        function: {
+          name: string;        // Name of the function to call
+          arguments: string;   // JSON string of arguments for the function
+        }
+      }>
+    };
+    finish_reason: 'stop' | 'length' | 'tool_calls'; // Why generation stopped
+  }>;
+  
+  // Tool calls may also appear at the top level for simpler access
   tool_calls?: Array<{
-    id: string;
-    type: string;
+    id: string;                // Unique identifier for the tool call
+    type: string;              // Type of tool (e.g., 'function')
     function: {
-      name: string;
-      arguments: string;
+      name: string;            // Name of the function to call
+      arguments: string;       // JSON string of arguments for the function
     };
   }>;
 }
 ```
 
+When working with tool calls, you should check for tool calls in this order:
+1. Look for `response.choices?.[0]?.finish_reason === 'tool_calls'` to determine if tool calling happened
+2. Access tool calls from `response.choices?.[0]?.message?.tool_calls` (OpenAI-compatible format)
+3. Or access from `response.tool_calls` (simplified top-level access)
+
 ### Embedding Response
 ```typescript
 interface EmbeddingResponse {
   data: Array<{
-    embedding: number[] | string;
-    index: number;
-    object: 'embedding';
-    encoding_format?: 'base64';
+    embedding: number[] | string;  // Array of floats or base64 string
+    index: number;                // Index in the batch (usually 0)
+    object: 'embedding';          // Object type
+    encoding_format?: 'base64';   // Present when using base64 encoding
   }>;
-  model: string;
-  object: 'list';
+  model: string;                  // Model identifier
+  object: 'list';                 // Object type
   usage: {
-    prompt_tokens: number;
-    total_tokens: number;
+    prompt_tokens: number;        // Tokens in the prompt
+    total_tokens: number;         // Total tokens processed
   };
 }
 ```
 
 For more detailed TypeScript definitions, see [NativeLlamaCppRn.ts](./src/specs/NativeLlamaCppRn.ts). 
+
+## Example: Processing Tool Calls
+
+```typescript
+// Perform a completion that might result in a tool call
+const response = await context.completion({
+  messages: [...],
+  tools: [...],
+  tool_choice: 'auto'
+});
+
+// Check if a tool call was generated
+if (response.choices?.[0]?.finish_reason === 'tool_calls' || response.tool_calls?.length > 0) {
+  // Get the tool calls from either location
+  const toolCalls = response.choices?.[0]?.message?.tool_calls || response.tool_calls || [];
+  
+  // Process each tool call
+  for (const toolCall of toolCalls) {
+    if (toolCall.function) {
+      // Extract function name and arguments
+      const functionName = toolCall.function.name;
+      const args = JSON.parse(toolCall.function.arguments);
+      
+      // Process the tool call based on the function name
+      let result;
+      if (functionName === 'get_weather') {
+        result = await getWeatherData(args.location);
+      } else if (functionName === 'search_database') {
+        result = await searchDatabase(args.query);
+      }
+      
+      // Send the result back to the model in a follow-up completion
+      const finalResponse = await context.completion({
+        messages: [
+          ...previousMessages,
+          { 
+            role: 'assistant', 
+            content: null, 
+            tool_calls: [toolCall] 
+          },
+          {
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: functionName,
+            content: JSON.stringify(result)
+          }
+        ]
+      });
+      
+      // finalResponse now contains the model's response after processing the tool result
+    }
+  }
+} 
