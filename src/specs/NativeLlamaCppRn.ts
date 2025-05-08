@@ -171,11 +171,11 @@ export interface LlamaCompletionResult {
 
 // Add new interfaces for embedding
 export interface EmbeddingOptions {
-  content?: string;      // Text content to embed (for compatibility with our custom format)
-  input?: string;        // Text input to embed (for OpenAI compatibility)
-  add_bos_token?: boolean; // Whether to add a beginning of sequence token (default: true)
+  input?: string | string[];      // Text input to embed (OpenAI format)
+  content?: string | string[];    // Alternative text input (custom format)
+  add_bos_token?: boolean;        // Whether to add a beginning of sequence token (default: true)
   encoding_format?: 'float' | 'base64'; // Output encoding format
-  model?: string;        // Model identifier (ignored, included for OpenAI compatibility)
+  model?: string;                 // Model identifier (ignored, included for OpenAI compatibility)
 }
 
 export interface EmbeddingResponse {
@@ -183,7 +183,7 @@ export interface EmbeddingResponse {
     embedding: number[] | string; // Can be array of numbers or base64 string
     index: number;
     object: 'embedding';
-    encoding_format?: 'base64'; // Present only when base64 encoding is used
+    encoding_format?: 'base64';   // Present only when base64 encoding is used
   }>;
   model: string;
   object: 'list';
@@ -215,11 +215,10 @@ export interface LlamaContextMethods {
   /**
    * Generate embeddings for input text
    * 
-   * @param input Text to embed or options object
-   * @param openAIFormat Whether to return in OpenAI-compatible format
+   * @param options Embedding options matching server.cpp format
    * @returns Array of embedding values or OpenAI-compatible embedding response
    */
-  embedding(input: string | EmbeddingOptions, openAIFormat?: boolean): Promise<number[] | EmbeddingResponse>;
+  embedding(options: EmbeddingOptions): Promise<EmbeddingResponse>;
   detectTemplate(messages: LlamaMessage[]): Promise<string>;
   loadSession(path: string): Promise<boolean>;
   saveSession(path: string): Promise<boolean>;

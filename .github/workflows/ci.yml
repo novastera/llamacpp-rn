@@ -218,26 +218,29 @@ jobs:
       
       - name: Setup iOS Framework
         run: |
-          # Initialize the llama.cpp repository
-          scripts/setupLlamaCpp.sh init
+          # Create necessary directories
+          mkdir -p ios/libs
+          
+          # Use the new build_apple_external.sh script
+          scripts/build_apple_external.sh init
           
           # Verify the iOS xcframework was set up correctly
-          if [ ! -d "ios/framework/build-apple/llama.xcframework" ]; then
-            echo "❌ iOS framework not found at ios/framework/build-apple/llama.xcframework"
+          if [ ! -d "ios/libs/llama.xcframework" ]; then
+            echo "❌ iOS framework not found at ios/libs/llama.xcframework"
             exit 1
           else
             echo "✅ iOS framework downloaded successfully"
             
             # List available slices
             echo "Available iOS framework slices:"
-            ls -la ios/framework/build-apple/llama.xcframework/
+            ls -la ios/libs/llama.xcframework/
           fi
       
       - name: Upload iOS Framework Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ios-framework
-          path: ios/framework/build-apple/llama.xcframework/
+          path: ios/libs/llama.xcframework/
           retention-days: 1
       
       - name: Validate iOS Podspec
@@ -282,7 +285,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ios-framework
-          path: ios/framework/build-apple/llama.xcframework/
+          path: ios/libs/llama.xcframework/
       
       - name: Restore file permissions
         run: |
