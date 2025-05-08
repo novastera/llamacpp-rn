@@ -38,19 +38,21 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 # Define prebuilt directory for all intermediary files
 PREBUILT_DIR="$PROJECT_ROOT/prebuilt"
 PREBUILT_LIBS_DIR="$PREBUILT_DIR/libs"
-PREBUILT_EXTERNAL_DIR="$PREBUILT_LIBS_DIR/external"
-PREBUILT_GPU_DIR="$PREBUILT_DIR/gpu" # New directory for GPU libraries
+PREBUILT_EXTERNAL_DIR="$PREBUILT_DIR/libs/external"
+PREBUILT_GPU_DIR="$PREBUILT_DIR/gpu"
 
 # Define directories
+ANDROID_DIR="$PROJECT_ROOT/android"
+CPP_DIR="$PROJECT_ROOT/cpp"
+LLAMA_CPP_DIR="$CPP_DIR/llama.cpp"
+
+# Third-party directories in prebuilt directory
 THIRD_PARTY_DIR="$PREBUILT_DIR/third_party"
 OPENCL_HEADERS_DIR="$THIRD_PARTY_DIR/OpenCL-Headers"
 OPENCL_INCLUDE_DIR="$PREBUILT_EXTERNAL_DIR/opencl/include"
 OPENCL_LIB_DIR="$PREBUILT_EXTERNAL_DIR/opencl/lib"
 VULKAN_HEADERS_DIR="$THIRD_PARTY_DIR/Vulkan-Headers"
 VULKAN_INCLUDE_DIR="$PREBUILT_EXTERNAL_DIR/vulkan/include"
-
-# Define llama.cpp paths
-LLAMA_CPP_DIR="$PROJECT_ROOT/cpp/llama.cpp"
 
 # Print usage information
 print_usage() {
@@ -70,6 +72,7 @@ print_usage() {
   echo "  --dry-run              Show commands without execution"
   echo "  --install-deps         Only install dependencies and exit"
   echo "  --ndk-path=<path>      Use a custom NDK path"
+  echo "  --glslc-path=<path>    Specify custom path to glslc compiler for Vulkan shaders"
 }
 
 # Default values
@@ -81,6 +84,7 @@ CLEAN_BUILD=false
 DRY_RUN=false
 INSTALL_DEPS_ONLY=false  # Flag to only install dependencies
 CUSTOM_NDK_PATH=""
+CUSTOM_GLSLC_PATH=""
 
 # Auto-detect platform
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -127,6 +131,9 @@ for arg in "$@"; do
     --ndk-path=*)
       CUSTOM_NDK_PATH="${arg#*=}"
       ;;
+    --glslc-path=*)
+      CUSTOM_GLSLC_PATH="${arg#*=}"
+      ;;
     *)
       echo -e "${RED}Unknown argument: $arg${NC}"
       print_usage
@@ -146,10 +153,14 @@ echo -e "${YELLOW}Target platform: $BUILD_PLATFORM${NC}"
 echo -e "${YELLOW}Target ABI: $BUILD_ABI${NC}"
 
 # Create necessary directories
+echo -e "${YELLOW}Creating necessary directories...${NC}"
 mkdir -p "$PREBUILT_DIR"
 mkdir -p "$PREBUILT_LIBS_DIR"
 mkdir -p "$PREBUILT_EXTERNAL_DIR"
-mkdir -p "$OPENCL_INCLUDE_DIR" "$OPENCL_LIB_DIR" "$VULKAN_INCLUDE_DIR"
+mkdir -p "$THIRD_PARTY_DIR"
+mkdir -p "$OPENCL_INCLUDE_DIR"
+mkdir -p "$OPENCL_LIB_DIR"
+mkdir -p "$VULKAN_INCLUDE_DIR"
 mkdir -p "$PREBUILT_GPU_DIR/arm64-v8a" "$PREBUILT_GPU_DIR/x86_64" # Create GPU libraries directories
 
 # Setup dependencies for both OpenCL and Vulkan headers
@@ -349,6 +360,7 @@ build_gpu_libs_for_abi() {
   CMAKE_FLAGS+=("-DBUILD_SHARED_LIBS=ON") # Build shared libraries
   CMAKE_FLAGS+=("-DLLAMA_BUILD_TESTS=OFF")
   CMAKE_FLAGS+=("-DLLAMA_BUILD_EXAMPLES=OFF")
+  CMAKE_FLAGS+=("-DLLAMA_CURL=OFF")
   
   # Add GPU backend flags
   if [ "$BUILD_OPENCL" = true ]; then
@@ -374,21 +386,119 @@ build_gpu_libs_for_abi() {
     # Set platform-specific Vulkan flags
     CMAKE_FLAGS+=("-DVK_USE_PLATFORM_ANDROID_KHR=ON")
     
-    # Handle glslc executable
-    if [ -n "$GLSLC_EXECUTABLE" ] && [ -f "$GLSLC_EXECUTABLE" ]; then
-      echo -e "${GREEN}Using glslc at: $GLSLC_EXECUTABLE${NC}"
+    # Improved glslc detection and handling
+    # First, check if a custom GLSLC path was provided
+    if [ -n "$CUSTOM_GLSLC_PATH" ]; then
+      if [ -f "$CUSTOM_GLSLC_PATH" ]; then
+        echo -e "${GREEN}Using custom GLSLC: $CUSTOM_GLSLC_PATH${NC}"
+        GLSLC_EXECUTABLE="$CUSTOM_GLSLC_PATH"
+        CMAKE_FLAGS+=("-DGLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+        CMAKE_FLAGS+=("-DVulkan_GLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+        chmod +x "$GLSLC_EXECUTABLE" || true
+      else
+        echo -e "${RED}Custom GLSLC path provided but file does not exist: $CUSTOM_GLSLC_PATH${NC}"
+        GLSLC_EXECUTABLE=""
+      fi
+    # If not, try to find GLSLC in the environment
+    elif [ -n "$GLSLC_EXECUTABLE" ] && [ -f "$GLSLC_EXECUTABLE" ]; then
+      echo -e "${GREEN}Using GLSLC from environment: $GLSLC_EXECUTABLE${NC}"
       CMAKE_FLAGS+=("-DGLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
       CMAKE_FLAGS+=("-DVulkan_GLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
-    elif command -v glslc &> /dev/null; then
-      GLSLC_EXECUTABLE=$(which glslc)
-      echo -e "${GREEN}Found glslc in PATH: $GLSLC_EXECUTABLE${NC}"
-      CMAKE_FLAGS+=("-DGLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
-      CMAKE_FLAGS+=("-DVulkan_GLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+      chmod +x "$GLSLC_EXECUTABLE" || true
     else
-      echo -e "${YELLOW}glslc not found, will attempt to build without it${NC}"
-      # Tell CMake not to use glslc
-      CMAKE_FLAGS+=("-DGGML_VULKAN_SHADERS_PREBUILD=ON")
+      # Try to find GLSLC in the NDK shader-tools
+      GLSLC_EXECUTABLE=""
+      NDK_SHADER_TOOLS="$ANDROID_NDK_HOME/shader-tools"
+      if [ -d "$NDK_SHADER_TOOLS" ]; then
+        # Find suitable host tag
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+          if [[ $(uname -m) == "arm64" ]]; then
+            NDK_HOST_TAG="darwin-arm64"
+          else
+            NDK_HOST_TAG="darwin-x86_64"
+          fi
+        elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+          NDK_HOST_TAG="linux-x86_64"
+        elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
+          NDK_HOST_TAG="windows-x86_64"
+        fi
+        
+        if [ -d "$NDK_SHADER_TOOLS/$NDK_HOST_TAG" ]; then
+          GLSLC_EXECUTABLE="$NDK_SHADER_TOOLS/$NDK_HOST_TAG/glslc"
+          if [ -f "$GLSLC_EXECUTABLE" ]; then
+            echo -e "${GREEN}Using GLSLC from NDK shader-tools: $GLSLC_EXECUTABLE${NC}"
+            CMAKE_FLAGS+=("-DGLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+            CMAKE_FLAGS+=("-DVulkan_GLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+            chmod +x "$GLSLC_EXECUTABLE" || true
+          else
+            echo -e "${YELLOW}GLSLC not found in expected NDK location: $GLSLC_EXECUTABLE${NC}"
+            GLSLC_EXECUTABLE=""
+          fi
+        fi
+      fi
+      
+      # If we didn't find GLSLC in the standard location, search more broadly
+      if [ -z "$GLSLC_EXECUTABLE" ]; then
+        echo -e "${YELLOW}Searching for GLSLC in the NDK and system locations...${NC}"
+        
+        # Use different find syntax based on OS
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+          # macOS version - doesn't support -executable flag
+          GLSLC_EXECUTABLE=$(find "$ANDROID_NDK_HOME" -name "glslc" -type f -perm +111 2>/dev/null | head -1)
+        else
+          # Linux version
+          GLSLC_EXECUTABLE=$(find "$ANDROID_NDK_HOME" -name "glslc" -type f -executable 2>/dev/null | head -1)
+        fi
+        
+        if [ -n "$GLSLC_EXECUTABLE" ]; then
+          echo -e "${GREEN}Found GLSLC at: $GLSLC_EXECUTABLE${NC}"
+          CMAKE_FLAGS+=("-DGLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+          CMAKE_FLAGS+=("-DVulkan_GLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+          chmod +x "$GLSLC_EXECUTABLE" || true
+        else
+          echo -e "${YELLOW}GLSLC not found in NDK, checking system locations...${NC}"
+          if [[ "$OSTYPE" == "darwin"* ]]; then
+            # Try standard macOS locations
+            for path in "/usr/local/bin/glslc" "/opt/homebrew/bin/glslc" "/usr/bin/glslc"; do
+              if [ -f "$path" ]; then
+                GLSLC_EXECUTABLE="$path"
+                echo -e "${GREEN}Found system GLSLC at: $GLSLC_EXECUTABLE${NC}"
+                CMAKE_FLAGS+=("-DGLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+                CMAKE_FLAGS+=("-DVulkan_GLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+                break
+              fi
+            done
+            
+            if [ -z "$GLSLC_EXECUTABLE" ]; then
+              GLSLC_EXECUTABLE=$(which glslc 2>/dev/null || echo "")
+              if [ -n "$GLSLC_EXECUTABLE" ]; then
+                CMAKE_FLAGS+=("-DGLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+                CMAKE_FLAGS+=("-DVulkan_GLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+              fi
+            fi
+          else
+            # Try which on Linux
+            GLSLC_EXECUTABLE=$(which glslc 2>/dev/null || echo "")
+            if [ -n "$GLSLC_EXECUTABLE" ]; then
+              CMAKE_FLAGS+=("-DGLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+              CMAKE_FLAGS+=("-DVulkan_GLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+            fi
+          fi
+          
+          if [ -z "$GLSLC_EXECUTABLE" ]; then
+            echo -e "${YELLOW}GLSLC not found. Using pre-built shaders instead.${NC}"
+            # Tell CMake to use pre-built shaders instead of compiling them
+            CMAKE_FLAGS+=("-DGGML_VULKAN_SHADERS_PREBUILD=ON")
+          else
+            echo -e "${GREEN}Using system GLSLC: $GLSLC_EXECUTABLE${NC}"
+          fi
+        fi
+      fi
     fi
+    
+    # Always add these options for more reliable builds without glslc
+    CMAKE_FLAGS+=("-DGGML_VULKAN_SHADERS_DIR=${LLAMA_CPP_DIR}/ggml-vulkan/shaders")
+    CMAKE_FLAGS+=("-DGGML_VULKAN_SHADERS_EMBED=ON")
     
     # Create fake Vulkan library if needed for build to succeed
     if [ ! -f "$VULKAN_INCLUDE_DIR/lib/libvulkan.so" ]; then
@@ -459,22 +569,25 @@ build_gpu_libs_for_abi() {
     cmake --build "$BUILD_DIR" --config "$BUILD_TYPE" -j $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
   fi
   
-  # Copy built libraries to GPU directory
-  GPU_LIB_DIR="$PREBUILT_GPU_DIR/$ABI"
-  mkdir -p "$GPU_LIB_DIR"
+  # Create GPU libraries directory for this ABI
+  mkdir -p "$PREBUILT_GPU_DIR/$ABI"
   
-  # Find and copy the GPU libraries
-  echo -e "${YELLOW}Copying GPU backend libraries to $GPU_LIB_DIR${NC}"
+  # Find and copy the GPU libraries to the prebuilt directory
+  echo -e "${YELLOW}Copying GPU backend libraries to $PREBUILT_GPU_DIR/$ABI${NC}"
   
   # Check for OpenCL library
   if [ "$BUILD_OPENCL" = true ]; then
     OPENCL_LIB_PATH=$(find "$BUILD_DIR" -name "libggml-opencl.*" | head -n 1)
     if [ -n "$OPENCL_LIB_PATH" ]; then
       if [ "$DRY_RUN" = true ]; then
-        echo -e "${YELLOW}Would copy: $OPENCL_LIB_PATH to $GPU_LIB_DIR/${NC}"
+        echo -e "${YELLOW}Would copy: $OPENCL_LIB_PATH to $PREBUILT_GPU_DIR/$ABI/${NC}"
       else
-        cp "$OPENCL_LIB_PATH" "$GPU_LIB_DIR/"
-        echo -e "${GREEN}✅ Copied OpenCL library to $GPU_LIB_DIR/$(basename "$OPENCL_LIB_PATH")${NC}"
+        cp "$OPENCL_LIB_PATH" "$PREBUILT_GPU_DIR/$ABI/"
+        echo -e "${GREEN}✅ Copied OpenCL library to $PREBUILT_GPU_DIR/$ABI/$(basename "$OPENCL_LIB_PATH")${NC}"
+        
+        # Create capability flag file in prebuilt directory
+        touch "$PREBUILT_GPU_DIR/$ABI/.opencl_enabled"
+        echo -e "${GREEN}✅ Created OpenCL capability flag${NC}"
       fi
     else
       echo -e "${RED}❌ OpenCL library not found in build directory${NC}"
@@ -486,10 +599,14 @@ build_gpu_libs_for_abi() {
     VULKAN_LIB_PATH=$(find "$BUILD_DIR" -name "libggml-vulkan.*" | head -n 1)
     if [ -n "$VULKAN_LIB_PATH" ]; then
       if [ "$DRY_RUN" = true ]; then
-        echo -e "${YELLOW}Would copy: $VULKAN_LIB_PATH to $GPU_LIB_DIR/${NC}"
+        echo -e "${YELLOW}Would copy: $VULKAN_LIB_PATH to $PREBUILT_GPU_DIR/$ABI/${NC}"
       else
-        cp "$VULKAN_LIB_PATH" "$GPU_LIB_DIR/"
-        echo -e "${GREEN}✅ Copied Vulkan library to $GPU_LIB_DIR/$(basename "$VULKAN_LIB_PATH")${NC}"
+        cp "$VULKAN_LIB_PATH" "$PREBUILT_GPU_DIR/$ABI/"
+        echo -e "${GREEN}✅ Copied Vulkan library to $PREBUILT_GPU_DIR/$ABI/$(basename "$VULKAN_LIB_PATH")${NC}"
+        
+        # Create capability flag file in prebuilt directory
+        touch "$PREBUILT_GPU_DIR/$ABI/.vulkan_enabled"
+        echo -e "${GREEN}✅ Created Vulkan capability flag${NC}"
       fi
     else
       echo -e "${RED}❌ Vulkan library not found in build directory${NC}"
@@ -500,10 +617,10 @@ build_gpu_libs_for_abi() {
   GGML_LIB_PATH=$(find "$BUILD_DIR" -name "libggml.*" | head -n 1)
   if [ -n "$GGML_LIB_PATH" ]; then
     if [ "$DRY_RUN" = true ]; then
-      echo -e "${YELLOW}Would copy: $GGML_LIB_PATH to $GPU_LIB_DIR/${NC}"
+      echo -e "${YELLOW}Would copy: $GGML_LIB_PATH to $PREBUILT_GPU_DIR/$ABI/${NC}"
     else
-      cp "$GGML_LIB_PATH" "$GPU_LIB_DIR/"
-      echo -e "${GREEN}✅ Copied core GGML library to $GPU_LIB_DIR/$(basename "$GGML_LIB_PATH")${NC}"
+      cp "$GGML_LIB_PATH" "$PREBUILT_GPU_DIR/$ABI/"
+      echo -e "${GREEN}✅ Copied core GGML library to $PREBUILT_GPU_DIR/$ABI/$(basename "$GGML_LIB_PATH")${NC}"
     fi
   else
     echo -e "${RED}❌ Core GGML library not found in build directory${NC}"
@@ -513,10 +630,10 @@ build_gpu_libs_for_abi() {
   GGML_CPU_LIB_PATH=$(find "$BUILD_DIR" -name "libggml-cpu.*" | head -n 1)
   if [ -n "$GGML_CPU_LIB_PATH" ]; then
     if [ "$DRY_RUN" = true ]; then
-      echo -e "${YELLOW}Would copy: $GGML_CPU_LIB_PATH to $GPU_LIB_DIR/${NC}"
+      echo -e "${YELLOW}Would copy: $GGML_CPU_LIB_PATH to $PREBUILT_GPU_DIR/$ABI/${NC}"
     else
-      cp "$GGML_CPU_LIB_PATH" "$GPU_LIB_DIR/"
-      echo -e "${GREEN}✅ Copied GGML CPU library to $GPU_LIB_DIR/$(basename "$GGML_CPU_LIB_PATH")${NC}"
+      cp "$GGML_CPU_LIB_PATH" "$PREBUILT_GPU_DIR/$ABI/"
+      echo -e "${GREEN}✅ Copied GGML CPU library to $PREBUILT_GPU_DIR/$ABI/$(basename "$GGML_CPU_LIB_PATH")${NC}"
     fi
   fi
   

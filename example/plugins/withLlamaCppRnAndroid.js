@@ -4,139 +4,77 @@ const path = require('path');
 
 /**
  * Config plugin to ensure LlamaCppRn is properly registered in Android Expo builds
+ * - Only handles the necessary setup for local development
+ * - Avoids conflicts with build.gradle and CMakeLists.txt
+ * - IMPORTANT: This plugin ONLY sets up paths for local development. It does not touch any C++
+ *   or native module registration code, as that's handled by your existing CMakeLists.txt
  */
 const withLlamaCppRnAndroid = (config) => {
   return withDangerousMod(config, [
     'android',
     async (config) => {
-      const mainApplicationPath = path.join(
+      // Update settings.gradle to include the module
+      const settingsGradlePath = path.join(
         config.modRequest.platformProjectRoot,
-        'app/src/main/java/com/anonymous/example/MainApplication.kt'
+        'settings.gradle'
       );
       
-      if (fs.existsSync(mainApplicationPath)) {
-        let mainApplicationContent = fs.readFileSync(mainApplicationPath, 'utf8');
+      if (fs.existsSync(settingsGradlePath)) {
+        let settingsContent = fs.readFileSync(settingsGradlePath, 'utf8');
         
-        // Add import if needed
-        if (!mainApplicationContent.includes('import com.novastera.llamacpprn.LlamaCppRnPackage')) {
-          mainApplicationContent = mainApplicationContent.replace(
-            'import expo.modules.ReactNativeHostWrapper',
-            'import expo.modules.ReactNativeHostWrapper\n\n// Import the LlamaCppRn package\nimport com.novastera.llamacpprn.LlamaCppRnPackage'
-          );
+        // Add include statement for the local module if not present
+        if (!settingsContent.includes("include ':llamacpp-rn'")) {
+          const includeAppLine = settingsContent.indexOf("include ':app'");
+          if (includeAppLine !== -1) {
+            const newLine = settingsContent.indexOf('\n', includeAppLine);
+            if (newLine !== -1) {
+              const beforeInclude = settingsContent.substring(0, newLine + 1);
+              const afterInclude = settingsContent.substring(newLine + 1);
+              
+              settingsContent = 
+                beforeInclude + 
+                "include ':llamacpp-rn'\n" +
+                "project(':llamacpp-rn').projectDir = new File(rootProject.projectDir, '../../android')\n" +
+                afterInclude;
+              
+              fs.writeFileSync(settingsGradlePath, settingsContent);
+              console.log('Added llamacpp-rn module to settings.gradle');
+            }
+          }
         }
-        
-        // Add package registration if needed
-        if (!mainApplicationContent.includes('packages.add(LlamaCppRnPackage())')) {
-          mainApplicationContent = mainApplicationContent.replace(
-            'val packages = PackageList(this).packages',
-            'val packages = PackageList(this).packages\n            // Manually add the LlamaCppRnPackage\n            packages.add(LlamaCppRnPackage())'
-          );
-        }
-        
-        fs.writeFileSync(mainApplicationPath, mainApplicationContent);
-        console.log('Added LlamaCppRnPackage registration to MainApplication.kt');
       }
       
-      // Find or create the cpp directory if it doesn't exist
-      const cppDir = path.join(config.modRequest.platformProjectRoot, 'app/src/main/cpp');
-      if (!fs.existsSync(cppDir)) {
-        fs.mkdirSync(cppDir, { recursive: true });
-      }
-      
-      // Create or update OnLoad.cpp
-      const onLoadPath = path.join(cppDir, 'OnLoad.cpp');
-      const onLoadContent = `
-#include <ReactCommon/CallInvokerHolder.h>
-#include <fbjni/fbjni.h>
-#include <jsi/jsi.h>
-#include <memory>
-#include <string>
-
-// Import the LlamaCppRn module header
-#include "../../../../../../node_modules/@novastera-oss/llamacpp-rn/cpp/LlamaCppRnModule.h"
-
-JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
-  return facebook::jni::initialize(vm, [] {});
-}
-
-extern "C"
-JNIEXPORT jsi::jsi::Runtime *JNICALL
-Java_com_facebook_react_turbomodule_core_TurboModuleManager_codegenNativeModules(
-    JNIEnv *env, jclass clazz, jsi::jsi::Runtime *rt, 
-    facebook::react::CallInvokerHolder *jsCallInvokerHolder, jstring moduleName) {
-    
-    auto jsCallInvoker = jsCallInvokerHolder->cthis()->getCallInvoker();
-    const char *moduleNameStr = env->GetStringUTFChars(moduleName, nullptr);
-    std::string name = moduleNameStr;
-    env->ReleaseStringUTFChars(moduleName, moduleNameStr);
-    
-    // Create and install the LlamaCppRn module if requested
-    if (name == "LlamaCppRn") {
-      auto module = facebook::react::LlamaCppRn::create(jsCallInvoker);
-      rt->global().setProperty(*rt, jsi::PropNameID::forAscii(*rt, name), 
-                              jsi::Object::createFromHostObject(*rt, module));
-    }
-    
-    return rt;
-}
-`;
-      
-      if (!fs.existsSync(onLoadPath) || 
-          !fs.readFileSync(onLoadPath, 'utf8').includes('LlamaCppRn::create')) {
-        fs.writeFileSync(onLoadPath, onLoadContent);
-        console.log('Created or updated OnLoad.cpp with LlamaCppRn support');
-      }
-      
-      // Make sure C++ part of the module is properly configured
-      const cmakeListsPath = path.join(
+      // Add dependency to app build.gradle if needed
+      const appBuildGradlePath = path.join(
         config.modRequest.platformProjectRoot,
-        'app/src/main/cpp/CMakeLists.txt'
+        'app/build.gradle'
       );
       
-      const cmakeContent = `
-cmake_minimum_required(VERSION 3.13)
-
-# Define the library target
-project(appmodules)
-
-# Define path to React Native Android source
-set(REACT_NATIVE_DIR "\${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../node_modules/react-native")
-set(APP_ROOT_DIR "\${CMAKE_CURRENT_SOURCE_DIR}/../../../../../..")
-
-# Include modules we need
-include_directories(
-    "\${REACT_NATIVE_DIR}/ReactAndroid/src/main/jni"
-    "\${REACT_NATIVE_DIR}/ReactAndroid/src/main/java/com/facebook/react/turbomodule/core/jni"
-    "\${REACT_NATIVE_DIR}/ReactCommon"
-    "\${REACT_NATIVE_DIR}/ReactCommon/callinvoker"
-    "\${REACT_NATIVE_DIR}/ReactCommon/jsi"
-    "\${APP_ROOT_DIR}/node_modules/@novastera-oss/llamacpp-rn/cpp"
-)
-
-# Create our module library
-add_library(appmodules SHARED OnLoad.cpp)
-
-# Link required libraries
-target_link_libraries(appmodules
-    fbjni
-    jsi
-    react_nativemodule_core
-)
-
-# Get all the default compiler and linker flags
-include("\${REACT_NATIVE_DIR}/ReactAndroid/cmake-utils/ReactNative-application.cmake")
-
-# Add the LlamaCppRn module
-add_subdirectory("\${APP_ROOT_DIR}/node_modules/@novastera-oss/llamacpp-rn/android/src/main/cpp" llamacpp-rn-build)
-target_link_libraries(appmodules llamacpprn)
-`;
-      
-      if (!fs.existsSync(cmakeListsPath) || 
-          !fs.readFileSync(cmakeListsPath, 'utf8').includes('llamacpprn')) {
-        fs.writeFileSync(cmakeListsPath, cmakeContent);
-        console.log('Created or updated CMakeLists.txt with LlamaCppRn support');
+      if (fs.existsSync(appBuildGradlePath)) {
+        let buildGradleContent = fs.readFileSync(appBuildGradlePath, 'utf8');
+        
+        // Add implementation project line if not present
+        if (!buildGradleContent.includes("implementation project(':llamacpp-rn')")) {
+          const dependenciesPos = buildGradleContent.indexOf('dependencies {');
+          if (dependenciesPos !== -1) {
+            const afterDependencies = buildGradleContent.indexOf('\n', dependenciesPos) + 1;
+            
+            const beforeDep = buildGradleContent.substring(0, afterDependencies);
+            const afterDep = buildGradleContent.substring(afterDependencies);
+            
+            buildGradleContent = 
+              beforeDep + 
+              "    // Add llamacpp-rn dependency\n" +
+              "    implementation project(':llamacpp-rn')\n\n" +
+              afterDep;
+            
+            fs.writeFileSync(appBuildGradlePath, buildGradleContent);
+            console.log('Added llamacpp-rn dependency to app/build.gradle');
+          }
+        }
       }
       
+      console.log('LlamaCppRn Android setup completed (minimal mode)');
       return config;
     },
   ]);

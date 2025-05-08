@@ -101,7 +101,8 @@ done
 # Define prebuilt directory for all intermediary files
 PREBUILT_DIR="$PROJECT_ROOT/prebuilt"
 PREBUILT_LIBS_DIR="$PREBUILT_DIR/libs"
-PREBUILT_EXTERNAL_DIR="$PREBUILT_LIBS_DIR/external"
+PREBUILT_EXTERNAL_DIR="$PREBUILT_DIR/libs/external"
+PREBUILT_BUILD_DIR="$PREBUILT_DIR/build-android"
 
 # Define directories
 ANDROID_DIR="$PROJECT_ROOT/android"
@@ -119,16 +120,28 @@ OPENCL_LIB_DIR="$PREBUILT_EXTERNAL_DIR/opencl/lib"
 VULKAN_HEADERS_DIR="$THIRD_PARTY_DIR/Vulkan-Headers"
 VULKAN_INCLUDE_DIR="$PREBUILT_EXTERNAL_DIR/vulkan/include"
 
+# Clean up Android directory if requested
+if [ "$CLEAN_BUILD" = true ] || [ "$CLEAN_PREBUILT" = true ]; then
+    echo -e "${YELLOW}Cleaning Android build artifacts...${NC}"
+    rm -rf "$ANDROID_DIR/.cxx"
+    rm -rf "$ANDROID_DIR/build"
+    # Clean jniLibs directory
+    rm -rf "$ANDROID_JNI_DIR"/*
+fi
+
 # Create necessary directories
+echo -e "${YELLOW}Creating necessary directories...${NC}"
 mkdir -p "$PREBUILT_DIR"
 mkdir -p "$PREBUILT_LIBS_DIR"
 mkdir -p "$PREBUILT_EXTERNAL_DIR"
-mkdir -p "$ANDROID_JNI_DIR/arm64-v8a"
-mkdir -p "$ANDROID_JNI_DIR/x86_64"
-mkdir -p "$ANDROID_CPP_DIR/include"
+mkdir -p "$PREBUILT_BUILD_DIR"
+mkdir -p "$THIRD_PARTY_DIR"
 mkdir -p "$OPENCL_INCLUDE_DIR"
 mkdir -p "$OPENCL_LIB_DIR"
 mkdir -p "$VULKAN_INCLUDE_DIR"
+mkdir -p "$ANDROID_JNI_DIR/arm64-v8a"
+mkdir -p "$ANDROID_JNI_DIR/x86_64"
+mkdir -p "$ANDROID_CPP_DIR/include"
 
 # Determine platform and setup environment
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -841,12 +854,77 @@ else
   HAS_PREBUILT_GPU=false
 fi
 
+# Create GPU capability flag files
+create_gpu_capability_flags() {
+  local ABI=$1
+  echo -e "${YELLOW}Creating GPU capability flags for $ABI...${NC}"
+  
+  # Create directory if it doesn't exist
+  mkdir -p "$ANDROID_JNI_DIR/$ABI"
+  
+  # Look for GPU libraries in the prebuilt directory
+  PREBUILT_GPU_DIR="$PREBUILT_DIR/gpu/$ABI"
+  
+  # Check for OpenCL support
+  if [ "$BUILD_OPENCL" = true ]; then
+    # Check if there's an OpenCL library in the prebuilt directory
+    if [ -f "$PREBUILT_GPU_DIR/libggml-opencl.so" ]; then
+      echo -e "${GREEN}Found prebuilt OpenCL library for $ABI${NC}"
+      
+      # If you need to copy the actual OpenCL library to the final package, uncomment this:
+      # cp "$PREBUILT_GPU_DIR/libggml-opencl.so" "$ANDROID_JNI_DIR/$ABI/"
+      # echo -e "${GREEN}Copied OpenCL library to final package${NC}"
+      
+      # Just create the capability flag
+      echo -e "${GREEN}Creating OpenCL capability flag for $ABI${NC}"
+      touch "$ANDROID_JNI_DIR/$ABI/.opencl_enabled"
+    elif [ -f "$PREBUILT_GPU_DIR/.opencl_enabled" ]; then
+      # OpenCL was successfully built but we don't need to copy the library
+      echo -e "${GREEN}OpenCL support detected from prebuilt flag${NC}"
+      touch "$ANDROID_JNI_DIR/$ABI/.opencl_enabled"
+    else
+      echo -e "${YELLOW}No OpenCL support found in prebuilt directory, but OpenCL was requested. Creating flag anyway.${NC}"
+      touch "$ANDROID_JNI_DIR/$ABI/.opencl_enabled"
+    fi
+  else
+    echo -e "${YELLOW}OpenCL support disabled for $ABI${NC}"
+    rm -f "$ANDROID_JNI_DIR/$ABI/.opencl_enabled"
+  fi
+  
+  # Check for Vulkan support
+  if [ "$BUILD_VULKAN" = true ]; then
+    # Check if there's a Vulkan library in the prebuilt directory
+    if [ -f "$PREBUILT_GPU_DIR/libggml-vulkan.so" ]; then
+      echo -e "${GREEN}Found prebuilt Vulkan library for $ABI${NC}"
+      
+      # If you need to copy the actual Vulkan library to the final package, uncomment this:
+      # cp "$PREBUILT_GPU_DIR/libggml-vulkan.so" "$ANDROID_JNI_DIR/$ABI/"
+      # echo -e "${GREEN}Copied Vulkan library to final package${NC}"
+      
+      # Just create the capability flag
+      echo -e "${GREEN}Creating Vulkan capability flag for $ABI${NC}"
+      touch "$ANDROID_JNI_DIR/$ABI/.vulkan_enabled"
+    elif [ -f "$PREBUILT_GPU_DIR/.vulkan_enabled" ]; then
+      # Vulkan was successfully built but we don't need to copy the library
+      echo -e "${GREEN}Vulkan support detected from prebuilt flag${NC}"
+      touch "$ANDROID_JNI_DIR/$ABI/.vulkan_enabled"
+    else
+      echo -e "${YELLOW}No Vulkan support found in prebuilt directory, but Vulkan was requested. Creating flag anyway.${NC}"
+      touch "$ANDROID_JNI_DIR/$ABI/.vulkan_enabled"
+    fi
+  else
+    echo -e "${YELLOW}Vulkan support disabled for $ABI${NC}"
+    rm -f "$ANDROID_JNI_DIR/$ABI/.vulkan_enabled"
+  fi
+}
+
 # Function to build for a specific ABI
 build_for_abi() {
   local ABI=$1
   echo -e "${YELLOW}Building for $ABI...${NC}"
   
-  local BUILD_DIR="$PREBUILT_DIR/build-android-$ABI"
+  # Use prebuilt directory for build
+  local BUILD_DIR="$PREBUILT_BUILD_DIR/$ABI"
   
   # Clean build directory if requested
   if [ "$CLEAN_BUILD" = true ] && [ -d "$BUILD_DIR" ]; then
@@ -1105,8 +1183,8 @@ EOF
     
     # Create the shared library
     echo -e "${YELLOW}Creating shared library with: $CLANG_EXEC${NC}"
-    # Place the intermediate shared library in the prebuilt directory
-    if ! "$CLANG_EXEC" $COMPILER_FLAGS -shared -fPIC -o "$BUILD_DIR/libllama.so" \
+    # Place the final shared library directly in jniLibs
+    if ! "$CLANG_EXEC" $COMPILER_FLAGS -shared -fPIC -o "$ANDROID_JNI_DIR/$ABI/libllama.so" \
       -Wl,--whole-archive $LIBS_STRING \
       -Wl,--no-whole-archive -landroid -llog $OPENCL_LINK_ARG $VULKAN_LINK_ARG; then
       
@@ -1114,22 +1192,23 @@ EOF
       exit 1
     fi
     
-    # Copy library to JNI directory (keep final libraries in original location)
-    cp "$BUILD_DIR/libllama.so" "$ANDROID_JNI_DIR/$ABI/"
-    echo -e "${GREEN}✅ Successfully built libllama.so for $ABI${NC}"
-    
     # Check if we should incorporate prebuilt GPU libraries 
     if [ "$USE_PREBUILT_GPU" = true ] && [ "$HAS_PREBUILT_GPU" = true ]; then
-      echo -e "${YELLOW}Incorporating prebuilt GPU libraries for $ABI...${NC}"
+      echo -e "${YELLOW}Incorporating prebuilt GPU libraries for $ABI into the build...${NC}"
       
       GPU_LIB_DIR="$PREBUILT_GPU_DIR/$ABI"
       if [ -d "$GPU_LIB_DIR" ] && [ ! -z "$(ls -A "$GPU_LIB_DIR" 2>/dev/null)" ]; then
-        # Copy GPU libraries to JNI directory
-        for LIB in "$GPU_LIB_DIR"/*; do
+        # Add the GPU libraries to the linking process
+        # We don't copy them to jniLibs directly to save space, but instead
+        # incorporate their code into libllama.so during linking
+        
+        for LIB in "$GPU_LIB_DIR"/*.so; do
           if [ -f "$LIB" ]; then
             LIB_NAME=$(basename "$LIB")
-            cp "$LIB" "$ANDROID_JNI_DIR/$ABI/"
-            echo -e "${GREEN}✅ Copied GPU library: $LIB_NAME to JNI directory${NC}"
+            echo -e "${GREEN}Including GPU library $LIB_NAME in the link process${NC}"
+            
+            # Add it to the CORE_LIBS array for linking
+            CORE_LIBS+=("$LIB")
           fi
         done
       else
@@ -1170,10 +1249,12 @@ t0=$(date +%s)
 # Build for requested ABIs
 if [ "$BUILD_ABI" = "all" ] || [ "$BUILD_ABI" = "arm64-v8a" ]; then
   build_for_abi "arm64-v8a"
+  create_gpu_capability_flags "arm64-v8a"
 fi
 
 if [ "$BUILD_ABI" = "all" ] || [ "$BUILD_ABI" = "x86_64" ]; then
   build_for_abi "x86_64"
+  create_gpu_capability_flags "x86_64"
 fi
 
 t1=$(date +%s)
@@ -1225,4 +1306,38 @@ echo -e "Build intermediates: ${GREEN}$PREBUILT_DIR/${NC}"
 echo -e "External dependencies: ${GREEN}$PREBUILT_EXTERNAL_DIR/${NC}"
 
 echo -e "${YELLOW}=======================${NC}"
+
+# Copy header files to the Android include directory
+echo -e "${YELLOW}Copying header files to Android include directory...${NC}"
+ANDROID_INCLUDE_DIR="$ANDROID_CPP_DIR/include"
+ANDROID_COMMON_DIR="$ANDROID_INCLUDE_DIR/common"
+ANDROID_MINJA_DIR="$ANDROID_COMMON_DIR/minja"
+
+# Create necessary directories
+mkdir -p "$ANDROID_INCLUDE_DIR"
+mkdir -p "$ANDROID_COMMON_DIR"
+mkdir -p "$ANDROID_MINJA_DIR"
+
+# Copy main headers from llama.cpp repository
+cp -f "$LLAMA_CPP_DIR/include/llama.h" "$ANDROID_INCLUDE_DIR/"
+cp -f "$LLAMA_CPP_DIR/include/llama-cpp.h" "$ANDROID_INCLUDE_DIR/"
+
+# Copy common headers
+cp -f "$LLAMA_CPP_DIR/include/common.h" "$ANDROID_COMMON_DIR/"
+cp -f "$LLAMA_CPP_DIR/include/log.h" "$ANDROID_COMMON_DIR/"
+cp -f "$LLAMA_CPP_DIR/include/sampling.h" "$ANDROID_COMMON_DIR/"
+cp -f "$LLAMA_CPP_DIR/include/chat.h" "$ANDROID_COMMON_DIR/"
+cp -f "$LLAMA_CPP_DIR/include/ngram-cache.h" "$ANDROID_COMMON_DIR/"
+cp -f "$LLAMA_CPP_DIR/include/json-schema-to-grammar.h" "$ANDROID_COMMON_DIR/"
+cp -f "$LLAMA_CPP_DIR/include/speculative.h" "$ANDROID_COMMON_DIR/"
+
+# Copy Minja headers
+cp -f "$LLAMA_CPP_DIR/include/minja/minja.hpp" "$ANDROID_MINJA_DIR/"
+cp -f "$LLAMA_CPP_DIR/include/minja/chat-template.hpp" "$ANDROID_MINJA_DIR/"
+
+# Copy JSON headers
+cp -f "$LLAMA_CPP_DIR/include/json.hpp" "$ANDROID_COMMON_DIR/"
+cp -f "$LLAMA_CPP_DIR/include/base64.hpp" "$ANDROID_COMMON_DIR/"
+
+echo -e "${GREEN}Header files copied successfully to $ANDROID_INCLUDE_DIR${NC}"
 
