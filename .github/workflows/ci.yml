@@ -75,14 +75,12 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          sdk-version: 35
-          build-tools-version: 35.0.0
-          ndk-version: 27.2.12479018
-          cmake-version: 3.22.1
-
+          packages: 'platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018 cmake;3.22.1'
+          accept-android-sdk-licenses: true
+      
       - name: Create prebuilt directory
         run: mkdir -p prebuilt
-
+      
       - name: Install Android NDK and Dependencies
         run: |
           # Then use our dedicated script for external dependency setup
@@ -92,7 +90,7 @@ jobs:
         run: |
           # Execute the build script with GPU support
           echo "Building Android libraries with OpenCL and Vulkan support..."
-          scripts/build_android.sh --abi=all
+          scripts/build_android_external.sh --abi=all
           
           # Verify libraries were built successfully
           if [ ! -f "android/src/main/jniLibs/arm64-v8a/libllama.so" ]; then
@@ -170,36 +168,11 @@ jobs:
             fi
           fi
       
-      - name: Upload Android Library Artifacts
+      - name: Upload Android Native Libs
         uses: actions/upload-artifact@v4
         with:
-          name: android-libraries
+          name: android-native-libs
           path: android/src/main/jniLibs/
-          retention-days: 1
-          
-      - name: Validate Android Library Structure
-        run: |
-          # Check if basic structure exists
-          if [ ! -d "cpp/llama.cpp" ]; then
-            echo "❌ llama.cpp repository not found"
-            exit 1
-          fi
-          
-          if [ ! -d "android/src/main/cpp/include" ]; then
-            echo "❌ Android include directory not found"
-            exit 1
-          fi
-          
-          if [ ! -f "android/build.gradle" ]; then
-            echo "❌ Android build.gradle not found"
-            exit 1
-          fi
-          
-          if [ ! -f "android/src/main/cpp/include/llama.h" ]; then
-            echo "⚠️ llama.h not found in Android include directory. This may cause build issues."
-          fi
-          
-          echo "✅ Android library structure validated for CI"
   
   ios-build:
     name: iOS Native Build
@@ -218,15 +191,15 @@ jobs:
       
       - name: Setup iOS Framework
         run: |
-          # Create necessary directories
-          mkdir -p ios/libs
+          # Initialize the llama.cpp repository if needed
+          scripts/setupLlamaCpp.sh init
           
-          # Use the new build_apple_external.sh script
+          # Use the build_apple_external.sh to set up iOS framework
           scripts/build_apple_external.sh init
           
           # Verify the iOS xcframework was set up correctly
           if [ ! -d "ios/libs/llama.xcframework" ]; then
-            echo "❌ iOS framework not found at ios/libs/llama.xcframework"
+            echo "❌ iOS framework build failed!"
             exit 1
           else
             echo "✅ iOS framework downloaded successfully"
@@ -235,14 +208,13 @@ jobs:
             echo "Available iOS framework slices:"
             ls -la ios/libs/llama.xcframework/
           fi
-      
-      - name: Upload iOS Framework Artifacts
+          
+      - name: Upload iOS Framework
         uses: actions/upload-artifact@v4
         with:
           name: ios-framework
           path: ios/libs/llama.xcframework/
-          retention-days: 1
-      
+          
       - name: Validate iOS Podspec
         run: |
           # Check if the podspec exists
@@ -278,7 +250,7 @@ jobs:
       - name: Download Android Libraries
         uses: actions/download-artifact@v4
         with:
-          name: android-libraries
+          name: android-native-libs
           path: android/src/main/jniLibs/
           
       - name: Download iOS Framework
