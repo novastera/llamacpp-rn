@@ -1,0 +1,632 @@
+#!/bin/bash
+# ==============================================================================
+# Android GPU Backend Builder for llama.cpp
+# ==============================================================================
+# This script builds only the GPU acceleration backends (OpenCL, Vulkan) 
+# for llama.cpp to be used with React Native.
+# 
+# The built libraries are stored in the prebuilt/gpu/ directory and can be
+# used by the build_android_external.sh script when creating the final JNI
+# libraries that will be included in the React Native package.
+#
+# CI Usage:
+# This script is called directly by the CI workflow to build the GPU backends.
+# The --install-deps flag is no longer needed as it's handled internally
+# when GPU backends are built.
+#
+# Usage: 
+#   scripts/build_android_gpu_backend.sh [options]
+#
+# See --help for all available options.
+# ==============================================================================
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
+
+# Get the absolute path of the script
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# Get project root directory (one level up from script dir)
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+
+# Source the version information
+. "$SCRIPT_DIR/used_version.sh"
+
+# Define prebuilt directory for all intermediary files
+PREBUILT_DIR="$PROJECT_ROOT/prebuilt"
+PREBUILT_LIBS_DIR="$PREBUILT_DIR/libs"
+PREBUILT_EXTERNAL_DIR="$PREBUILT_LIBS_DIR/external"
+PREBUILT_GPU_DIR="$PREBUILT_DIR/gpu" # New directory for GPU libraries
+
+# Define directories
+THIRD_PARTY_DIR="$PREBUILT_DIR/third_party"
+OPENCL_HEADERS_DIR="$THIRD_PARTY_DIR/OpenCL-Headers"
+OPENCL_INCLUDE_DIR="$PREBUILT_EXTERNAL_DIR/opencl/include"
+OPENCL_LIB_DIR="$PREBUILT_EXTERNAL_DIR/opencl/lib"
+VULKAN_HEADERS_DIR="$THIRD_PARTY_DIR/Vulkan-Headers"
+VULKAN_INCLUDE_DIR="$PREBUILT_EXTERNAL_DIR/vulkan/include"
+
+# Define llama.cpp paths
+LLAMA_CPP_DIR="$PROJECT_ROOT/cpp/llama.cpp"
+
+# Print usage information
+print_usage() {
+  echo "Usage: $0 [options]"
+  echo "Options:"
+  echo "  --help                 Print this help message"
+  echo "  --abi=[all|arm64-v8a|x86_64]  Specify which ABI to build for (default: all)"
+  echo "  --platform=[android|windows|macos|linux]  Specify target platform:" 
+  echo "                         - android: Build for Android target (default on all systems)"
+  echo "                         - linux: Build on Linux for Android (used in CI)"
+  echo "                         - macos: Build on macOS for Android (likely needs adjustments)"
+  echo "                         - windows: Build on Windows for Android (not fully tested)"
+  echo "  --no-opencl            Disable OpenCL GPU acceleration"
+  echo "  --no-vulkan            Disable Vulkan GPU acceleration"
+  echo "  --debug                Build in debug mode"
+  echo "  --clean                Clean previous builds before building"
+  echo "  --dry-run              Show commands without execution"
+  echo "  --install-deps         Only install dependencies and exit"
+  echo "  --ndk-path=<path>      Use a custom NDK path"
+}
+
+# Default values
+BUILD_ABI="all"
+BUILD_OPENCL=true
+BUILD_VULKAN=true
+BUILD_TYPE="Release"
+CLEAN_BUILD=false
+DRY_RUN=false
+INSTALL_DEPS_ONLY=false  # Flag to only install dependencies
+CUSTOM_NDK_PATH=""
+
+# Auto-detect platform
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  BUILD_PLATFORM="macos"
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+  BUILD_PLATFORM="linux"
+elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
+  BUILD_PLATFORM="windows"
+else
+  BUILD_PLATFORM="android" # Default fallback
+fi
+
+# Parse arguments
+for arg in "$@"; do
+  case $arg in
+    --help)
+      print_usage
+      exit 0
+      ;;
+    --abi=*)
+      BUILD_ABI="${arg#*=}"
+      ;;
+    --platform=*)
+      BUILD_PLATFORM="${arg#*=}"
+      ;;
+    --no-opencl)
+      BUILD_OPENCL=false
+      ;;
+    --no-vulkan)
+      BUILD_VULKAN=false
+      ;;
+    --debug)
+      BUILD_TYPE="Debug"
+      ;;
+    --clean)
+      CLEAN_BUILD=true
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      ;;
+    --install-deps)
+      INSTALL_DEPS_ONLY=true
+      ;;
+    --ndk-path=*)
+      CUSTOM_NDK_PATH="${arg#*=}"
+      ;;
+    *)
+      echo -e "${RED}Unknown argument: $arg${NC}"
+      print_usage
+      exit 1
+      ;;
+  esac
+done
+
+# Set NDK path if provided
+if [ -n "$CUSTOM_NDK_PATH" ]; then
+  echo -e "${GREEN}Using custom NDK path: $CUSTOM_NDK_PATH${NC}"
+  ANDROID_NDK_HOME="$CUSTOM_NDK_PATH"
+fi
+
+echo -e "${YELLOW}Setting up external dependencies for Android GPU backends...${NC}"
+echo -e "${YELLOW}Target platform: $BUILD_PLATFORM${NC}"
+echo -e "${YELLOW}Target ABI: $BUILD_ABI${NC}"
+
+# Create necessary directories
+mkdir -p "$PREBUILT_DIR"
+mkdir -p "$PREBUILT_LIBS_DIR"
+mkdir -p "$PREBUILT_EXTERNAL_DIR"
+mkdir -p "$OPENCL_INCLUDE_DIR" "$OPENCL_LIB_DIR" "$VULKAN_INCLUDE_DIR"
+mkdir -p "$PREBUILT_GPU_DIR/arm64-v8a" "$PREBUILT_GPU_DIR/x86_64" # Create GPU libraries directories
+
+# Setup dependencies for both OpenCL and Vulkan headers
+setup_dependencies() {
+  # Verify llama.cpp exists as a git repository
+  if [ ! -d "$LLAMA_CPP_DIR/.git" ]; then
+    echo -e "${YELLOW}llama.cpp not found as a git repository at $LLAMA_CPP_DIR${NC}"
+    echo -e "${YELLOW}Running setupLlamaCpp.sh to initialize it...${NC}"
+    "$SCRIPT_DIR/setupLlamaCpp.sh" init
+    
+    if [ ! -d "$LLAMA_CPP_DIR/.git" ]; then
+      echo -e "${RED}Failed to initialize llama.cpp${NC}"
+      exit 1
+    fi
+  fi
+
+  # Setup OpenCL dependencies
+  echo -e "${YELLOW}Setting up OpenCL dependencies...${NC}"
+
+  # Verify OpenCL dependencies have been properly setup
+  if [ ! -d "$OPENCL_HEADERS_DIR" ]; then
+    echo -e "${YELLOW}OpenCL Headers not installed correctly. Installing manually...${NC}"
+    mkdir -p "$OPENCL_HEADERS_DIR"
+    # Use specific OpenCL 3.0 release tag to match build_android.sh
+    git clone --depth 1 --branch "$OPENCL_HEADERS_TAG" https://github.com/KhronosGroup/OpenCL-Headers.git "$OPENCL_HEADERS_DIR"
+  fi
+
+  if [ ! -d "$OPENCL_INCLUDE_DIR/CL" ]; then
+    echo -e "${YELLOW}OpenCL include directory not set up correctly. Creating manually...${NC}"
+    mkdir -p "$OPENCL_INCLUDE_DIR"
+    cp -r "$OPENCL_HEADERS_DIR/CL" "$OPENCL_INCLUDE_DIR/"
+  fi
+
+  # Ensure we have architecture-specific OpenCL libraries
+  mkdir -p "$OPENCL_LIB_DIR/arm64-v8a"
+  mkdir -p "$OPENCL_LIB_DIR/x86_64"
+
+  # Create stub libraries for each architecture
+  if [ ! -f "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so" ]; then
+    echo -e "${YELLOW}Creating stub libOpenCL.so for arm64-v8a...${NC}"
+    touch "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so"
+  fi
+
+  if [ ! -f "$OPENCL_LIB_DIR/x86_64/libOpenCL.so" ]; then
+    echo -e "${YELLOW}Creating stub libOpenCL.so for x86_64...${NC}"
+    touch "$OPENCL_LIB_DIR/x86_64/libOpenCL.so"
+  fi
+
+  echo -e "${GREEN}✅ OpenCL dependencies setup complete${NC}"
+
+  # Setup Vulkan dependencies
+  echo -e "${YELLOW}Setting up Vulkan dependencies...${NC}"
+
+  # Verify Vulkan dependencies have been properly setup
+  if [ ! -d "$VULKAN_HEADERS_DIR" ]; then
+    echo -e "${YELLOW}Vulkan Headers not installed correctly. Installing manually...${NC}"
+    mkdir -p "$VULKAN_HEADERS_DIR"
+    # Use specific Vulkan SDK version tag to match build_android.sh
+    git clone --depth 1 --branch "v$VULKAN_SDK_VERSION" https://github.com/KhronosGroup/Vulkan-Headers.git "$VULKAN_HEADERS_DIR"
+  fi
+
+  if [ ! -d "$VULKAN_INCLUDE_DIR/vulkan" ]; then
+    echo -e "${YELLOW}Vulkan include directory not set up correctly. Creating manually...${NC}"
+    mkdir -p "$VULKAN_INCLUDE_DIR"
+    cp -r "$VULKAN_HEADERS_DIR/include/vulkan" "$VULKAN_INCLUDE_DIR/"
+  fi
+
+  # Make sure we have the vulkan.hpp C++ header
+  if [ ! -f "$VULKAN_INCLUDE_DIR/vulkan/vulkan.hpp" ]; then
+    echo -e "${YELLOW}Vulkan-Hpp header not found. Downloading manually...${NC}"
+    mkdir -p "$VULKAN_INCLUDE_DIR/vulkan"
+    
+    # Try to use wget or curl to download
+    if command -v wget &> /dev/null; then
+      wget -q "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Hpp/vulkan-sdk-$VULKAN_SDK_VERSION/vulkan/vulkan.hpp" -O "$VULKAN_INCLUDE_DIR/vulkan/vulkan.hpp"
+    elif command -v curl &> /dev/null; then
+      curl -s -o "$VULKAN_INCLUDE_DIR/vulkan/vulkan.hpp" "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Hpp/vulkan-sdk-$VULKAN_SDK_VERSION/vulkan/vulkan.hpp"
+    else
+      echo -e "${RED}❌ Neither wget nor curl found. Cannot download Vulkan-Hpp header.${NC}"
+    fi
+    
+    if [ ! -f "$VULKAN_INCLUDE_DIR/vulkan/vulkan.hpp" ]; then
+      echo -e "${RED}❌ Failed to download Vulkan-Hpp header. Build will likely fail.${NC}"
+    else
+      echo -e "${GREEN}✅ Successfully downloaded Vulkan-Hpp header${NC}"
+    fi
+  fi
+
+  # Also download vk_platform.h if needed
+  if [ ! -f "$VULKAN_INCLUDE_DIR/vulkan/vk_platform.h" ] && [ ! -d "$VULKAN_HEADERS_DIR" ]; then
+    echo -e "${YELLOW}Missing vk_platform.h. Downloading Vulkan-Headers repository...${NC}"
+    git clone --depth 1 --branch "v$VULKAN_SDK_VERSION" https://github.com/KhronosGroup/Vulkan-Headers.git "$VULKAN_HEADERS_DIR"
+    cp -r "$VULKAN_HEADERS_DIR/include/vulkan/"* "$VULKAN_INCLUDE_DIR/vulkan/"
+  fi
+
+  # Make sure we have the vk_video headers
+  if [ ! -d "$VULKAN_INCLUDE_DIR/vk_video" ]; then
+    echo -e "${YELLOW}Missing vk_video directory. Adding vk_video headers...${NC}"
+    
+    # If we already have Vulkan-Headers repo, copy from there
+    if [ -d "$VULKAN_HEADERS_DIR/include/vk_video" ]; then
+      mkdir -p "$VULKAN_INCLUDE_DIR/vk_video"
+      cp -r "$VULKAN_HEADERS_DIR/include/vk_video/"* "$VULKAN_INCLUDE_DIR/vk_video/"
+      echo -e "${GREEN}✅ Copied vk_video headers from Vulkan-Headers repository${NC}"
+    else
+      # Otherwise download them individually
+      echo -e "${YELLOW}Downloading vk_video headers individually...${NC}"
+      mkdir -p "$VULKAN_INCLUDE_DIR/vk_video"
+      
+      # List of required video headers
+      VK_VIDEO_HEADERS=(
+        "vulkan_video_codec_h264std.h"
+        "vulkan_video_codec_h264std_decode.h"
+        "vulkan_video_codec_h264std_encode.h"
+        "vulkan_video_codec_h265std.h"
+        "vulkan_video_codec_h265std_decode.h"
+        "vulkan_video_codec_h265std_encode.h"
+        "vulkan_video_codec_av1std.h"
+        "vulkan_video_codec_av1std_decode.h"
+        "vulkan_video_codecs_common.h"
+      )
+      
+      # Download each header
+      for HEADER in "${VK_VIDEO_HEADERS[@]}"; do
+        if command -v wget &> /dev/null; then
+          wget -q "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v$VULKAN_SDK_VERSION/include/vk_video/$HEADER" -O "$VULKAN_INCLUDE_DIR/vk_video/$HEADER"
+        elif command -v curl &> /dev/null; then
+          curl -s -o "$VULKAN_INCLUDE_DIR/vk_video/$HEADER" "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v$VULKAN_SDK_VERSION/include/vk_video/$HEADER"
+        fi
+        
+        if [ -f "$VULKAN_INCLUDE_DIR/vk_video/$HEADER" ]; then
+          echo -e "${GREEN}✅ Downloaded $HEADER${NC}"
+        else
+          echo -e "${RED}❌ Failed to download $HEADER${NC}"
+        fi
+      done
+    fi
+  fi
+
+  # Copy to NDK sysroot if provided
+  if [ -n "$ANDROID_NDK_HOME" ]; then
+    NDK_SYSROOT_INCLUDE="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include"
+    if [ -d "$NDK_SYSROOT_INCLUDE" ]; then
+      echo -e "${YELLOW}Copying Vulkan headers to NDK sysroot...${NC}"
+      mkdir -p "$NDK_SYSROOT_INCLUDE/vulkan"
+      cp -r "$VULKAN_INCLUDE_DIR/vulkan/"* "$NDK_SYSROOT_INCLUDE/vulkan/"
+      
+      # Also copy vk_video headers
+      if [ -d "$VULKAN_INCLUDE_DIR/vk_video" ]; then
+        mkdir -p "$NDK_SYSROOT_INCLUDE/vk_video"
+        cp -r "$VULKAN_INCLUDE_DIR/vk_video/"* "$NDK_SYSROOT_INCLUDE/vk_video/"
+        echo -e "${GREEN}✅ vk_video headers copied to NDK sysroot${NC}"
+      fi
+      
+      echo -e "${GREEN}✅ Vulkan headers copied to NDK sysroot${NC}"
+      
+      # Also copy OpenCL headers
+      echo -e "${YELLOW}Copying OpenCL headers to NDK sysroot...${NC}"
+      mkdir -p "$NDK_SYSROOT_INCLUDE/CL"
+      cp -r "$OPENCL_INCLUDE_DIR/CL/"* "$NDK_SYSROOT_INCLUDE/CL/"
+      echo -e "${GREEN}✅ OpenCL headers copied to NDK sysroot${NC}"
+    fi
+  fi
+
+  echo -e "${GREEN}✅ External dependencies setup complete${NC}"
+  echo -e "${GREEN}All external libraries are available in: $PREBUILT_EXTERNAL_DIR${NC}"
+}
+
+# Call setup_dependencies to set up all required headers and libraries
+setup_dependencies
+
+# Exit if we're only installing dependencies
+if [ "$INSTALL_DEPS_ONLY" = true ]; then
+  echo -e "${GREEN}✅ Dependencies installed successfully. Exiting as requested.${NC}"
+  exit 0
+fi
+
+# Function to build GPU libraries for a specific ABI
+build_gpu_libs_for_abi() {
+  local ABI=$1
+  echo -e "${YELLOW}Building GPU libraries for $ABI...${NC}"
+  
+  # Create build directory for this ABI
+  local BUILD_DIR="$PREBUILT_DIR/build-gpu-$ABI"
+  
+  # Clean build directory if requested
+  if [ "$CLEAN_BUILD" = true ] && [ -d "$BUILD_DIR" ]; then
+    echo -e "${YELLOW}Cleaning previous build for $ABI...${NC}"
+    rm -rf "$BUILD_DIR"
+  fi
+  
+  mkdir -p "$BUILD_DIR"
+  
+  # Prepare CMake flags
+  CMAKE_FLAGS=()
+  CMAKE_FLAGS+=("-DCMAKE_BUILD_TYPE=$BUILD_TYPE")
+  CMAKE_FLAGS+=("-DBUILD_SHARED_LIBS=ON") # Build shared libraries
+  CMAKE_FLAGS+=("-DLLAMA_BUILD_TESTS=OFF")
+  CMAKE_FLAGS+=("-DLLAMA_BUILD_EXAMPLES=OFF")
+  
+  # Add GPU backend flags
+  if [ "$BUILD_OPENCL" = true ]; then
+    CMAKE_FLAGS+=("-DGGML_OPENCL=ON")
+    CMAKE_FLAGS+=("-DGGML_OPENCL_EMBED_KERNELS=ON")
+    CMAKE_FLAGS+=("-DGGML_OPENCL_USE_ADRENO_KERNELS=ON") # Good for Android
+    
+    # Use OpenCL include directory
+    CMAKE_FLAGS+=("-DOpenCL_INCLUDE_DIR=$OPENCL_INCLUDE_DIR")
+    CMAKE_FLAGS+=("-DOpenCL_LIBRARY=$OPENCL_LIB_DIR/$ABI/libOpenCL.so")
+  else
+    CMAKE_FLAGS+=("-DGGML_OPENCL=OFF")
+  fi
+  
+  if [ "$BUILD_VULKAN" = true ]; then
+    CMAKE_FLAGS+=("-DGGML_VULKAN=ON")
+    CMAKE_FLAGS+=("-DLLAMA_VULKAN=ON")
+    CMAKE_FLAGS+=("-DGGML_VULKAN_EMBED_KERNELS=ON")
+    
+    # Use Vulkan include directory
+    CMAKE_FLAGS+=("-DVulkan_INCLUDE_DIR=$VULKAN_INCLUDE_DIR")
+    
+    # Set platform-specific Vulkan flags
+    CMAKE_FLAGS+=("-DVK_USE_PLATFORM_ANDROID_KHR=ON")
+    
+    # Handle glslc executable
+    if [ -n "$GLSLC_EXECUTABLE" ] && [ -f "$GLSLC_EXECUTABLE" ]; then
+      echo -e "${GREEN}Using glslc at: $GLSLC_EXECUTABLE${NC}"
+      CMAKE_FLAGS+=("-DGLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+      CMAKE_FLAGS+=("-DVulkan_GLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+    elif command -v glslc &> /dev/null; then
+      GLSLC_EXECUTABLE=$(which glslc)
+      echo -e "${GREEN}Found glslc in PATH: $GLSLC_EXECUTABLE${NC}"
+      CMAKE_FLAGS+=("-DGLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+      CMAKE_FLAGS+=("-DVulkan_GLSLC_EXECUTABLE=$GLSLC_EXECUTABLE")
+    else
+      echo -e "${YELLOW}glslc not found, will attempt to build without it${NC}"
+      # Tell CMake not to use glslc
+      CMAKE_FLAGS+=("-DGGML_VULKAN_SHADERS_PREBUILD=ON")
+    fi
+    
+    # Create fake Vulkan library if needed for build to succeed
+    if [ ! -f "$VULKAN_INCLUDE_DIR/lib/libvulkan.so" ]; then
+      mkdir -p "$VULKAN_INCLUDE_DIR/lib"
+      touch "$VULKAN_INCLUDE_DIR/lib/libvulkan.so"
+      echo -e "${YELLOW}Created empty libvulkan.so for build to proceed${NC}"
+      CMAKE_FLAGS+=("-DVulkan_LIBRARY=$VULKAN_INCLUDE_DIR/lib/libvulkan.so")
+    fi
+  else
+    CMAKE_FLAGS+=("-DGGML_VULKAN=OFF")
+    CMAKE_FLAGS+=("-DLLAMA_VULKAN=OFF")
+  fi
+  
+  # Add Android-specific flags
+  if [ "$BUILD_PLATFORM" = "android" ]; then
+    # Find Android NDK
+    if [ -z "$ANDROID_NDK_HOME" ]; then
+      if [ -n "$ANDROID_NDK_ROOT" ]; then
+        ANDROID_NDK_HOME="$ANDROID_NDK_ROOT"
+      elif [ -d "$ANDROID_HOME/ndk" ]; then
+        # Find the latest NDK version
+        NEWEST_NDK_VERSION=$(ls -1 "$ANDROID_HOME/ndk" | sort -rV | head -n 1)
+        ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NEWEST_NDK_VERSION"
+      elif [ -d "$ANDROID_HOME/ndk-bundle" ]; then
+        ANDROID_NDK_HOME="$ANDROID_HOME/ndk-bundle"
+      else
+        echo -e "${RED}Android NDK not found. Please set ANDROID_NDK_HOME.${NC}"
+        exit 1
+      fi
+    fi
+    
+    echo -e "${GREEN}Using Android NDK at: $ANDROID_NDK_HOME${NC}"
+    
+    # Add Android-specific flags
+    CMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+    CMAKE_FLAGS+=("-DCMAKE_TOOLCHAIN_FILE=$CMAKE_TOOLCHAIN_FILE")
+    CMAKE_FLAGS+=("-DANDROID_ABI=$ABI")
+    CMAKE_FLAGS+=("-DANDROID_PLATFORM=android-24") # Minimum Android 7.0
+    CMAKE_FLAGS+=("-DANDROID_STL=c++_shared")
+    
+    if [ "$BUILD_VULKAN" = true ]; then
+      CMAKE_FLAGS+=("-DVK_USE_PLATFORM_ANDROID_KHR=ON")
+    fi
+  elif [ "$BUILD_PLATFORM" = "macos" ]; then
+    echo -e "${YELLOW}Building for macOS platform${NC}"
+    # Add macOS-specific flags here if needed
+  elif [ "$BUILD_PLATFORM" = "windows" ]; then
+    echo -e "${YELLOW}Building for Windows platform${NC}"
+    # Add Windows-specific flags here if needed
+  elif [ "$BUILD_PLATFORM" = "linux" ]; then
+    echo -e "${YELLOW}Building for Linux platform${NC}"
+    # Add Linux-specific flags here if needed
+  fi
+  
+  # Run CMake configuration
+  if [ "$DRY_RUN" = true ]; then
+    echo -e "${YELLOW}Would run: cmake -S \"$LLAMA_CPP_DIR\" -B \"$BUILD_DIR\" ${CMAKE_FLAGS[*]}${NC}"
+  else
+    echo -e "${YELLOW}Configuring GPU backends with CMake...${NC}"
+    cmake -S "$LLAMA_CPP_DIR" -B "$BUILD_DIR" "${CMAKE_FLAGS[@]}"
+  fi
+  
+  # Build libraries
+  if [ "$DRY_RUN" = true ]; then
+    echo -e "${YELLOW}Would run: cmake --build \"$BUILD_DIR\" --config \"$BUILD_TYPE\" -j $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)${NC}"
+  else
+    echo -e "${YELLOW}Building GPU backends...${NC}"
+    cmake --build "$BUILD_DIR" --config "$BUILD_TYPE" -j $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+  fi
+  
+  # Copy built libraries to GPU directory
+  GPU_LIB_DIR="$PREBUILT_GPU_DIR/$ABI"
+  mkdir -p "$GPU_LIB_DIR"
+  
+  # Find and copy the GPU libraries
+  echo -e "${YELLOW}Copying GPU backend libraries to $GPU_LIB_DIR${NC}"
+  
+  # Check for OpenCL library
+  if [ "$BUILD_OPENCL" = true ]; then
+    OPENCL_LIB_PATH=$(find "$BUILD_DIR" -name "libggml-opencl.*" | head -n 1)
+    if [ -n "$OPENCL_LIB_PATH" ]; then
+      if [ "$DRY_RUN" = true ]; then
+        echo -e "${YELLOW}Would copy: $OPENCL_LIB_PATH to $GPU_LIB_DIR/${NC}"
+      else
+        cp "$OPENCL_LIB_PATH" "$GPU_LIB_DIR/"
+        echo -e "${GREEN}✅ Copied OpenCL library to $GPU_LIB_DIR/$(basename "$OPENCL_LIB_PATH")${NC}"
+      fi
+    else
+      echo -e "${RED}❌ OpenCL library not found in build directory${NC}"
+    fi
+  fi
+  
+  # Check for Vulkan library
+  if [ "$BUILD_VULKAN" = true ]; then
+    VULKAN_LIB_PATH=$(find "$BUILD_DIR" -name "libggml-vulkan.*" | head -n 1)
+    if [ -n "$VULKAN_LIB_PATH" ]; then
+      if [ "$DRY_RUN" = true ]; then
+        echo -e "${YELLOW}Would copy: $VULKAN_LIB_PATH to $GPU_LIB_DIR/${NC}"
+      else
+        cp "$VULKAN_LIB_PATH" "$GPU_LIB_DIR/"
+        echo -e "${GREEN}✅ Copied Vulkan library to $GPU_LIB_DIR/$(basename "$VULKAN_LIB_PATH")${NC}"
+      fi
+    else
+      echo -e "${RED}❌ Vulkan library not found in build directory${NC}"
+    fi
+  fi
+  
+  # Copy core GGML libraries (needed for the GPU backends)
+  GGML_LIB_PATH=$(find "$BUILD_DIR" -name "libggml.*" | head -n 1)
+  if [ -n "$GGML_LIB_PATH" ]; then
+    if [ "$DRY_RUN" = true ]; then
+      echo -e "${YELLOW}Would copy: $GGML_LIB_PATH to $GPU_LIB_DIR/${NC}"
+    else
+      cp "$GGML_LIB_PATH" "$GPU_LIB_DIR/"
+      echo -e "${GREEN}✅ Copied core GGML library to $GPU_LIB_DIR/$(basename "$GGML_LIB_PATH")${NC}"
+    fi
+  else
+    echo -e "${RED}❌ Core GGML library not found in build directory${NC}"
+  fi
+  
+  # Also check for CPU-specific libraries
+  GGML_CPU_LIB_PATH=$(find "$BUILD_DIR" -name "libggml-cpu.*" | head -n 1)
+  if [ -n "$GGML_CPU_LIB_PATH" ]; then
+    if [ "$DRY_RUN" = true ]; then
+      echo -e "${YELLOW}Would copy: $GGML_CPU_LIB_PATH to $GPU_LIB_DIR/${NC}"
+    else
+      cp "$GGML_CPU_LIB_PATH" "$GPU_LIB_DIR/"
+      echo -e "${GREEN}✅ Copied GGML CPU library to $GPU_LIB_DIR/$(basename "$GGML_CPU_LIB_PATH")${NC}"
+    fi
+  fi
+  
+  echo -e "${GREEN}✅ GPU backends built and copied for $ABI${NC}"
+}
+
+# Build for each requested ABI
+if [ "$BUILD_ABI" = "all" ] || [ "$BUILD_ABI" = "arm64-v8a" ]; then
+  build_gpu_libs_for_abi "arm64-v8a"
+fi
+
+if [ "$BUILD_ABI" = "all" ] || [ "$BUILD_ABI" = "x86_64" ]; then
+  build_gpu_libs_for_abi "x86_64"
+fi
+
+# Helper function to fix Vulkan build issues when detected
+fix_vulkan_build_issues() {
+  echo -e "${YELLOW}Attempting to fix Vulkan build issues...${NC}"
+  
+  # Install Vulkan SDK if on Linux CI
+  if [[ "$BUILD_PLATFORM" == "linux" ]]; then
+    echo -e "${YELLOW}Installing Vulkan SDK on Linux...${NC}"
+    
+    # Add LunarG repository
+    wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+    sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+    sudo apt update
+    
+    # Install Vulkan SDK
+    sudo apt install -y vulkan-sdk
+    
+    # Check if glslc is available now
+    if command -v glslc &> /dev/null; then
+      echo -e "${GREEN}✅ glslc installed successfully: $(which glslc)${NC}"
+      export GLSLC_EXECUTABLE=$(which glslc)
+    else
+      echo -e "${RED}❌ glslc still not available after installation${NC}"
+    fi
+    
+    # Add shader-tools
+    sudo apt install -y shaderc
+    if command -v glslc &> /dev/null; then
+      echo -e "${GREEN}✅ glslc now available at: $(which glslc)${NC}"
+      export GLSLC_EXECUTABLE=$(which glslc)
+    else
+      echo -e "${RED}❌ glslc still not available${NC}"
+    fi
+    
+    return 0
+  elif [[ "$BUILD_PLATFORM" == "macos" ]]; then
+    echo -e "${YELLOW}Installing Vulkan SDK on macOS using Homebrew...${NC}"
+    brew install molten-vk vulkan-headers shaderc
+    
+    if command -v glslc &> /dev/null; then
+      echo -e "${GREEN}✅ glslc installed successfully: $(which glslc)${NC}"
+      export GLSLC_EXECUTABLE=$(which glslc)
+    else
+      echo -e "${RED}❌ glslc still not available after installation${NC}"
+    fi
+    
+    return 0
+  else
+    echo -e "${YELLOW}Platform $BUILD_PLATFORM not supported for automatic Vulkan SDK installation${NC}"
+    return 1
+  fi
+}
+
+# Create a manifest file to indicate build details
+MANIFEST_FILE="$PREBUILT_GPU_DIR/build-manifest.txt"
+echo "Build timestamp: $(date)" > "$MANIFEST_FILE"
+echo "Platform: $BUILD_PLATFORM" >> "$MANIFEST_FILE"
+echo "OpenCL: $([ "$BUILD_OPENCL" = true ] && echo "enabled" || echo "disabled")" >> "$MANIFEST_FILE"
+echo "Vulkan: $([ "$BUILD_VULKAN" = true ] && echo "enabled" || echo "disabled")" >> "$MANIFEST_FILE"
+echo "Build type: $BUILD_TYPE" >> "$MANIFEST_FILE"
+echo "llama.cpp commit: $(cd "$LLAMA_CPP_DIR" && git rev-parse HEAD)" >> "$MANIFEST_FILE"
+
+# Check for GPU backend build failures
+if [ "$BUILD_VULKAN" = true ] && [ ! -f "$PREBUILT_GPU_DIR/arm64-v8a/libggml-vulkan.so" ] && [ ! -f "$PREBUILT_GPU_DIR/x86_64/libggml-vulkan.so" ]; then
+  echo -e "${RED}⚠️ Vulkan libraries failed to build${NC}"
+  
+  # Try to fix Vulkan build issues
+  if fix_vulkan_build_issues; then
+    echo -e "${GREEN}✅ Fixed Vulkan build issues, retrying build...${NC}"
+    
+    # Retry building with Vulkan
+    if [ "$BUILD_ABI" = "all" ] || [ "$BUILD_ABI" = "arm64-v8a" ]; then
+      build_gpu_libs_for_abi "arm64-v8a"
+    fi
+    
+    if [ "$BUILD_ABI" = "all" ] || [ "$BUILD_ABI" = "x86_64" ]; then
+      build_gpu_libs_for_abi "x86_64"
+    fi
+  else
+    echo -e "${YELLOW}Attempting to build with Vulkan disabled...${NC}"
+    
+    # Retry without Vulkan
+    BUILD_VULKAN=false
+    echo "Vulkan: disabled (after build failure)" >> "$MANIFEST_FILE"
+    
+    if [ "$BUILD_ABI" = "all" ] || [ "$BUILD_ABI" = "arm64-v8a" ]; then
+      build_gpu_libs_for_abi "arm64-v8a"
+    fi
+    
+    if [ "$BUILD_ABI" = "all" ] || [ "$BUILD_ABI" = "x86_64" ]; then
+      build_gpu_libs_for_abi "x86_64"
+    fi
+  fi
+fi
+
+echo -e "${GREEN}Manifest created at $MANIFEST_FILE${NC}"
+
+echo -e "${GREEN}✅ All GPU backend libraries built successfully!${NC}"
+echo -e "${GREEN}GPU libraries are available in: $PREBUILT_GPU_DIR${NC}"

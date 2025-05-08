@@ -28,7 +28,7 @@ check_requirements() {
   fi
   
   # Ensure scripts are executable
-  chmod +x "$SCRIPT_DIR/llama_cpp_ios.sh"
+  chmod +x "$SCRIPT_DIR/build_apple_external.sh"
   
   return 0
 }
@@ -165,8 +165,24 @@ check_llama_cpp_repository() {
 clean_all() {
   echo -e "${YELLOW}Cleaning all llama.cpp related files and directories...${NC}"
   
-  # Clean iOS framework using the iOS script
-  "$SCRIPT_DIR/llama_cpp_ios.sh" clean
+  # Check for platform argument
+  PLATFORM="all"
+  for arg in "$@"; do
+    if [[ "$arg" == "--platform="* ]]; then
+      PLATFORM="${arg#*=}"
+    fi
+  done
+  
+  # Clean iOS framework using the iOS script if not on android platform
+  if [[ "$PLATFORM" != "android" ]]; then
+    if [ -f "$SCRIPT_DIR/build_apple_external.sh" ]; then
+      "$SCRIPT_DIR/build_apple_external.sh" clean
+    else
+      echo -e "${YELLOW}Skipping iOS clean - build_apple_external.sh not found${NC}"
+    fi
+  else
+    echo -e "${YELLOW}Skipping iOS clean for Android platform${NC}"
+  fi
   
   # For the git repository, reset to the correct commit
   if [ -d "$LLAMA_CPP_DIR/.git" ]; then
@@ -191,6 +207,14 @@ show_version() {
   echo -e "Commit: ${GREEN}$LLAMA_CPP_COMMIT${NC}"
   echo -e "Tag: ${GREEN}$LLAMA_CPP_TAG${NC}"
   
+  # Check for platform argument
+  PLATFORM="all"
+  for arg in "$@"; do
+    if [[ "$arg" == "--platform="* ]]; then
+      PLATFORM="${arg#*=}"
+    fi
+  done
+  
   # Check actual repository version
   if [ -d "$LLAMA_CPP_DIR/.git" ]; then
     cd "$LLAMA_CPP_DIR"
@@ -208,8 +232,28 @@ show_version() {
     echo -e "${YELLOW}llama.cpp repository not initialized${NC}"
   fi
   
-  # Show iOS framework version
-  "$SCRIPT_DIR/llama_cpp_ios.sh" version
+  # Show iOS framework version if not on android platform
+  if [[ "$PLATFORM" != "android" ]]; then
+    if [ -f "$SCRIPT_DIR/build_apple_external.sh" ]; then
+      # Try to use the version command if it exists in the script
+      if grep -q "version" "$SCRIPT_DIR/build_apple_external.sh"; then
+        "$SCRIPT_DIR/build_apple_external.sh" version
+      else
+        # Check for framework existence and show directory structure
+        if [ -d "$PACKAGE_DIR/ios/libs/llama.xcframework" ]; then
+          echo -e "${GREEN}iOS framework installed at: $PACKAGE_DIR/ios/libs/llama.xcframework${NC}"
+          echo -e "${YELLOW}Framework slices available:${NC}"
+          find "$PACKAGE_DIR/ios/libs/llama.xcframework" -maxdepth 1 -type d -not -path "$PACKAGE_DIR/ios/libs/llama.xcframework" | sort
+        else
+          echo -e "${YELLOW}iOS framework not installed${NC}"
+        fi
+      fi
+    else
+      echo -e "${YELLOW}Skipping iOS version check - build_apple_external.sh not found${NC}"
+    fi
+  else
+    echo -e "${YELLOW}Skipping iOS version for Android platform${NC}"
+  fi
   
   return 0
 }
@@ -239,15 +283,56 @@ main() {
   case "$command" in
     "init")
       setup_llama_cpp_submodule
-      # Pass remaining arguments to iOS script
-      "$SCRIPT_DIR/llama_cpp_ios.sh" init "$@"
+      
+      # Check for platform argument
+      PLATFORM="all"
+      for arg in "$@"; do
+        if [[ "$arg" == "--platform="* ]]; then
+          PLATFORM="${arg#*=}"
+        fi
+      done
+      
+      # Only call iOS script if not explicitly on android platform
+      if [[ "$PLATFORM" != "android" ]]; then
+        if [ -f "$SCRIPT_DIR/build_apple_external.sh" ]; then
+          echo -e "${YELLOW}Setting up iOS framework...${NC}"
+          "$SCRIPT_DIR/build_apple_external.sh" init "$@"
+        else
+          echo -e "${YELLOW}Skipping iOS setup - build_apple_external.sh not found${NC}"
+        fi
+      else
+        echo -e "${YELLOW}Skipping iOS setup for Android platform${NC}"
+      fi
       ;;
     "check")
       check_llama_cpp_repository
       source_result=$?
       
-      "$SCRIPT_DIR/llama_cpp_ios.sh" check
-      ios_result=$?
+      # Check for platform argument
+      PLATFORM="all"
+      for arg in "$@"; do
+        if [[ "$arg" == "--platform="* ]]; then
+          PLATFORM="${arg#*=}"
+        fi
+      done
+      
+      # Only check iOS framework if not on android platform
+      ios_result=0
+      if [[ "$PLATFORM" != "android" ]]; then
+        if [ -f "$SCRIPT_DIR/build_apple_external.sh" ]; then
+          # Check if iOS xcframework exists, since build_apple_external.sh might not have a check command
+          if [ -d "$PACKAGE_DIR/ios/libs/llama.xcframework" ]; then
+            echo -e "${GREEN}iOS framework exists at: $PACKAGE_DIR/ios/libs/llama.xcframework${NC}"
+          else
+            echo -e "${YELLOW}iOS framework not found. Run 'init' to set it up.${NC}"
+            ios_result=1
+          fi
+        else
+          echo -e "${YELLOW}Skipping iOS check - build_apple_external.sh not found${NC}"
+        fi
+      else
+        echo -e "${YELLOW}Skipping iOS check for Android platform${NC}"
+      fi
       
       if [ $source_result -eq 0 ] && [ $ios_result -eq 0 ]; then
         echo -e "${GREEN}All checks passed successfully${NC}"
@@ -258,10 +343,10 @@ main() {
       fi
       ;;
     "clean")
-      clean_all
+      clean_all "$@"
       ;;
     "version")
-      show_version
+      show_version "$@"
       ;;
     *)
       echo "Unknown command: $command"

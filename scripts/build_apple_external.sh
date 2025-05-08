@@ -12,6 +12,11 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Get project root directory (one level up from script dir)
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
+# CI Usage Note:
+# This script is called directly in the CI workflow to download and set up
+# the iOS framework. It handles all the necessary setup without requiring
+# the setupLlamaCpp.sh script first.
+
 # Define paths
 CPP_DIR="$PROJECT_ROOT/cpp"
 PREBUILT_DIR="$PROJECT_ROOT/ios/libs"
