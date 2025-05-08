@@ -68,15 +68,6 @@ Pod::Spec.new do |s|
     "OTHER_LDFLAGS" => "$(inherited)"
   }
 
-  # React Native dependencies (new architecture)
-  s.dependency "React-Core"
-  s.dependency "React-Codegen"
-  s.dependency "React-RCTAppDelegate"
-  s.dependency "RCT-Folly"
-  s.dependency "RCTRequired"
-  s.dependency "RCTTypeSafety"
-  s.dependency "ReactCommon/turbomodule/core"
-
   # Install dependencies for Turbo Modules
   install_modules_dependencies(s)
 end
