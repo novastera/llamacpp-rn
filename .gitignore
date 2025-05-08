@@ -107,6 +107,7 @@ ios/libs/build-apple/
 /android/src/main/jniLibs/x86_64/libllama.so
 # Allow prebuilt binaries in prebuilt/ directory for npm packaging
 /prebuilt/
+/gpu-prebuild/
 
 # Build artifacts
 build.ninja
@@ -163,3 +164,5 @@ llama-config.cmake
 /ggml
 .ninja_deps
 .ninja_log
+/ios/novastera-llamacpp
+/ios/libs

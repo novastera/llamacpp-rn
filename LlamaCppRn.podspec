@@ -46,10 +46,10 @@ Pod::Spec.new do |s|
                    "cpp/llama.cpp/common/speculative.h"
                    
   # Include llama.cpp headers for compilation
-  s.preserve_paths = "ios/include/**/*.h", "ios/framework/**/*"
+  s.preserve_paths = "ios/include/**/*.h", "ios/libs/**/*"
   
   # Use the prebuilt framework
-  s.vendored_frameworks = "ios/framework/build-apple/llama.xcframework"
+  s.vendored_frameworks = "ios/libs/llama.xcframework"
 
   # Compiler settings
   s.pod_target_xcconfig = {
