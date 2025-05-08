@@ -733,22 +733,35 @@ int32_t LlamaCppModel::getEmbeddingSize() const {
 // Fixed embeddingJsi method with corrected API calls
 jsi::Value LlamaCppModel::embeddingJsi(jsi::Runtime& rt, const jsi::Value* args, size_t count) {
   if (count < 1 || !args[0].isObject()) {
-    throw jsi::JSError(rt, "embedding requires an options object with 'content' field");
+    throw jsi::JSError(rt, "embedding requires an options object with 'input' or 'content' field");
   }
   
   try {
     jsi::Object options = args[0].getObject(rt);
     
-    // Extract required content parameter
-    if (!options.hasProperty(rt, "content") || !options.getProperty(rt, "content").isString()) {
-      throw jsi::JSError(rt, "embedding requires a 'content' string field");
+    // Extract required content parameter, support both 'input' (OpenAI) and 'content' (custom format)
+    std::string content;
+    
+    if (options.hasProperty(rt, "input") && options.getProperty(rt, "input").isString()) {
+      content = options.getProperty(rt, "input").getString(rt).utf8(rt);
+    } else if (options.hasProperty(rt, "content") && options.getProperty(rt, "content").isString()) {
+      content = options.getProperty(rt, "content").getString(rt).utf8(rt);
+    } else {
+      throw jsi::JSError(rt, "embedding requires either 'input' or 'content' string field");
     }
-    std::string content = options.getProperty(rt, "content").getString(rt).utf8(rt);
     
     // Check optional parameters
-    std::string encoding = "float";
-    if (options.hasProperty(rt, "encoding") && options.getProperty(rt, "encoding").isString()) {
-      encoding = options.getProperty(rt, "encoding").getString(rt).utf8(rt);
+    std::string encoding_format = "float";
+    if (options.hasProperty(rt, "encoding_format") && options.getProperty(rt, "encoding_format").isString()) {
+      encoding_format = options.getProperty(rt, "encoding_format").getString(rt).utf8(rt);
+      if (encoding_format != "float" && encoding_format != "base64") {
+        throw jsi::JSError(rt, "encoding_format must be either 'float' or 'base64'");
+      }
+    }
+    
+    bool add_bos = true;
+    if (options.hasProperty(rt, "add_bos_token") && options.getProperty(rt, "add_bos_token").isBool()) {
+      add_bos = options.getProperty(rt, "add_bos_token").getBool();
     }
     
     // Check model and context
@@ -758,12 +771,12 @@ jsi::Value LlamaCppModel::embeddingJsi(jsi::Runtime& rt, const jsi::Value* args,
     
     // Tokenize the input text
     std::vector<llama_token> tokens;
-    int n_tokens = llama_tokenize(rn_ctx_->vocab, content.c_str(), content.length(), nullptr, 0, true, true);
+    int n_tokens = llama_tokenize(rn_ctx_->vocab, content.c_str(), content.length(), nullptr, 0, add_bos, true);
     if (n_tokens < 0) {
       n_tokens = -n_tokens;
     }
     tokens.resize(n_tokens);
-    n_tokens = llama_tokenize(rn_ctx_->vocab, content.c_str(), content.length(), tokens.data(), n_tokens, true, true);
+    n_tokens = llama_tokenize(rn_ctx_->vocab, content.c_str(), content.length(), tokens.data(), n_tokens, add_bos, true);
     if (n_tokens < 0) {
       throw std::runtime_error("Tokenization failed for embedding");
     }
@@ -775,6 +788,9 @@ jsi::Value LlamaCppModel::embeddingJsi(jsi::Runtime& rt, const jsi::Value* args,
     
     // Clear the context KV cache to ensure clean embedding
     llama_kv_self_clear(rn_ctx_->ctx);
+    
+    // Enable embedding mode
+    llama_set_embeddings(rn_ctx_->ctx, true);
     
     // Evaluate tokens one by one
     for (int i = 0; i < (int)tokens.size(); i++) {
@@ -795,26 +811,25 @@ jsi::Value LlamaCppModel::embeddingJsi(jsi::Runtime& rt, const jsi::Value* args,
     }
     
     // Get embedding size from the model
-    const llama_model* model = llama_get_model(rn_ctx_->ctx);
-    int n_embd = llama_model_n_embd(model);
+    const int n_embd = llama_model_n_embd(rn_ctx_->model);
     if (n_embd <= 0) {
       throw std::runtime_error("Invalid embedding dimension");
     }
     
-    // Use correct pooling type constants
-    enum llama_pooling_type pooling_type = LLAMA_POOLING_TYPE_LAST;
+    // For OpenAI compatibility, default to mean pooling
+    enum llama_pooling_type pooling_type = LLAMA_POOLING_TYPE_MEAN;
     if (options.hasProperty(rt, "pooling") && options.getProperty(rt, "pooling").isString()) {
       std::string pooling = options.getProperty(rt, "pooling").getString(rt).utf8(rt);
-      if (pooling == "mean" || pooling == "average") {
-        pooling_type = LLAMA_POOLING_TYPE_MEAN;
+      if (pooling == "last") {
+        pooling_type = LLAMA_POOLING_TYPE_LAST;
       } else if (pooling == "cls" || pooling == "first") {
         pooling_type = LLAMA_POOLING_TYPE_CLS;
       }
     }
     
-    // Extract embedding using the available API
+    // Get the embeddings
     std::vector<float> embedding_vec(n_embd);
-    const float* embd = llama_get_embeddings_seq(rn_ctx_->ctx, 0); // 0 for the first/only sequence
+    const float* embd = llama_get_embeddings(rn_ctx_->ctx);
     
     if (!embd) {
       throw std::runtime_error("Failed to extract embeddings");
@@ -823,38 +838,63 @@ jsi::Value LlamaCppModel::embeddingJsi(jsi::Runtime& rt, const jsi::Value* args,
     // Copy embeddings to our vector
     std::copy(embd, embd + n_embd, embedding_vec.begin());
     
-    // Create result JSON object
+    // Normalize embedding
+    float norm = 0.0f;
+    for (int i = 0; i < n_embd; ++i) {
+      norm += embedding_vec[i] * embedding_vec[i];
+    }
+    norm = std::sqrt(norm);
+    
+    if (norm > 0) {
+      for (int i = 0; i < n_embd; ++i) {
+        embedding_vec[i] /= norm;
+      }
+    }
+    
+    // Create OpenAI-compatible response
     jsi::Object response(rt);
     
     // Add embedding data
+    jsi::Array dataArray(rt, 1);
     jsi::Object embeddingObj(rt);
     
-    // Create embedding array
-    jsi::Array embeddingArray(rt, n_embd);
-    for (int i = 0; i < n_embd; i++) {
-      embeddingArray.setValueAtIndex(rt, i, jsi::Value(embedding_vec[i]));
+    if (encoding_format == "base64") {
+      // Base64 encode the embedding vector
+      const char* data_ptr = reinterpret_cast<const char*>(embedding_vec.data());
+      size_t data_size = embedding_vec.size() * sizeof(float);
+      std::string base64_str = base64::encode(data_ptr, data_size);
+      
+      embeddingObj.setProperty(rt, "embedding", jsi::String::createFromUtf8(rt, base64_str));
+      embeddingObj.setProperty(rt, "encoding_format", jsi::String::createFromUtf8(rt, "base64"));
+    } else {
+      // Create embedding array of floats
+      jsi::Array embeddingArray(rt, n_embd);
+      for (int i = 0; i < n_embd; i++) {
+        embeddingArray.setValueAtIndex(rt, i, jsi::Value(embedding_vec[i]));
+      }
+      embeddingObj.setProperty(rt, "embedding", embeddingArray);
     }
     
     embeddingObj.setProperty(rt, "object", jsi::String::createFromUtf8(rt, "embedding"));
-    embeddingObj.setProperty(rt, "embedding", embeddingArray);
     embeddingObj.setProperty(rt, "index", jsi::Value(0));
     
-    // Create model info
-    jsi::Object modelObj(rt);
-    modelObj.setProperty(rt, "id", jsi::String::createFromUtf8(rt, "llamacpp"));
+    dataArray.setValueAtIndex(rt, 0, embeddingObj);
     
-    // Create usage info with explicit casts
+    // Create model info
+    std::string model_name = "llamacpp";
+    if (options.hasProperty(rt, "model") && options.getProperty(rt, "model").isString()) {
+      model_name = options.getProperty(rt, "model").getString(rt).utf8(rt);
+    }
+    
+    // Create usage info
     jsi::Object usage(rt);
     usage.setProperty(rt, "prompt_tokens", jsi::Value((int)tokens.size()));
     usage.setProperty(rt, "total_tokens", jsi::Value((int)tokens.size()));
     
     // Assemble the response
-    jsi::Array dataArray(rt, 1);
-    dataArray.setValueAtIndex(rt, 0, embeddingObj);
-    
     response.setProperty(rt, "object", jsi::String::createFromUtf8(rt, "list"));
     response.setProperty(rt, "data", dataArray);
-    response.setProperty(rt, "model", modelObj);
+    response.setProperty(rt, "model", jsi::String::createFromUtf8(rt, model_name));
     response.setProperty(rt, "usage", usage);
     
     return response;

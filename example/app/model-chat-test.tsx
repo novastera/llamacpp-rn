@@ -839,83 +839,67 @@ export default function ModelChatTest() {
       
       console.log(`Testing embedding with text: "${testText}"`);
       
-      // First test: Simple embedding array with float format
+      // First test: Simple embedding with float format
       console.log('Generating embedding with float format...');
-      const embedding = await modelState.instance.embedding(testText);
+      const embedding = await modelState.instance.embedding({
+        content: testText,
+        encoding_format: 'float'
+      });
       
       // Log the embedding details
-      console.log(`Generated embedding with ${embedding.length} dimensions`);
+      const embeddingData = embedding.data[0].embedding;
+      console.log(`Generated embedding with ${embeddingData.length} dimensions`);
       console.log('Full embedding data:', JSON.stringify(embedding));
       
       // Verify each value is a valid number
-      const allValid = embedding.every((val: number) => typeof val === 'number' && !isNaN(val));
+      const allValid = Array.isArray(embeddingData) && embeddingData.every((val: number) => typeof val === 'number' && !isNaN(val));
       console.log('All values are valid numbers:', allValid);
       
       // Calculate some stats
-      const min = Math.min(...embedding);
-      const max = Math.max(...embedding);
-      const avg = embedding.reduce((sum: number, val: number) => sum + val, 0) / embedding.length;
-      console.log(`Min: ${min}, Max: ${max}, Avg: ${avg.toFixed(6)}`);
-      
-      // Second test: OpenAI-compatible format with float encoding
-      console.log('Generating OpenAI format embedding with float encoding...');
-      const openAIEmbedding = await modelState.instance.embedding(
-        { 
-          content: testText,
-          add_bos_token: true,
-          encoding_format: 'float'
-        }, 
-        true // Request OpenAI format
-      );
-      
-      console.log('OpenAI format embedding result:', JSON.stringify(openAIEmbedding));
-      
-      // Third test: OpenAI-compatible format with base64 encoding
-      console.log('Generating OpenAI format embedding with base64 encoding...');
-      const openAIBase64Embedding = await modelState.instance.embedding(
-        { 
-          content: testText,
-          add_bos_token: true,
-          encoding_format: 'base64'
-        }, 
-        true // Request OpenAI format
-      );
-      
-      console.log('OpenAI format with base64 encoding result:', JSON.stringify(openAIBase64Embedding));
-      
-      if (embedding && embedding.length) {
-        const firstFew = embedding.slice(0, 5);
-        const lastFew = embedding.slice(-5);
+      let statsMessage = '';
+      if (Array.isArray(embeddingData)) {
+        const min = Math.min(...embeddingData);
+        const max = Math.max(...embeddingData);
+        const avg = embeddingData.reduce((sum: number, val: number) => sum + val, 0) / embeddingData.length;
+        console.log(`Min: ${min}, Max: ${max}, Avg: ${avg.toFixed(6)}`);
         
-        let resultMessage = 
-          `Embedding generated successfully!\n\n` +
-          `Simple format:\n` +
-          `- Vector dimension: ${embedding.length}\n` +
-          `- First values: [${firstFew.map((v: number) => v.toFixed(6)).join(', ')}...]\n` +
-          `- Last values: [...${lastFew.map((v: number) => v.toFixed(6)).join(', ')}]\n` +
+        const firstFew = embeddingData.slice(0, 5);
+        const lastFew = embeddingData.slice(-5);
+        statsMessage = 
+          `- First values: [${firstFew.map(v => v.toFixed(6)).join(', ')}...]\n` +
+          `- Last values: [...${lastFew.map(v => v.toFixed(6)).join(', ')}]\n` +
           `- All values are valid numbers: ${allValid}\n` +
           `- Range: Min=${min.toFixed(6)}, Max=${max.toFixed(6)}, Avg=${avg.toFixed(6)}\n\n`;
-          
-        if (openAIEmbedding && 'data' in openAIEmbedding) {
-          const oaiEmbedding = openAIEmbedding.data[0].embedding;
-          resultMessage += 
-            `OpenAI format (float):\n` +
-            `- Token count: ${openAIEmbedding.usage.prompt_tokens}\n` +
-            `- Vector dimension: ${Array.isArray(oaiEmbedding) ? oaiEmbedding.length : "N/A (base64)"}\n` +
-            `- Model: ${openAIEmbedding.model}\n\n`;
-        }
-        
-        if (openAIBase64Embedding && 'data' in openAIBase64Embedding) {
-          const base64Data = openAIBase64Embedding.data[0].embedding;
-          resultMessage += 
-            `OpenAI format (base64):\n` + 
-            `- Token count: ${openAIBase64Embedding.usage.prompt_tokens}\n` +
-            `- Encoding: ${openAIBase64Embedding.data[0].encoding_format || 'float'}\n` +
-            `- Base64 string length: ${typeof base64Data === 'string' ? base64Data.length : "N/A"}\n`;
-        }
-        
-        setError(resultMessage);
       }
+      
+      // Second test: OpenAI format with base64 encoding
+      console.log('Generating embedding with base64 encoding...');
+      const base64Embedding = await modelState.instance.embedding({
+        input: testText,
+        encoding_format: 'base64'
+      });
+      
+      console.log('Base64 embedding result:', JSON.stringify(base64Embedding));
+      
+      // Format results for display
+      let resultMessage = 
+        `Embedding generated successfully!\n\n` +
+        `Float format:\n` +
+        `- Vector dimension: ${Array.isArray(embeddingData) ? embeddingData.length : 'N/A'}\n` +
+        `- Token count: ${embedding.usage.prompt_tokens}\n` +
+        `- Model: ${embedding.model}\n\n` +
+        statsMessage;
+      
+      // Add base64 info
+      const base64Data = base64Embedding.data[0].embedding;
+      resultMessage += 
+        `Base64 format:\n` +
+        `- Token count: ${base64Embedding.usage.prompt_tokens}\n` +
+        `- Encoding: ${base64Embedding.data[0].encoding_format}\n` +
+        `- Base64 string length: ${typeof base64Data === 'string' ? base64Data.length : 'N/A'}\n`;
+      
+      setError(resultMessage);
+      
     } catch (err) {
       console.error('Embedding error:', err);
       setError(`Embedding Error: ${err instanceof Error ? err.message : String(err)}`);
