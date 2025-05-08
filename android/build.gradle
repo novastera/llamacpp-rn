@@ -11,40 +11,30 @@ buildscript {
 
 apply plugin: 'com.android.library'
 
-// Check if we should build from source or use prebuilt libraries
-// This allows developers to set rnllamaBuildFromSource=true in their gradle.properties
-// Default is false for npm package users (use prebuilt libraries)
-def buildFromSource = rootProject.hasProperty('rnllamaBuildFromSource') ? 
-                       rootProject.rnllamaBuildFromSource.toBoolean() : 
-                       System.getenv('RN_LLAMA_BUILD_FROM_SOURCE')?.toBoolean() ?: false
-
-// Log whether we're building from source or using prebuilt libraries
-println "LlamaCppRn: ${buildFromSource ? 'Building from source' : 'Using prebuilt libraries'}"
+def safeExtGet(prop, fallback) {
+    rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
 
 android {
-    namespace "com.novastera.llamacpprn"
-    compileSdkVersion 33
-    ndkVersion "23.1.7779620"
+    namespace "com.llamacpprn"
+    compileSdkVersion safeExtGet('compileSdkVersion', 33)
     
     defaultConfig {
-        minSdkVersion 21
-        targetSdkVersion 33
-        versionCode 1
-        versionName "1.0"
-
-        // Only include CMake configurations if building from source
-        if (buildFromSource) {
-            externalNativeBuild {
-                cmake {
-                    arguments "-DANDROID_STL=c++_shared",
-                              "-DCMAKE_BUILD_TYPE=Release",
-                              "-DANDROID_PLATFORM=android-23",
-                              "-DANDROID_CPP_FEATURES=rtti exceptions",
-                              "-DLLAMA_BUILD_EXAMPLES=OFF",
-                              "-DLLAMA_BUILD_SERVER=OFF",
-                              "-DBUILD_SHARED_LIBS=ON"
-                    cppFlags "-std=c++17 -frtti -fexceptions -Oz -DRCT_NEW_ARCH_ENABLED=1"
-                }
+        minSdkVersion safeExtGet('minSdkVersion', 26)
+        targetSdkVersion safeExtGet('targetSdkVersion', 33)
+        
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_shared",
+                          "-DCMAKE_BUILD_TYPE=Release",
+                          "-DANDROID_PLATFORM=android-26",
+                          "-DANDROID_CPP_FEATURES=rtti exceptions",
+                          "-DLLAMA_BUILD_EXAMPLES=OFF",
+                          "-DLLAMA_BUILD_SERVER=OFF",
+                          "-DBUILD_SHARED_LIBS=ON",
+                          "-DRCT_NEW_ARCH_ENABLED=1",
+                          "-DANDROID_TOOLCHAIN=clang"
+                cppFlags "-std=c++17 -frtti -fexceptions -Oz -DRCT_NEW_ARCH_ENABLED=1"
             }
         }
 
@@ -56,22 +46,12 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 
-    // Only include CMake build if building from source
-    if (buildFromSource) {
-        externalNativeBuild {
-            cmake {
-                path "src/main/cpp/CMakeLists.txt"
-            }
-        }
-    }
-
+    // This is necessary for pure C++ modules
     buildFeatures {
         prefabPublishing true
-        buildConfig true
     }
 
     prefab {
@@ -79,40 +59,54 @@ android {
             headers "src/main/cpp/include"
         }
     }
-    
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/jni/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            pickFirsts += ['**/*.so']
+        }
+        resources {
+            pickFirsts += [
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE',
+                'META-INF/LICENSE.txt',
+                'META-INF/NOTICE',
+                'META-INF/NOTICE.txt',
+                'META-INF/*.kotlin_module'
+            ]
+        }
+    }
+
+    // Exclude conflicting libraries
+    configurations.all {
+        exclude group: 'jakarta.activation', module: 'jakarta.activation-api'
+        exclude group: 'com.sun.activation', module: 'javax.activation'
+        exclude group: 'org.slf4j', module: 'slf4j-api'
     }
 }
 
 repositories {
     mavenCentral()
     google()
+
+    maven {
+        // All of React Native (JS, Android binaries) is installed from npm
+        url "$rootDir/../node_modules/react-native/android"
+    }
 }
 
 dependencies {
-    implementation 'com.facebook.react:react-native:+'
-    
-    implementation "com.facebook.react:react-android:+"
-    implementation "com.facebook.fbjni:fbjni-java-only:0.2.2"
-}
-
-// Set the build method in gradle.properties - always true for Android
-def gradlePropertiesFile = rootProject.file('gradle.properties')
-if (!gradlePropertiesFile.exists()) {
-    gradlePropertiesFile.createNewFile()
-    gradlePropertiesFile << "rnllamaBuildFromSource=true\n"
-} else {
-    // Read the current properties
-    Properties properties = new Properties()
-    gradlePropertiesFile.withInputStream { properties.load(it) }
-    
-    // Always build from source for Android
-    properties.setProperty('rnllamaBuildFromSource', 'true')
-    
-    // Write back to the file
-    gradlePropertiesFile.withOutputStream { 
-        properties.store(it, null) 
-    }
+    implementation "com.facebook.react:react-native:+"
 } 

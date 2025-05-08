@@ -20,6 +20,7 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 # Define paths
 CPP_DIR="$PROJECT_ROOT/cpp"
 PREBUILT_DIR="$PROJECT_ROOT/ios/libs"
+INCLUDE_DIR="$PROJECT_ROOT/ios/include"
 TEMP_DIR="$PROJECT_ROOT/.llamacpp-temp"
 
 # Import version from used_version.sh if it exists
@@ -42,6 +43,7 @@ check_required_tool "unzip" "Please install unzip (brew install unzip)"
 
 # Create necessary directories
 mkdir -p "$PREBUILT_DIR"
+mkdir -p "$INCLUDE_DIR"
 mkdir -p "$TEMP_DIR"
 
 # Function to download a file
@@ -54,6 +56,38 @@ download_file() {
   
   curl -L -o "$output_path" "$url"
   return $?
+}
+
+# Copy all necessary header files from llama.cpp to ios/include
+copy_header_files() {
+  echo -e "${YELLOW}Copying header files to $INCLUDE_DIR...${NC}"
+  
+  # Main headers from llama.cpp repository
+  cp -f "$CPP_DIR/llama.cpp/include/llama.h" "$INCLUDE_DIR/"
+  cp -f "$CPP_DIR/llama.cpp/include/llama-cpp.h" "$INCLUDE_DIR/"
+  
+  # Common headers
+  cp -f "$CPP_DIR/llama.cpp/common/common.h" "$INCLUDE_DIR/"
+  cp -f "$CPP_DIR/llama.cpp/common/log.h" "$INCLUDE_DIR/"
+  cp -f "$CPP_DIR/llama.cpp/common/sampling.h" "$INCLUDE_DIR/"
+  cp -f "$CPP_DIR/llama.cpp/common/chat.h" "$INCLUDE_DIR/"
+  cp -f "$CPP_DIR/llama.cpp/common/ngram-cache.h" "$INCLUDE_DIR/"
+  cp -f "$CPP_DIR/llama.cpp/common/json-schema-to-grammar.h" "$INCLUDE_DIR/"
+  cp -f "$CPP_DIR/llama.cpp/common/speculative.h" "$INCLUDE_DIR/"
+  
+  # Create minja subdirectory
+  mkdir -p "$INCLUDE_DIR/common/minja"
+  
+  # Minja headers
+  cp -f "$CPP_DIR/llama.cpp/common/minja/minja.hpp" "$INCLUDE_DIR/common/minja/"
+  cp -f "$CPP_DIR/llama.cpp/common/minja/chat-template.hpp" "$INCLUDE_DIR/common/minja/"
+  
+  # JSON headers
+  cp -f "$CPP_DIR/llama.cpp/common/json.hpp" "$INCLUDE_DIR/common/"
+  cp -f "$CPP_DIR/llama.cpp/common/base64.hpp" "$INCLUDE_DIR/common/"
+  
+  echo -e "${GREEN}Header files copied successfully${NC}"
+  return 0
 }
 
 # Download and setup iOS framework
@@ -69,6 +103,8 @@ download_ios_framework() {
     # Skip if not forced
     if [ "$1" != "--force" ]; then
       echo -e "${YELLOW}Use '--force' to redownload or 'clean' to remove it${NC}"
+      # Still copy header files even if framework exists
+      copy_header_files
       return 0
     else
       echo -e "${YELLOW}Force flag detected, redownloading...${NC}"
@@ -116,6 +152,9 @@ download_ios_framework() {
     return 1
   fi
   
+  # Copy header files
+  copy_header_files
+  
   # Clean up temporary files
   rm -f "$temp_zip"
   
@@ -134,6 +173,7 @@ clean_ios_framework() {
   echo -e "${YELLOW}Cleaning iOS framework...${NC}"
   
   rm -rf "$PREBUILT_DIR/llama.xcframework"
+  rm -rf "$INCLUDE_DIR"
   rm -rf "$TEMP_DIR"
   
   echo -e "${GREEN}iOS framework cleaned successfully${NC}"

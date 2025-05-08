@@ -13,7 +13,7 @@
     "android",
     "ios",
     "cpp",
-    "prebuilt",
+    "shared",
     "scripts",
     "*.podspec",
     "!lib/typescript/example",
@@ -45,8 +45,14 @@
     "llama-from-source": "LLAMACPPRN_BUILD_FROM_SOURCE=true node scripts/setup-llama-cpp.js",
     "llama-prebuilt": "node scripts/setup-llama-cpp.js",
     "clean": "node scripts/setup-llama-cpp.js clean",
-    "build-android": "node scripts/setup-android.js build-android",
-    "build-android-external": "node scripts/setup-android.js build-android-external"
+    "clean-android": "rm -rf android/.cxx android/build android/src/main/jniLibs/x86 android/src/main/jniLibs/armeabi-v7a android/src/main/jniLibs/*/*.dylib",
+    "build-android": "npm run clean-android && bash scripts/build_android_gpu_backend.sh && bash scripts/build_android_external.sh",
+    "build-android-gpu": "bash scripts/build_android_gpu_backend.sh",
+    "build-android-external": "bash scripts/build_android_external.sh",
+    "build-android-clean": "bash scripts/build_android_external.sh --clean-prebuilt",
+    "build-android-macos": "bash scripts/build_android_gpu_backend.sh --no-vulkan --no-opencl && bash scripts/build_android_external.sh --no-vulkan --no-opencl",
+    "codegen": "cd example && node node_modules/react-native/scripts/generate-codegen-artifacts.js --path .. --targetPlatform android --outputPath ./node_modules/@novastera-oss/llamacpp-rn/",
+    "codegen:all": "cd example && node node_modules/react-native/scripts/generate-codegen-artifacts.js --path .. --targetPlatform all --outputPath ./node_modules/@novastera-oss/llamacpp-rn/"
   },
   "keywords": [
     "react-native",
@@ -77,7 +83,7 @@
     "type": "modules",
     "jsSrcsDir": "src/specs",
     "android": {
-      "javaPackageName": "com.novastera.llamacpprn"
+      "javaPackageName": "com.llamacpprn"
     }
   },
   "devDependencies": {

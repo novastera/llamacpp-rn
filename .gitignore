@@ -130,7 +130,7 @@ llama.pc
 android/bin/
 android/common/
 android/ggml/
-android/src/
+android/src/jniLibs/
 prebuilt/
 prebuilt/build-*/
 
@@ -166,3 +166,4 @@ llama-config.cmake
 .ninja_log
 /ios/novastera-llamacpp
 /ios/libs
+/android.backup
