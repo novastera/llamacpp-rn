@@ -1,4 +1,16 @@
+#if __has_include(<fbjni/fbjni.h>)
 #include <fbjni/fbjni.h>
+#elif __has_include("fbjni/fbjni.h")
+#include "fbjni/fbjni.h"
+#elif __has_include(<react/jni/fbjni.h>)
+#include <react/jni/fbjni.h>
+#elif __has_include("react/jni/fbjni.h")
+#include "react/jni/fbjni.h"
+#else
+// If all else fails, try a direct path
+#include "../../../../../../node_modules/react-native/ReactAndroid/src/main/jni/first-party/fbjni/headers/fbjni/fbjni.h"
+#endif
+
 #include <jsi/jsi.h>
 #include <ReactCommon/TurboModuleUtils.h>
 #include <react/bridging/CallbackWrapper.h>

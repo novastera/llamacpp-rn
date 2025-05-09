@@ -21,11 +21,38 @@ endif()
 message(STATUS "Module root: ${MODULE_ROOT}")
 message(STATUS "CPP directory: ${CPP_DIR}")
 
-# Define React Native paths
-set(RN_DIR "${MODULE_ROOT}/../../node_modules/react-native")
+# Define React Native paths - using multiple possible locations
+set(POSSIBLE_RN_DIRS
+    "${MODULE_ROOT}/../../node_modules/react-native"
+    "${MODULE_ROOT}/../node_modules/react-native"
+    "${MODULE_ROOT}/node_modules/react-native"
+)
+
+# Try to find React Native directory
+set(RN_DIR "")
+foreach(dir ${POSSIBLE_RN_DIRS})
+    if(EXISTS "${dir}")
+        set(RN_DIR "${dir}")
+        message(STATUS "Found React Native at: ${RN_DIR}")
+        break()
+    endif()
+endforeach()
+
+if("${RN_DIR}" STREQUAL "")
+    message(FATAL_ERROR "Could not find React Native directory in any of the search paths")
+endif()
+
 set(REACT_ANDROID_DIR "${RN_DIR}/ReactAndroid")
-set(FBJNI_DIR "${REACT_ANDROID_DIR}/src/main/jni/first-party/fbjni/headers")
-set(TURBOMODULE_DIR "${REACT_ANDROID_DIR}/src/main/java/com/facebook/react/turbomodule/core/jni")
+
+# Various places React Native might place FBJNI headers
+set(FBJNI_HEADERS_DIRS
+    "${REACT_ANDROID_DIR}/src/main/jni/first-party/fbjni/headers"
+    "${REACT_ANDROID_DIR}/src/main/java/com/facebook/react/turbomodule/core/jni"
+    "${REACT_ANDROID_DIR}/../ReactCommon/jsi"
+    # Expo modules locations
+    "${MODULE_ROOT}/../../node_modules/expo-modules-core/android/src/main/jni/include"
+    "${MODULE_ROOT}/../../node_modules/expo-modules-core/android/build/intermediates/cxx/Debug/fbjni"
+)
 
 # Get the ABI from the CMAKE_ANDROID_ARCH_ABI which is set by Android toolchain
 if(DEFINED CMAKE_ANDROID_ARCH_ABI)
@@ -37,19 +64,22 @@ else()
     message(STATUS "ABI not defined in toolchain, using default: ${ANDROID_ABI}")
 endif()
 
-# Define path to the prebuilt llama.so library (use the direct path in the module)
-set(PREBUILT_LLAMA_LIB "${MODULE_ROOT}/jniLibs/${ANDROID_ABI}/libllama.so")
-message(STATUS "Looking for prebuilt llama library at: ${PREBUILT_LLAMA_LIB}")
+# Define paths to search for the prebuilt llama.so library
+set(PREBUILT_LLAMA_PATHS
+    "${MODULE_ROOT}/jniLibs/${ANDROID_ABI}/libllama.so"
+    "${MODULE_ROOT}/src/main/jniLibs/${ANDROID_ABI}/libllama.so"
+    "${MODULE_ROOT}/../jniLibs/${ANDROID_ABI}/libllama.so"
+)
 
-# Try alternate path if not found
-if(NOT EXISTS "${PREBUILT_LLAMA_LIB}")
-    set(PREBUILT_LLAMA_LIB "${MODULE_ROOT}/src/main/jniLibs/${ANDROID_ABI}/libllama.so")
-    message(STATUS "Trying alternate path for prebuilt library: ${PREBUILT_LLAMA_LIB}")
-endif()
-
-# Include path for llama.cpp headers
-set(LLAMA_CPP_INCLUDE_DIR "${CPP_DIR}/llama.cpp")
-set(ANDROID_CPP_INCLUDE_DIR "${MODULE_ROOT}/cpp/include")
+# Find the prebuilt llama.so library
+set(PREBUILT_LLAMA_LIB "")
+foreach(path ${PREBUILT_LLAMA_PATHS})
+    if(EXISTS "${path}")
+        set(PREBUILT_LLAMA_LIB "${path}")
+        message(STATUS "Found prebuilt llama library at: ${PREBUILT_LLAMA_LIB}")
+        break()
+    endif()
+endforeach()
 
 # Get the correct path to the include directory - corrected path
 set(MAIN_INCLUDE_DIR "${MODULE_ROOT}/main/cpp/include")
@@ -62,38 +92,37 @@ endif()
 
 message(STATUS "Using include directory: ${MAIN_INCLUDE_DIR}")
 
-# Check if the paths exist
-if(NOT EXISTS "${FBJNI_DIR}")
-    message(WARNING "FBJNI headers directory not found: ${FBJNI_DIR}")
-endif()
-
-if(NOT EXISTS "${TURBOMODULE_DIR}")
-    message(WARNING "TurboModule directory not found: ${TURBOMODULE_DIR}")
-endif()
-
-# Warn if prebuilt llama library is not found
-if(NOT EXISTS "${PREBUILT_LLAMA_LIB}")
-    message(WARNING "Prebuilt llama library not found at ${PREBUILT_LLAMA_LIB}, build may fail!")
-endif()
-
-# Basic include paths
-include_directories(
+# Create the include paths manually
+set(INCLUDE_DIRECTORIES
     "${CPP_DIR}"
     "${MAIN_INCLUDE_DIR}"
-    # Add direct paths to llama.cpp headers
     "${CPP_DIR}/llama.cpp/include"
     "${CPP_DIR}/llama.cpp/common"
     "${CPP_DIR}/llama.cpp/common/minja"
     "${CPP_DIR}/llama.cpp/ggml/include"
     "${CPP_DIR}/llama.cpp/ggml/src"
-    # React Native paths
-    "${RN_DIR}/ReactAndroid/src/main/jni/react/turbomodule"
     "${RN_DIR}/ReactCommon"
     "${RN_DIR}/ReactCommon/callinvoker"
     "${RN_DIR}/ReactCommon/jsi"
     "${RN_DIR}/ReactCommon/react/nativemodule/core"
     "${RN_DIR}/ReactCommon/react/bridging"
+    "${REACT_ANDROID_DIR}/src/main/jni/react/turbomodule"
+    "${REACT_ANDROID_DIR}/src/main/jni/first-party/fbjni/headers"
+    "${REACT_ANDROID_DIR}/src/main/jni/react/jni"
+    "${REACT_ANDROID_DIR}/src/main/cpp/jni"
+    "${REACT_ANDROID_DIR}/src/main/java/com/facebook/react/turbomodule/core/jni"
 )
+
+# Add all possible FBJNI header directories
+foreach(fbjni_dir ${FBJNI_HEADERS_DIRS})
+    if(EXISTS "${fbjni_dir}")
+        list(APPEND INCLUDE_DIRECTORIES "${fbjni_dir}")
+        message(STATUS "Adding FBJNI headers from: ${fbjni_dir}")
+    endif()
+endforeach()
+
+# Include all the directories
+include_directories(${INCLUDE_DIRECTORIES})
 
 # Check if source files exist
 if(NOT EXISTS "${CPP_DIR}/LlamaCppRnModule.cpp")
@@ -120,17 +149,23 @@ endforeach()
 add_library(${CMAKE_PROJECT_NAME} SHARED ${SOURCE_FILES})
 
 # Link against the prebuilt llama library if it exists
-if(EXISTS "${PREBUILT_LLAMA_LIB}")
+if(PREBUILT_LLAMA_LIB)
     message(STATUS "Found prebuilt llama library, linking against it: ${PREBUILT_LLAMA_LIB}")
     
     # Add the prebuilt library
     add_library(llama SHARED IMPORTED)
     set_target_properties(llama PROPERTIES IMPORTED_LOCATION "${PREBUILT_LLAMA_LIB}")
     
+    # Define macros to ensure correct API usage
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE LLAMA_SHARED)
+    
     # Link against the imported library
     target_link_libraries(${CMAKE_PROJECT_NAME} llama)
 else()
-    message(WARNING "Prebuilt llama library not found at ${PREBUILT_LLAMA_LIB}, build may fail!")
+    message(WARNING "Prebuilt llama library not found in any of the search paths. The module will build but will not function correctly at runtime. Please provide libllama.so in one of these locations:\n- ${MODULE_ROOT}/jniLibs/${ANDROID_ABI}/libllama.so\n- ${MODULE_ROOT}/src/main/jniLibs/${ANDROID_ABI}/libllama.so\n- ${MODULE_ROOT}/../jniLibs/${ANDROID_ABI}/libllama.so")
+    
+    # Define a mock implementation when the library is missing
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE LLAMA_MISSING=1)
 endif()
 
 # Required libraries for Android
@@ -147,6 +182,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 target_compile_definitions(${CMAKE_PROJECT_NAME}
     PRIVATE
     -DRCT_NEW_ARCH_ENABLED=1
+
 )
 
 # Set C++ standard
@@ -154,7 +190,6 @@ set_target_properties(
     ${CMAKE_PROJECT_NAME} PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
-) 
+    POSITION_INDEPENDENT_CODE ON
+)
 
-# Include the React Native application CMake utils
-include(${REACT_ANDROID_DIR}/cmake-utils/ReactNative-application.cmake)

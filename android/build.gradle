@@ -34,7 +34,7 @@ android {
                           "-DBUILD_SHARED_LIBS=ON",
                           "-DRCT_NEW_ARCH_ENABLED=1",
                           "-DANDROID_TOOLCHAIN=clang"
-                cppFlags "-std=c++17 -frtti -fexceptions -Oz -DRCT_NEW_ARCH_ENABLED=1"
+                cppFlags "-std=c++17 -frtti -fexceptions -Oz -DRCT_NEW_ARCH_ENABLED=1 -DLLAMA_SHARED"
             }
         }
 
@@ -94,6 +94,8 @@ android {
         exclude group: 'jakarta.activation', module: 'jakarta.activation-api'
         exclude group: 'com.sun.activation', module: 'javax.activation'
         exclude group: 'org.slf4j', module: 'slf4j-api'
+        // Exclude conflicting FBJNI modules
+        exclude module: 'fbjni-java-only'
     }
 }
 
@@ -105,8 +107,60 @@ repositories {
         // All of React Native (JS, Android binaries) is installed from npm
         url "$rootDir/../node_modules/react-native/android"
     }
+    
+    def found = false
+    def defaultDir = null
+    def androidSourcesName = 'React Native sources'
+
+    if (rootProject.projectDir.exists()) {
+        defaultDir = rootProject.projectDir
+    } else if (project.projectDir.exists()) {
+        defaultDir = project.projectDir
+    } else {
+        defaultDir = new File(".")
+    }
+
+    if (defaultDir.exists()) {
+        ['node_modules/react-native/ReactAndroid/src/main/jni/first-party/fbjni/'].each { folder ->
+            def folderDir = new File("${defaultDir}/${folder}")
+            if (folderDir.exists()) {
+                maven {
+                    url folderDir.toString()
+                }
+                found = true
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
+            url "$rootDir/../node_modules/react-native/android"
+        }
+        maven {
+            // Android JSC is installed from npm
+            url "$rootDir/../node_modules/jsc-android/dist"
+        }
+        mavenCentral {
+            // We don't want to fetch react-native from Maven Central as there are
+            // older versions over there.
+            content {
+                excludeGroup "com.facebook.react"
+            }
+        }
+        google()
+    }
 }
 
 dependencies {
-    implementation "com.facebook.react:react-native:+"
+    //noinspection GradleDynamicVersion
+    implementation('com.facebook.react:react-native:+') {
+        // Exclude the conflicting FBJNI from React Native
+        exclude group: 'com.facebook.fbjni'
+    }
+    implementation 'com.facebook.fbjni:fbjni:0.7.0'
+    // implementation 'com.facebook.react:react-native-jni:+'
+    
+    // Force resolution of the correct FBJNI version
+    configurations.implementation.resolutionStrategy.force 'com.facebook.fbjni:fbjni:0.7.0'
 } 
