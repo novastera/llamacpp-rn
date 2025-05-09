@@ -169,7 +169,7 @@ setup_dependencies() {
   if [ ! -d "$LLAMA_CPP_DIR/.git" ]; then
     echo -e "${YELLOW}llama.cpp not found as a git repository at $LLAMA_CPP_DIR${NC}"
     echo -e "${YELLOW}Running setupLlamaCpp.sh to initialize it...${NC}"
-    "$SCRIPT_DIR/setupLlamaCpp.sh" init
+    "$SCRIPT_DIR/setupLlamaCpp.sh" init --platform=android
     
     if [ ! -d "$LLAMA_CPP_DIR/.git" ]; then
       echo -e "${RED}Failed to initialize llama.cpp${NC}"
@@ -500,12 +500,24 @@ build_gpu_libs_for_abi() {
     CMAKE_FLAGS+=("-DGGML_VULKAN_SHADERS_DIR=${LLAMA_CPP_DIR}/ggml-vulkan/shaders")
     CMAKE_FLAGS+=("-DGGML_VULKAN_SHADERS_EMBED=ON")
     
-    # Create fake Vulkan library if needed for build to succeed
+    # Create architecture-specific fake Vulkan libraries if needed
+    VULKAN_LIB_DIR="$VULKAN_INCLUDE_DIR/lib/$ABI"
+    mkdir -p "$VULKAN_LIB_DIR"
+    VULKAN_DUMMY_LIB="$VULKAN_LIB_DIR/libvulkan.so"
+    
+    if [ ! -f "$VULKAN_DUMMY_LIB" ]; then
+      touch "$VULKAN_DUMMY_LIB"
+      echo -e "${YELLOW}Created empty libvulkan.so for $ABI to proceed with build${NC}"
+    fi
+    
+    # Always set the Vulkan library path for this architecture
+    CMAKE_FLAGS+=("-DVulkan_LIBRARY=$VULKAN_DUMMY_LIB")
+    CMAKE_FLAGS+=("-DVULKAN_LIBRARY=$VULKAN_DUMMY_LIB")
+    
+    # Set generic lib as well for CMake's FindVulkan module
     if [ ! -f "$VULKAN_INCLUDE_DIR/lib/libvulkan.so" ]; then
       mkdir -p "$VULKAN_INCLUDE_DIR/lib"
       touch "$VULKAN_INCLUDE_DIR/lib/libvulkan.so"
-      echo -e "${YELLOW}Created empty libvulkan.so for build to proceed${NC}"
-      CMAKE_FLAGS+=("-DVulkan_LIBRARY=$VULKAN_INCLUDE_DIR/lib/libvulkan.so")
     fi
   else
     CMAKE_FLAGS+=("-DGGML_VULKAN=OFF")
@@ -646,7 +658,12 @@ if [ "$BUILD_ABI" = "all" ] || [ "$BUILD_ABI" = "arm64-v8a" ]; then
 fi
 
 if [ "$BUILD_ABI" = "all" ] || [ "$BUILD_ABI" = "x86_64" ]; then
-  build_gpu_libs_for_abi "x86_64"
+  build_gpu_libs_for_abi "x86_64" || {
+    echo -e "${YELLOW}⚠️ Build for x86_64 failed, but continuing with other architectures${NC}"
+    # Create directory to indicate we tried to build, even if it failed
+    mkdir -p "$PREBUILT_GPU_DIR/x86_64"
+    touch "$PREBUILT_GPU_DIR/x86_64/.build_attempted"
+  }
 fi
 
 # Helper function to fix Vulkan build issues when detected

@@ -92,6 +92,7 @@ example/android/app/build/
 # Downloaded frameworks and builds
 ios/libs/build-apple/
 /ios/libs/llamacpp.xcframework/
+/ios/libs/llama.xcframework/
 /ios/framework/build-apple/
 /ios/framework/build/
 /ios/libs/temp_framework.zip
