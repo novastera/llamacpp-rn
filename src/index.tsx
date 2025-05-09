@@ -16,7 +16,7 @@ export type LlamaModel = LlamaContextType & LlamaContextMethods;
 
 /**
  * Load a Llama model with simplified parameters
- * 
+ *
  * @param params Configuration for loading the model
  * @returns Promise that resolves to a LlamaModel instance
  */

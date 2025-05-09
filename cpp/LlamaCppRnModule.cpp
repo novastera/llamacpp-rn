@@ -189,7 +189,7 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
     params.n_gpu_layers = n_gpu_layers;
     
     // Additional model parameters
-    SystemUtils::setIfExists(runtime, options, "vocab_only", params.logits_all);
+    SystemUtils::setIfExists(runtime, options, "logits_file", params.logits_file);
     SystemUtils::setIfExists(runtime, options, "embedding", params.embedding);
     SystemUtils::setIfExists(runtime, options, "rope_freq_base", params.rope_freq_base);
     SystemUtils::setIfExists(runtime, options, "rope_freq_scale", params.rope_freq_scale);
