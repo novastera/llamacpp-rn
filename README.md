@@ -129,6 +129,7 @@ if (response.choices?.[0]?.finish_reason === 'tool_calls' || response.tool_calls
 ## Documentation
 
 - [Interface Documentation](./INTERFACE.md) - Detailed API interfaces
+- [Android GPU Support](./android/README.md) - Information about GPU acceleration on Android
 - [Example App](./example/) - Working example with common use cases
 - [Contributing Guide](./CONTRIBUTING.md) - How to help improve the library
 

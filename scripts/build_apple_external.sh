@@ -111,6 +111,17 @@ download_ios_framework() {
     fi
   fi
   
+  # Check if we have local llama.cpp source available
+  # If it exists, we'll copy headers but still download the prebuilt framework
+  if [ -d "$CPP_DIR/llama.cpp" ] && [ -f "$CPP_DIR/llama.cpp/include/llama.h" ]; then
+    echo -e "${GREEN}Found local llama.cpp source at: $CPP_DIR/llama.cpp${NC}"
+    echo -e "${YELLOW}Will use local source for headers but still download prebuilt framework${NC}"
+    FOUND_LOCAL_SOURCE=1
+  else
+    echo -e "${YELLOW}No local llama.cpp source found, downloading everything...${NC}"
+    FOUND_LOCAL_SOURCE=0
+  fi
+  
   # Download URL - use the same format as in llama_cpp_ios.sh
   local url="https://github.com/ggerganov/llama.cpp/releases/download/$LLAMA_CPP_TAG/llama-$LLAMA_CPP_TAG-xcframework.zip"
   local temp_zip="$TEMP_DIR/ios_framework.zip"
