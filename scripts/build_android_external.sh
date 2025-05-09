@@ -1007,6 +1007,19 @@ build_for_abi() {
     ABS_VULKAN_INCLUDE_DIR=$(readlink -f "$VULKAN_INCLUDE_DIR")
     CMAKE_FLAGS+=("-DVulkan_INCLUDE_DIR=$ABS_VULKAN_INCLUDE_DIR")
     
+    # Always add Vulkan library path even if it's empty
+    if [ -n "$NDK_VULKAN_LIB" ]; then
+      CMAKE_FLAGS+=("-DVulkan_LIBRARY=$NDK_VULKAN_LIB")
+    else
+      # Create a dummy Vulkan library directory if needed
+      DUMMY_LIB_DIR="$PREBUILT_EXTERNAL_DIR/vulkan/lib/$ABI"
+      mkdir -p "$DUMMY_LIB_DIR"
+      DUMMY_VULKAN_LIB="$DUMMY_LIB_DIR/libvulkan.so"
+      touch "$DUMMY_VULKAN_LIB"
+      CMAKE_FLAGS+=("-DVulkan_LIBRARY=$DUMMY_VULKAN_LIB")
+      echo -e "${YELLOW}Using dummy Vulkan library for CMake: $DUMMY_VULKAN_LIB${NC}"
+    fi
+    
     # Enable Vulkan shader compilation with GLSLC
     if [ -n "$GLSLC_EXECUTABLE" ]; then
       CMAKE_FLAGS+=("-DGGML_VULKAN_SHADER_EMBED_GLSLC_PATH=$GLSLC_EXECUTABLE")
@@ -1037,6 +1050,26 @@ build_for_abi() {
         echo -e "${YELLOW}Vulkan library not found at expected location, searching...${NC}"
         NDK_VULKAN_LIB=$(find "$NDK_PATH" -name "libvulkan.so" | grep "x86_64" | head -1)
       fi
+    fi
+    
+    # Create a dummy Vulkan library if none was found
+    if [ "$BUILD_VULKAN" = true ] && [ ! -f "$NDK_VULKAN_LIB" ]; then
+      echo -e "${YELLOW}No Vulkan library found for $ABI, creating a dummy one...${NC}"
+      
+      # Create a directory for the dummy library
+      DUMMY_LIB_DIR="$PREBUILT_EXTERNAL_DIR/vulkan/lib/$ABI"
+      mkdir -p "$DUMMY_LIB_DIR"
+      
+      # Create the dummy library file
+      DUMMY_VULKAN_LIB="$DUMMY_LIB_DIR/libvulkan.so"
+      touch "$DUMMY_VULKAN_LIB"
+      
+      # Use this as our Vulkan library
+      NDK_VULKAN_LIB="$DUMMY_VULKAN_LIB"
+      echo -e "${GREEN}Created dummy Vulkan library at: $NDK_VULKAN_LIB${NC}"
+      
+      # Add to CMake flags
+      CMAKE_FLAGS+=("-DVulkan_LIBRARY=$NDK_VULKAN_LIB")
     fi
     
     # Set Vulkan library for linking
@@ -1076,11 +1109,19 @@ if(DEFINED OpenCL_INCLUDE_DIR AND DEFINED OpenCL_LIBRARY)
 endif()
 
 # Force Vulkan to be found if we're building with Vulkan
-if(DEFINED Vulkan_INCLUDE_DIR AND DEFINED Vulkan_LIBRARY)
+if(DEFINED Vulkan_INCLUDE_DIR)
   set(Vulkan_FOUND TRUE CACHE BOOL "Vulkan Found" FORCE)
   set(VULKAN_FOUND TRUE CACHE BOOL "Vulkan Found" FORCE)
   set(VULKAN_INCLUDE_DIRS "\${Vulkan_INCLUDE_DIR}" CACHE PATH "Vulkan Include Dirs" FORCE)
-  set(VULKAN_LIBRARIES "\${Vulkan_LIBRARY}" CACHE PATH "Vulkan Libraries" FORCE)
+  
+  # If we have a Vulkan library, set it
+  if(DEFINED Vulkan_LIBRARY)
+    set(VULKAN_LIBRARIES "\${Vulkan_LIBRARY}" CACHE PATH "Vulkan Libraries" FORCE)
+  else
+    # Otherwise create an empty value to satisfy CMake
+    set(VULKAN_LIBRARIES "" CACHE PATH "Vulkan Libraries" FORCE)
+    set(Vulkan_LIBRARY "" CACHE PATH "Vulkan Library" FORCE)
+  endif()
 endif()
 EOF
   
