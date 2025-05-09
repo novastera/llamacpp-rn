@@ -1,166 +1,144 @@
 buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
+  repositories {
+      google()
+      mavenCentral()
+  }
 
-    dependencies {
-        classpath("com.android.tools.build:gradle:7.3.1")
-    }
+  dependencies {
+      classpath("com.android.tools.build:gradle:7.3.1")
+  }
 }
 
 apply plugin: 'com.android.library'
 
 def safeExtGet(prop, fallback) {
-    rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
 }
 
 android {
-    namespace "com.llamacpprn"
-    compileSdkVersion safeExtGet('compileSdkVersion', 33)
+  namespace "com.llamacpprn"
+  compileSdkVersion safeExtGet('compileSdkVersion', 33)
+  
+  defaultConfig {
+    minSdkVersion safeExtGet('minSdkVersion', 26)
+    targetSdkVersion safeExtGet('targetSdkVersion', 33)
     
-    defaultConfig {
-        minSdkVersion safeExtGet('minSdkVersion', 26)
-        targetSdkVersion safeExtGet('targetSdkVersion', 33)
-        
-        externalNativeBuild {
-            cmake {
-                arguments "-DANDROID_STL=c++_shared",
-                          "-DCMAKE_BUILD_TYPE=Release",
-                          "-DANDROID_PLATFORM=android-26",
-                          "-DANDROID_CPP_FEATURES=rtti exceptions",
-                          "-DLLAMA_BUILD_EXAMPLES=OFF",
-                          "-DLLAMA_BUILD_SERVER=OFF",
-                          "-DBUILD_SHARED_LIBS=ON",
-                          "-DRCT_NEW_ARCH_ENABLED=1",
-                          "-DANDROID_TOOLCHAIN=clang"
-                cppFlags "-std=c++17 -frtti -fexceptions -Oz -DRCT_NEW_ARCH_ENABLED=1 -DLLAMA_SHARED"
-            }
-        }
-
-        ndk {
-            abiFilters 'arm64-v8a', 'x86_64'
-        }
-    }
-
-    buildTypes {
-        release {
-            minifyEnabled false
-        }
-    }
-
-    // This is necessary for pure C++ modules
-    buildFeatures {
-        prefabPublishing true
-    }
-
-    prefab {
-        llamacpprn {
-            headers "src/main/cpp/include"
-        }
-    }
-
     externalNativeBuild {
-        cmake {
-            path "src/main/jni/CMakeLists.txt"
-            version "3.22.1"
-        }
-    }
+      cmake {
+        arguments "-DANDROID_STL=c++_shared",
+                  "-DCMAKE_BUILD_TYPE=Release",
+                  "-DANDROID_PLATFORM=android-26",
+                  "-DANDROID_CPP_FEATURES=rtti exceptions",
+                  "-DLLAMA_BUILD_EXAMPLES=OFF",
+                  "-DLLAMA_BUILD_SERVER=OFF",
+                  "-DBUILD_SHARED_LIBS=ON",
+                  "-DRCT_NEW_ARCH_ENABLED=1",
+                  "-DANDROID_TOOLCHAIN=clang"
+        cppFlags "-std=c++17 -frtti -fexceptions -Oz -DRCT_NEW_ARCH_ENABLED=1 -DLLAMA_SHARED"
+      }
+    }A
 
-    sourceSets {
-        main {
-            jniLibs.srcDirs = ['src/main/jniLibs']
-        }
+    ndk {
+      abiFilters 'arm64-v8a', 'x86_64'
     }
+  }
 
-    packagingOptions {
-        jniLibs {
-            pickFirsts += ['**/*.so']
-        }
-        resources {
-            pickFirsts += [
-                'META-INF/DEPENDENCIES',
-                'META-INF/LICENSE',
-                'META-INF/LICENSE.txt',
-                'META-INF/NOTICE',
-                'META-INF/NOTICE.txt',
-                'META-INF/*.kotlin_module'
-            ]
-        }
+  buildTypes {
+    release {
+      minifyEnabled false
     }
+  }
 
-    // Exclude conflicting libraries
-    configurations.all {
-        exclude group: 'jakarta.activation', module: 'jakarta.activation-api'
-        exclude group: 'com.sun.activation', module: 'javax.activation'
-        exclude group: 'org.slf4j', module: 'slf4j-api'
-        // Exclude conflicting FBJNI modules
-        exclude module: 'fbjni-java-only'
+  // This is necessary for pure C++ modules
+  buildFeatures {
+    prefabPublishing true
+  }
+
+  prefab {
+    llamacpprn {
+      headers "src/main/cpp/include"
     }
+  }
+
+  externalNativeBuild {
+    cmake {
+      path "src/main/jni/CMakeLists.txt"
+      version "3.22.1"
+    }
+  }
+
+  sourceSets {
+    main {
+      jniLibs.srcDirs = ['src/main/jniLibs']
+    }
+  }
+
+  packagingOptions {
+    jniLibs {
+      pickFirsts += ['**/*.so']
+    }
+    resources {
+      pickFirsts += [
+        'META-INF/DEPENDENCIES',
+        'META-INF/LICENSE',
+        'META-INF/LICENSE.txt',
+        'META-INF/NOTICE',
+        'META-INF/NOTICE.txt',
+        'META-INF/*.kotlin_module'
+      ]
+    }
+  }
+
+  // Exclude conflicting libraries
+  configurations.all {
+      exclude group: 'jakarta.activation', module: 'jakarta.activation-api'
+      exclude group: 'com.sun.activation', module: 'javax.activation'
+      exclude group: 'org.slf4j', module: 'slf4j-api'
+      // Exclude conflicting FBJNI modules
+      exclude module: 'fbjni-java-only'
+  }
 }
 
 repositories {
-    mavenCentral()
-    google()
+  mavenCentral()
+  google()
 
-    maven {
-        // All of React Native (JS, Android binaries) is installed from npm
-        url "$rootDir/../node_modules/react-native/android"
-    }
-    
-    def found = false
-    def defaultDir = null
-    def androidSourcesName = 'React Native sources'
+  maven {
+      // All of React Native (JS, Android binaries) is installed from npm
+      url "$rootDir/../node_modules/react-native/android"
+  }
+  
+  def found = false
+  def defaultDir = null
+  def androidSourcesName = 'React Native sources'
 
-    if (rootProject.projectDir.exists()) {
-        defaultDir = rootProject.projectDir
-    } else if (project.projectDir.exists()) {
-        defaultDir = project.projectDir
-    } else {
-        defaultDir = new File(".")
-    }
+  if (rootProject.projectDir.exists()) {
+      defaultDir = rootProject.projectDir
+  } else if (project.projectDir.exists()) {
+      defaultDir = project.projectDir
+  } else {
+      defaultDir = new File(".")
+  }
 
-    if (defaultDir.exists()) {
-        ['node_modules/react-native/ReactAndroid/src/main/jni/first-party/fbjni/'].each { folder ->
-            def folderDir = new File("${defaultDir}/${folder}")
-            if (folderDir.exists()) {
-                maven {
-                    url folderDir.toString()
-                }
-                found = true
-            }
-        }
-    }
-
-    repositories {
+  if (defaultDir.exists()) {
+    ['node_modules/react-native/ReactAndroid/src/main/jni/first-party/fbjni/'].each { folder ->
+      def folderDir = new File("${defaultDir}/${folder}")
+      if (folderDir.exists()) {
         maven {
-            // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
-            url "$rootDir/../node_modules/react-native/android"
+          url folderDir.toString()
         }
-        maven {
-            // Android JSC is installed from npm
-            url "$rootDir/../node_modules/jsc-android/dist"
-        }
-        mavenCentral {
-            // We don't want to fetch react-native from Maven Central as there are
-            // older versions over there.
-            content {
-                excludeGroup "com.facebook.react"
-            }
-        }
-        google()
+        found = true
+      }
     }
+  }
+
+  repositories {
+      mavenCentral()
+      google()
+  }
 }
 
 dependencies {
-    //noinspection GradleDynamicVersion
-    implementation('com.facebook.react:react-native:+') {
-        // Exclude the conflicting FBJNI from React Native
-        exclude group: 'com.facebook.fbjni'
-    }
-    implementation 'com.facebook.fbjni:fbjni:0.7.0'
-    // implementation 'com.facebook.react:react-native-jni:+'
-    
-    // Force resolution of the correct FBJNI version
-    configurations.implementation.resolutionStrategy.force 'com.facebook.fbjni:fbjni:0.7.0'
+  implementation 'com.facebook.react:react-native:+'
+  implementation 'com.facebook.fbjni:fbjni:0.7.0'
 } 
