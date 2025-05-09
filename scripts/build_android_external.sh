@@ -36,6 +36,7 @@ print_usage() {
   echo "  --glslc-path=[path]    Specify a custom path to the GLSLC compiler"
   echo "  --ndk-path=[path]      Specify a custom path to the Android NDK"
   echo "  --no-use-prebuilt-gpu  Disable use of prebuilt GPU libraries"
+  echo "  --platform=[android|all]  Specify target platform (default: all)"
 }
 
 # Default values
@@ -49,6 +50,7 @@ INSTALL_DEPS=false
 CUSTOM_GLSLC_PATH=""
 CUSTOM_NDK_PATH=""
 USE_PREBUILT_GPU=true  # Set to true by default, will be overridden if --no-use-prebuilt-gpu is provided
+BUILD_PLATFORM="all"  # Default to building for all platforms
 
 # Parse arguments
 for arg in "$@"; do
@@ -89,6 +91,9 @@ for arg in "$@"; do
       ;;
     --no-use-prebuilt-gpu)
       USE_PREBUILT_GPU=false
+      ;;
+    --platform=*)
+      BUILD_PLATFORM="${arg#*=}"
       ;;
     *)
       echo -e "${RED}Unknown argument: $arg${NC}"
@@ -610,7 +615,7 @@ fi
 if [ ! -d "$LLAMA_CPP_DIR" ]; then
   echo -e "${RED}llama.cpp not found at $LLAMA_CPP_DIR${NC}"
   echo -e "${YELLOW}Running setupLlamaCpp.sh to initialize it...${NC}"
-  "$SCRIPT_DIR/setupLlamaCpp.sh" init
+  "$SCRIPT_DIR/setupLlamaCpp.sh" init --platform="$BUILD_PLATFORM"
   if [ ! -d "$LLAMA_CPP_DIR" ]; then
     echo -e "${RED}Failed to initialize llama.cpp${NC}"
     exit 1
@@ -626,11 +631,11 @@ if [ -d "$LLAMA_CPP_DIR/.git" ]; then
   if [ "$CURRENT_COMMIT" != "$LLAMA_CPP_COMMIT" ]; then
     echo -e "${YELLOW}llama.cpp is at commit $CURRENT_COMMIT, but we need $LLAMA_CPP_COMMIT${NC}"
     echo -e "${YELLOW}Running setupLlamaCpp.sh to update it...${NC}"
-    "$SCRIPT_DIR/setupLlamaCpp.sh" init
+    "$SCRIPT_DIR/setupLlamaCpp.sh" init --platform="$BUILD_PLATFORM"
   fi
 else
   echo -e "${YELLOW}llama.cpp is not a git repository. Running setupLlamaCpp.sh to properly initialize it...${NC}"
-  "$SCRIPT_DIR/setupLlamaCpp.sh" init
+  "$SCRIPT_DIR/setupLlamaCpp.sh" init --platform="$BUILD_PLATFORM"
 fi
 
 # Copy necessary headers
