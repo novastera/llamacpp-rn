@@ -163,6 +163,72 @@ mkdir -p "$OPENCL_LIB_DIR"
 mkdir -p "$VULKAN_INCLUDE_DIR"
 mkdir -p "$PREBUILT_GPU_DIR/arm64-v8a" "$PREBUILT_GPU_DIR/x86_64" # Create GPU libraries directories
 
+# Helper function to fix Vulkan build issues when detected
+fix_vulkan_build_issues() {
+  echo -e "${YELLOW}Attempting to fix Vulkan build issues...${NC}"
+  
+  # Install Vulkan SDK if on Linux CI
+  if [[ "$HOST_PLATFORM" == "linux" ]]; then
+    echo -e "${YELLOW}Installing Vulkan SDK on Linux...${NC}"
+    
+    # Add LunarG repository with proper authentication (updated method)
+    wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+    sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+    sudo apt update -y
+    
+    # Install Vulkan SDK and development packages
+    sudo apt install -y vulkan-sdk vulkan-headers vulkan-tools libvulkan-dev
+    
+    # Install shader tools
+    sudo apt install -y glslc glslang-tools shaderc
+    
+    # Check if glslc is available now
+    if command -v glslc &> /dev/null; then
+      echo -e "${GREEN}✅ glslc installed successfully: $(which glslc)${NC}"
+      export GLSLC_EXECUTABLE=$(which glslc)
+    else
+      echo -e "${RED}❌ glslc still not available after installation${NC}"
+    fi
+    
+    # Use pkg-config to find libs
+    if command -v pkg-config &> /dev/null; then
+      VULKAN_LIB_PATH=$(pkg-config --variable=libdir vulkan)
+      echo -e "${GREEN}Found Vulkan libraries at $VULKAN_LIB_PATH${NC}"
+      
+      # Copy actual libraries to the prebuilt directory if found
+      if [ -d "$VULKAN_LIB_PATH" ]; then
+        mkdir -p "$VULKAN_INCLUDE_DIR/lib"
+        mkdir -p "$VULKAN_INCLUDE_DIR/lib/arm64-v8a"
+        mkdir -p "$VULKAN_INCLUDE_DIR/lib/x86_64"
+        
+        if [ -f "$VULKAN_LIB_PATH/libvulkan.so" ]; then
+          cp "$VULKAN_LIB_PATH/libvulkan.so" "$VULKAN_INCLUDE_DIR/lib/"
+          cp "$VULKAN_LIB_PATH/libvulkan.so" "$VULKAN_INCLUDE_DIR/lib/arm64-v8a/"
+          cp "$VULKAN_LIB_PATH/libvulkan.so" "$VULKAN_INCLUDE_DIR/lib/x86_64/"
+          echo -e "${GREEN}✅ Copied actual Vulkan libraries${NC}"
+        fi
+      fi
+    fi
+    
+    return 0
+  elif [[ "$HOST_PLATFORM" == "macos" ]]; then
+    echo -e "${YELLOW}Installing Vulkan SDK on macOS using Homebrew...${NC}"
+    brew install molten-vk vulkan-headers shaderc glslang
+    
+    if command -v glslc &> /dev/null; then
+      echo -e "${GREEN}✅ glslc installed successfully: $(which glslc)${NC}"
+      export GLSLC_EXECUTABLE=$(which glslc)
+    else
+      echo -e "${RED}❌ glslc still not available after installation${NC}"
+    fi
+    
+    return 0
+  else
+    echo -e "${YELLOW}Platform $HOST_PLATFORM not supported for automatic Vulkan SDK installation${NC}"
+    return 1
+  fi
+}
+
 # Setup dependencies for both OpenCL and Vulkan headers
 setup_dependencies() {
   # Verify llama.cpp exists as a git repository
@@ -194,25 +260,80 @@ setup_dependencies() {
     cp -r "$OPENCL_HEADERS_DIR/CL" "$OPENCL_INCLUDE_DIR/"
   fi
 
-  # Ensure we have architecture-specific OpenCL libraries
-  mkdir -p "$OPENCL_LIB_DIR/arm64-v8a"
-  mkdir -p "$OPENCL_LIB_DIR/x86_64"
+  # Instead of empty stub libraries, use the OpenCL ICD loader
+  # Check if we can install OpenCL ICD loader
+  if [[ "$HOST_PLATFORM" == "linux" ]]; then
+    sudo apt install -y ocl-icd-libopencl1 ocl-icd-opencl-dev opencl-headers
+    if [ -f "/usr/lib/x86_64-linux-gnu/libOpenCL.so" ]; then
+      # Ensure directories exist
+      mkdir -p "$OPENCL_LIB_DIR/arm64-v8a"
+      mkdir -p "$OPENCL_LIB_DIR/x86_64"
+      
+      # Copy the actual OpenCL library instead of an empty stub
+      cp "/usr/lib/x86_64-linux-gnu/libOpenCL.so" "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so"
+      cp "/usr/lib/x86_64-linux-gnu/libOpenCL.so" "$OPENCL_LIB_DIR/x86_64/libOpenCL.so"
+      echo -e "${GREEN}✅ Copied actual OpenCL libraries${NC}"
+    else
+      # Fall back to stub libraries if needed
+      mkdir -p "$OPENCL_LIB_DIR/arm64-v8a"
+      mkdir -p "$OPENCL_LIB_DIR/x86_64"
+      
+      if [ ! -f "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so" ]; then
+        echo -e "${YELLOW}Creating OpenCL shared library for arm64-v8a...${NC}"
+        # Create a minimal implementation instead of an empty file
+        cat > "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.c" << 'EOL'
+#include <CL/cl.h>
+cl_int clGetPlatformIDs(cl_uint num_entries, cl_platform_id *platforms, cl_uint *num_platforms) { return CL_DEVICE_NOT_FOUND; }
+cl_int clGetPlatformInfo(cl_platform_id platform, cl_platform_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret) { return CL_DEVICE_NOT_FOUND; }
+cl_int clGetDeviceIDs(cl_platform_id platform, cl_device_type device_type, cl_uint num_entries, cl_device_id *devices, cl_uint *num_devices) { return CL_DEVICE_NOT_FOUND; }
+cl_int clGetDeviceInfo(cl_device_id device, cl_device_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret) { return CL_DEVICE_NOT_FOUND; }
+cl_context clCreateContext(const cl_context_properties *properties, cl_uint num_devices, const cl_device_id *devices, void (CL_CALLBACK *pfn_notify)(const char *errinfo, const void *private_info, size_t cb, void *user_data), void *user_data, cl_int *errcode_ret) { if(errcode_ret) *errcode_ret = CL_DEVICE_NOT_FOUND; return NULL; }
+EOL
+        # Compile a simple shared library with the necessary symbols
+        ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang -shared -o "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so" "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.c" -I"$OPENCL_INCLUDE_DIR"
+      fi
+      
+      if [ ! -f "$OPENCL_LIB_DIR/x86_64/libOpenCL.so" ]; then
+        echo -e "${YELLOW}Creating OpenCL shared library for x86_64...${NC}"
+        # Create a minimal implementation instead of an empty file
+        cat > "$OPENCL_LIB_DIR/x86_64/libOpenCL.c" << 'EOL'
+#include <CL/cl.h>
+cl_int clGetPlatformIDs(cl_uint num_entries, cl_platform_id *platforms, cl_uint *num_platforms) { return CL_DEVICE_NOT_FOUND; }
+cl_int clGetPlatformInfo(cl_platform_id platform, cl_platform_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret) { return CL_DEVICE_NOT_FOUND; }
+cl_int clGetDeviceIDs(cl_platform_id platform, cl_device_type device_type, cl_uint num_entries, cl_device_id *devices, cl_uint *num_devices) { return CL_DEVICE_NOT_FOUND; }
+cl_int clGetDeviceInfo(cl_device_id device, cl_device_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret) { return CL_DEVICE_NOT_FOUND; }
+cl_context clCreateContext(const cl_context_properties *properties, cl_uint num_devices, const cl_device_id *devices, void (CL_CALLBACK *pfn_notify)(const char *errinfo, const void *private_info, size_t cb, void *user_data), void *user_data, cl_int *errcode_ret) { if(errcode_ret) *errcode_ret = CL_DEVICE_NOT_FOUND; return NULL; }
+EOL
+        # Compile a simple shared library with the necessary symbols
+        ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang -shared -o "$OPENCL_LIB_DIR/x86_64/libOpenCL.so" "$OPENCL_LIB_DIR/x86_64/libOpenCL.c" -I"$OPENCL_INCLUDE_DIR"
+      fi
+    fi
+  else
+    # On other platforms, at least create stub libraries with dummy implementations
+    mkdir -p "$OPENCL_LIB_DIR/arm64-v8a"
+    mkdir -p "$OPENCL_LIB_DIR/x86_64"
+    
+    if [ ! -f "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so" ]; then
+      echo -e "${YELLOW}Creating stub libOpenCL.so for arm64-v8a...${NC}"
+      touch "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so"
+    fi
 
-  # Create stub libraries for each architecture
-  if [ ! -f "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so" ]; then
-    echo -e "${YELLOW}Creating stub libOpenCL.so for arm64-v8a...${NC}"
-    touch "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so"
-  fi
-
-  if [ ! -f "$OPENCL_LIB_DIR/x86_64/libOpenCL.so" ]; then
-    echo -e "${YELLOW}Creating stub libOpenCL.so for x86_64...${NC}"
-    touch "$OPENCL_LIB_DIR/x86_64/libOpenCL.so"
+    if [ ! -f "$OPENCL_LIB_DIR/x86_64/libOpenCL.so" ]; then
+      echo -e "${YELLOW}Creating stub libOpenCL.so for x86_64...${NC}"
+      touch "$OPENCL_LIB_DIR/x86_64/libOpenCL.so"
+    fi
   fi
 
   echo -e "${GREEN}✅ OpenCL dependencies setup complete${NC}"
 
   # Setup Vulkan dependencies
   echo -e "${YELLOW}Setting up Vulkan dependencies...${NC}"
+
+  # If on Linux, try to install Vulkan libraries
+  if [[ "$HOST_PLATFORM" == "linux" ]]; then
+    # Try to install Vulkan SDK and dependencies
+    fix_vulkan_build_issues || true
+  fi
 
   # Verify Vulkan dependencies have been properly setup
   if [ ! -d "$VULKAN_HEADERS_DIR" ]; then
@@ -226,78 +347,6 @@ setup_dependencies() {
     echo -e "${YELLOW}Vulkan include directory not set up correctly. Creating manually...${NC}"
     mkdir -p "$VULKAN_INCLUDE_DIR"
     cp -r "$VULKAN_HEADERS_DIR/include/vulkan" "$VULKAN_INCLUDE_DIR/"
-  fi
-
-  # Make sure we have the vulkan.hpp C++ header
-  if [ ! -f "$VULKAN_INCLUDE_DIR/vulkan/vulkan.hpp" ]; then
-    echo -e "${YELLOW}Vulkan-Hpp header not found. Downloading manually...${NC}"
-    mkdir -p "$VULKAN_INCLUDE_DIR/vulkan"
-    
-    # Try to use wget or curl to download
-    if command -v wget &> /dev/null; then
-      wget -q "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Hpp/vulkan-sdk-$VULKAN_SDK_VERSION/vulkan/vulkan.hpp" -O "$VULKAN_INCLUDE_DIR/vulkan/vulkan.hpp"
-    elif command -v curl &> /dev/null; then
-      curl -s -o "$VULKAN_INCLUDE_DIR/vulkan/vulkan.hpp" "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Hpp/vulkan-sdk-$VULKAN_SDK_VERSION/vulkan/vulkan.hpp"
-    else
-      echo -e "${RED}❌ Neither wget nor curl found. Cannot download Vulkan-Hpp header.${NC}"
-    fi
-    
-    if [ ! -f "$VULKAN_INCLUDE_DIR/vulkan/vulkan.hpp" ]; then
-      echo -e "${RED}❌ Failed to download Vulkan-Hpp header. Build will likely fail.${NC}"
-    else
-      echo -e "${GREEN}✅ Successfully downloaded Vulkan-Hpp header${NC}"
-    fi
-  fi
-
-  # Also download vk_platform.h if needed
-  if [ ! -f "$VULKAN_INCLUDE_DIR/vulkan/vk_platform.h" ] && [ ! -d "$VULKAN_HEADERS_DIR" ]; then
-    echo -e "${YELLOW}Missing vk_platform.h. Downloading Vulkan-Headers repository...${NC}"
-    git clone --depth 1 --branch "v$VULKAN_SDK_VERSION" https://github.com/KhronosGroup/Vulkan-Headers.git "$VULKAN_HEADERS_DIR"
-    cp -r "$VULKAN_HEADERS_DIR/include/vulkan/"* "$VULKAN_INCLUDE_DIR/vulkan/"
-  fi
-
-  # Make sure we have the vk_video headers
-  if [ ! -d "$VULKAN_INCLUDE_DIR/vk_video" ]; then
-    echo -e "${YELLOW}Missing vk_video directory. Adding vk_video headers...${NC}"
-    
-    # If we already have Vulkan-Headers repo, copy from there
-    if [ -d "$VULKAN_HEADERS_DIR/include/vk_video" ]; then
-      mkdir -p "$VULKAN_INCLUDE_DIR/vk_video"
-      cp -r "$VULKAN_HEADERS_DIR/include/vk_video/"* "$VULKAN_INCLUDE_DIR/vk_video/"
-      echo -e "${GREEN}✅ Copied vk_video headers from Vulkan-Headers repository${NC}"
-    else
-      # Otherwise download them individually
-      echo -e "${YELLOW}Downloading vk_video headers individually...${NC}"
-      mkdir -p "$VULKAN_INCLUDE_DIR/vk_video"
-      
-      # List of required video headers
-      VK_VIDEO_HEADERS=(
-        "vulkan_video_codec_h264std.h"
-        "vulkan_video_codec_h264std_decode.h"
-        "vulkan_video_codec_h264std_encode.h"
-        "vulkan_video_codec_h265std.h"
-        "vulkan_video_codec_h265std_decode.h"
-        "vulkan_video_codec_h265std_encode.h"
-        "vulkan_video_codec_av1std.h"
-        "vulkan_video_codec_av1std_decode.h"
-        "vulkan_video_codecs_common.h"
-      )
-      
-      # Download each header
-      for HEADER in "${VK_VIDEO_HEADERS[@]}"; do
-        if command -v wget &> /dev/null; then
-          wget -q "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v$VULKAN_SDK_VERSION/include/vk_video/$HEADER" -O "$VULKAN_INCLUDE_DIR/vk_video/$HEADER"
-        elif command -v curl &> /dev/null; then
-          curl -s -o "$VULKAN_INCLUDE_DIR/vk_video/$HEADER" "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/v$VULKAN_SDK_VERSION/include/vk_video/$HEADER"
-        fi
-        
-        if [ -f "$VULKAN_INCLUDE_DIR/vk_video/$HEADER" ]; then
-          echo -e "${GREEN}✅ Downloaded $HEADER${NC}"
-        else
-          echo -e "${RED}❌ Failed to download $HEADER${NC}"
-        fi
-      done
-    fi
   fi
 
   # Copy to NDK sysroot if provided
@@ -667,58 +716,6 @@ if [ "$BUILD_ABI" = "all" ] || [ "$BUILD_ABI" = "x86_64" ]; then
     touch "$PREBUILT_GPU_DIR/x86_64/.build_attempted"
   }
 fi
-
-# Helper function to fix Vulkan build issues when detected
-fix_vulkan_build_issues() {
-  echo -e "${YELLOW}Attempting to fix Vulkan build issues...${NC}"
-  
-  # Install Vulkan SDK if on Linux CI
-  if [[ "$HOST_PLATFORM" == "linux" ]]; then
-    echo -e "${YELLOW}Installing Vulkan SDK on Linux...${NC}"
-    
-    # Add LunarG repository
-    wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
-    sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
-    sudo apt update
-    
-    # Install Vulkan SDK
-    sudo apt install -y vulkan-sdk
-    
-    # Check if glslc is available now
-    if command -v glslc &> /dev/null; then
-      echo -e "${GREEN}✅ glslc installed successfully: $(which glslc)${NC}"
-      export GLSLC_EXECUTABLE=$(which glslc)
-    else
-      echo -e "${RED}❌ glslc still not available after installation${NC}"
-    fi
-    
-    # Add shader-tools
-    sudo apt install -y shaderc
-    if command -v glslc &> /dev/null; then
-      echo -e "${GREEN}✅ glslc now available at: $(which glslc)${NC}"
-      export GLSLC_EXECUTABLE=$(which glslc)
-    else
-      echo -e "${RED}❌ glslc still not available${NC}"
-    fi
-    
-    return 0
-  elif [[ "$HOST_PLATFORM" == "macos" ]]; then
-    echo -e "${YELLOW}Installing Vulkan SDK on macOS using Homebrew...${NC}"
-    brew install molten-vk vulkan-headers shaderc
-    
-    if command -v glslc &> /dev/null; then
-      echo -e "${GREEN}✅ glslc installed successfully: $(which glslc)${NC}"
-      export GLSLC_EXECUTABLE=$(which glslc)
-    else
-      echo -e "${RED}❌ glslc still not available after installation${NC}"
-    fi
-    
-    return 0
-  else
-    echo -e "${YELLOW}Platform $HOST_PLATFORM not supported for automatic Vulkan SDK installation${NC}"
-    return 1
-  fi
-}
 
 # Create a manifest file to indicate build details
 MANIFEST_FILE="$PREBUILT_GPU_DIR/build-manifest.txt"
