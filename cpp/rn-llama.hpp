@@ -31,16 +31,16 @@ struct rn_common_params : common_params {
 struct rn_llama_context {
     // Model parameters - use our extended params structure
     rn_common_params params;
-    
+
     // Core llama.cpp components
     llama_model* model = nullptr;
     llama_context* ctx = nullptr;
     const llama_vocab* vocab = nullptr;
-    
+
     // Extensions
     std::vector<common_adapter_lora_info> lora_adapters;
     common_chat_templates_ptr chat_templates;
-    
+
     // State
     bool model_loaded = false;
     std::mutex mutex;
@@ -57,7 +57,4 @@ CompletionResult run_chat_completion(
     const CompletionOptions& options,
     std::function<bool(const std::string&, bool)> callback);
 
-// Helper to find partial stop words
-size_t find_partial_stop_string(const std::string& stop_word, const std::string& text);
-
-} // namespace facebook::react 
+} // namespace facebook::react
