@@ -49,6 +49,9 @@ interface LlamaModelParams {
     path: string;             // adapter file path
     scale?: number;           // scaling factor (default: 1.0)
   }>;
+
+  // Grammar-based sampling
+  grammar?: string;           // GBNF grammar for structured output
 }
 ```
 
@@ -81,6 +84,20 @@ interface LlamaCompletionParams {
   presence_penalty?: number; // presence penalty (default: 0.0)
   seed?: number;            // RNG seed (default: -1)
   grammar?: string;         // GBNF grammar for structured output
+
+  // Chat Parameters
+  chat_template?: string;    // optional chat template name to use
+}
+```
+
+## Chat Message Format
+
+```typescript
+interface LlamaMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_call_id?: string;  // Used with tool responses
+  name?: string;          // Used with tool responses
 }
 ```
 
@@ -106,6 +123,54 @@ interface LlamaTool {
   }
 }
 ```
+
+## Embeddings Support
+
+```typescript
+interface EmbeddingOptions {
+  input?: string | string[];      // Text input to embed (OpenAI format)
+  content?: string | string[];    // Alternative text input (custom format)
+  add_bos_token?: boolean;        // Whether to add beginning of sequence token (default: true)
+  encoding_format?: 'float' | 'base64'; // Output encoding format
+  model?: string;                 // Model identifier (for OpenAI compatibility)
+}
+
+interface EmbeddingResponse {
+  data: Array<{
+    embedding: number[] | string; // Array of numbers or base64 string
+    index: number;
+    object: 'embedding';
+    encoding_format?: 'base64';   // Present only when base64 encoding is used
+  }>;
+  model: string;
+  object: 'list';
+  usage: {
+    prompt_tokens: number;
+    total_tokens: number;
+  };
+}
+```
+
+## Token Management
+
+```typescript
+// Tokenize text to token IDs
+function tokenize(options: {
+  content: string;
+  add_special?: boolean;
+  with_pieces?: boolean;
+}): Promise<{
+  tokens: (number | {id: number, piece: string | number[]})[]
+}>;
+
+// Convert token IDs back to text
+function detokenize(options: {
+  tokens: number[]
+}): Promise<{
+  content: string
+}>;
+```
+
 
 ## Model Path Handling
 
@@ -165,30 +230,45 @@ interface LlamaCompletionResult {
 }
 ```
 
-When working with tool calls, you should check for tool calls in this order:
-1. Look for `response.choices?.[0]?.finish_reason === 'tool_calls'` to determine if tool calling happened
-2. Access tool calls from `response.choices?.[0]?.message?.tool_calls` (OpenAI-compatible format)
-3. Or access from `response.tool_calls` (simplified top-level access)
+## Android GPU Support
 
-### Embedding Response
-```typescript
-interface EmbeddingResponse {
-  data: Array<{
-    embedding: number[] | string;  // Array of floats or base64 string
-    index: number;                // Index in the batch (usually 0)
-    object: 'embedding';          // Object type
-    encoding_format?: 'base64';   // Present when using base64 encoding
-  }>;
-  model: string;                  // Model identifier
-  object: 'list';                 // Object type
-  usage: {
-    prompt_tokens: number;        // Tokens in the prompt
-    total_tokens: number;         // Total tokens processed
-  };
-}
-```
+llamacpp-rn supports GPU acceleration on Android via:
 
-For more detailed TypeScript definitions, see [NativeLlamaCppRn.ts](./src/specs/NativeLlamaCppRn.ts). 
+1. **OpenCL** - For a wide range of GPUs
+2. **Vulkan** - For modern GPUs with improved performance
+
+### Testing Android GPU Support
+
+We need help testing GPU support across different Android devices. To help test:
+
+1. Clone the repository and build the example app
+2. Check GPU detection with:
+   ```typescript
+   const modelInfo = await loadLlamaModelInfo(modelPath);
+   console.log("GPU Support:", modelInfo.gpuSupported);
+   console.log("Optimal GPU Layers:", modelInfo.optimalGpuLayers);
+   ```
+3. Run inference tests with GPU acceleration enabled:
+   ```typescript
+   const context = await initLlama({
+     model: modelPath,
+     n_gpu_layers: 32  // Adjust based on your device's capability
+   });
+   ```
+4. Report your results including:
+   - Device model
+   - GPU model
+   - Performance metrics
+   - Any errors encountered
+
+### Adding GPU Tests to CI
+
+To improve CI testing coverage for Android GPU support:
+
+1. Add tests that verify GPU library loading
+2. Add tests that check shader compilation
+3. Create benchmark tests to compare CPU vs GPU performance
+4. Implement device-specific test configurations
 
 ## Example: Processing Tool Calls
 
@@ -242,3 +322,6 @@ if (response.choices?.[0]?.finish_reason === 'tool_calls' || response.tool_calls
     }
   }
 } 
+```
+
+For more detailed TypeScript definitions, see [NativeLlamaCppRn.ts](./src/specs/NativeLlamaCppRn.ts).
