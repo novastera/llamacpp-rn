@@ -172,6 +172,11 @@ jobs:
           # Get Android NDK path
           NDK_PATH=$ANDROID_HOME/ndk/27.2.12479018
           
+          # Create required directories to avoid cache errors
+          mkdir -p prebuilt/gpu
+          mkdir -p prebuilt/libs/external/vulkan
+          mkdir -p prebuilt/libs/external/opencl
+          
           # Install Vulkan development packages
           echo "Installing Vulkan development packages..."
           sudo apt-get update

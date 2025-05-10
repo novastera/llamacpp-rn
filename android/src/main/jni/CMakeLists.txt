@@ -75,6 +75,11 @@ set(FBJNI_HEADERS_DIRS
     "${REACT_ANDROID_DIR}/../ReactCommon/jsi"
     "${REACT_ANDROID_DIR}/src/main/jni/react/turbomodule"
     "${REACT_ANDROID_DIR}/src/main/jni/react/jni"
+    "${RN_DIR}/ReactAndroid/src/main/jni/first-party/fbjni/headers"
+    "${RN_DIR}/node_modules/react-native/ReactAndroid/src/main/jni/first-party/fbjni/headers"
+    "${RN_DIR}/../node_modules/react-native/ReactAndroid/src/main/jni/first-party/fbjni/headers"
+    "${MODULE_ROOT}/../../node_modules/react-native/ReactAndroid/src/main/jni/first-party/fbjni/headers"
+    "${MODULE_ROOT}/../node_modules/react-native/ReactAndroid/src/main/jni/first-party/fbjni/headers"
 )
 
 # Get the ABI from CMAKE_ANDROID_ARCH_ABI

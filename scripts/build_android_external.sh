@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Suppress getenv warnings on newer Linux distributions
+export CFLAGS="-Wno-gnu-get-env"
+
 # Get the absolute path of the script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Get project root directory (one level up from script dir)
@@ -754,6 +757,32 @@ FAILED_ABIS=()
 
 for ABI in "${ABIS[@]}"; do
   echo -e "${YELLOW}Starting build for $ABI...${NC}"
+  
+  # Clean up any previously malformed toolchain files before building
+  TOOLCHAIN_FILE="$PREBUILT_BUILD_DIR/$ABI/android-custom.toolchain.cmake"
+  HOST_TOOLCHAIN_FILE="$PREBUILT_BUILD_DIR/$ABI/host-toolchain.cmake"
+  
+  # Check if they exist and fix or remove them if problematic
+  if [ -f "$TOOLCHAIN_FILE" ]; then
+    # Check if the file has any malformed content (empty lines causing syntax errors)
+    if grep -q "endif()" "$TOOLCHAIN_FILE" && grep -q -P "endif\(\)\s*\n\s*\n" "$TOOLCHAIN_FILE"; then
+      echo -e "${YELLOW}Found potentially problematic toolchain file, fixing...${NC}"
+      # Fix the file by removing empty lines after endif()
+      sed -i.bak 's/endif()[ \t]*$/endif()/g' "$TOOLCHAIN_FILE"
+      rm -f "${TOOLCHAIN_FILE}.bak"
+    fi
+  fi
+  
+  if [ -f "$HOST_TOOLCHAIN_FILE" ]; then
+    # Check if the file has any malformed content
+    if grep -q -P "endif\(\)\s*\n\s*\n" "$HOST_TOOLCHAIN_FILE"; then
+      echo -e "${YELLOW}Found potentially problematic host toolchain file, fixing...${NC}"
+      # Fix the file by removing empty lines after endif()
+      sed -i.bak 's/endif()[ \t]*$/endif()/g' "$HOST_TOOLCHAIN_FILE"
+      rm -f "${HOST_TOOLCHAIN_FILE}.bak"
+    fi
+  fi
+  
   build_for_abi "$ABI"
   if [ $? -ne 0 ]; then
     BUILD_SUCCESS=false
