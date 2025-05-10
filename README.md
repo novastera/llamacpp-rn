@@ -17,21 +17,44 @@ A React Native wrapper for [llama.cpp](https://github.com/ggml-org/llama.cpp) fo
 - Metal support on iOS
 - OpenCL/Vulkan support on Android (in progress)
 - Automatic CPU/GPU detection
-- Chat completion with templates
+- Chat completion with templates (including Jinja template support)
 - Embeddings generation
 - Function/tool calling support
+- RoPE parameters customization
+- YaRN parameters for extended context lengths
 
 ## What Needs Help
 
 We welcome contributions, especially in these areas:
 
-1. **Tool Support**: The tool calling functionality needs improvement to better handle complex interactions
-2. **Testing**: 
+1. **Android GPU Testing**: 
+   - Testing on a variety of Android devices with different GPUs
+   - Verifying OpenCL and Vulkan acceleration on real hardware
+   - Performance profiling and optimization for mobile GPUs
+   - Adding automated GPU detection tests
+
+2. **CI Improvements**:
+   - Adding automated Android GPU tests to CI pipeline
+   - Implementing device-specific testing strategies
+   - Adding performance benchmarks to CI
+
+3. **Tool Support**: 
+   - Improving tool calling functionality for complex interactions
+   - Better JSON validation and error handling
+
+4. **Testing**: 
    - Automated testing using the example project
-   - Testing on GPU-enabled Android devices
    - More comprehensive unit tests
-3. **Documentation**: Improving examples and usage guides
-4. **Performance**: Optimizing resource usage on different devices
+   - Cross-device compatibility tests
+
+5. **Documentation**: 
+   - Improving examples and usage guides
+   - More detailed performance considerations
+
+6. **Performance**: 
+   - Optimizing resource usage on different devices
+   - Memory management improvements
+   - Startup time optimization
 
 If you're interested in helping with any of these areas, please check our [Contributing Guide](./CONTRIBUTING.md).
 
@@ -63,6 +86,33 @@ const result = await context.completion({
 });
 
 console.log('Response:', result.text);
+```
+
+### Chat Completion
+
+```typescript
+import { initLlama } from '@novastera-oss/llamacpp-rn';
+
+// Initialize the model
+const context = await initLlama({
+  model: 'path/to/model.gguf',
+  n_ctx: 4096,
+  n_batch: 512,
+  use_jinja: true  // Enable Jinja template parsing
+});
+
+// Chat completion with messages
+const result = await context.completion({
+  messages: [
+    { role: 'system', content: 'You are a helpful assistant.' },
+    { role: 'user', content: 'Tell me about quantum computing.' }
+  ],
+  temperature: 0.7,
+  top_p: 0.95
+});
+
+console.log('Response:', result.text);
+// For OpenAI-compatible format: result.choices[0].message.content
 ```
 
 ### Chat with Tool Calling
@@ -126,12 +176,25 @@ if (response.choices?.[0]?.finish_reason === 'tool_calls' || response.tool_calls
 }
 ```
 
-## Documentation
+### Generating Embeddings
 
-- [Interface Documentation](./INTERFACE.md) - Detailed API interfaces
-- [Android GPU Support](./android/README.md) - Information about GPU acceleration on Android
-- [Example App](./example/) - Working example with common use cases
-- [Contributing Guide](./CONTRIBUTING.md) - How to help improve the library
+```typescript
+import { initLlama } from '@novastera-oss/llamacpp-rn';
+
+// Initialize the model in embedding mode
+const context = await initLlama({
+  model: 'path/to/embedding-model.gguf',
+  embedding: true,
+  n_ctx: 2048
+});
+
+// Generate embeddings
+const embeddingResponse = await context.embedding({
+  input: "This is a sample text to embed"
+});
+
+console.log('Embedding:', embeddingResponse.data[0].embedding);
+```
 
 ## Model Path Handling
 
@@ -144,6 +207,13 @@ The module accepts different path formats depending on the platform:
 ### Android
 - Asset path: `asset:/models/model.gguf`
 - File path: `file:///path/to/model.gguf`
+
+## Documentation
+
+- [Interface Documentation](./INTERFACE.md) - Detailed API interfaces
+- [Android GPU Support](./android/README.md) - Information about GPU acceleration on Android
+- [Example App](./example/) - Working example with common use cases
+- [Contributing Guide](./CONTRIBUTING.md) - How to help improve the library
 
 ## About
 
