@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Suppress getenv warnings on newer Linux distributions
+export CFLAGS="-Wno-gnu-get-env"
+
 # Get the absolute path of the script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Get project root directory (one level up from script dir)
@@ -420,6 +423,35 @@ if [ "$BUILD_VULKAN" = true ]; then
     
     # Clean up
     rm "$TMP_SHADER_FILE"
+  fi
+else
+  echo -e "${YELLOW}Vulkan support is disabled${NC}"
+  
+  # Clean up any existing Vulkan-related files to avoid issues with CMake
+  echo -e "${YELLOW}Cleaning up any existing Vulkan-related build files...${NC}"
+  
+  # Check if any previous build directories exist
+  if [ -d "$PREBUILT_DIR/build-android" ]; then
+    for ABI in "${ABIS[@]}"; do
+      BUILD_DIR="$PREBUILT_DIR/build-android/$ABI"
+      
+      # Remove any Vulkan-related CMake files that might cause issues
+      if [ -f "$BUILD_DIR/host-toolchain.cmake" ]; then
+        echo -e "${YELLOW}Removing existing host-toolchain.cmake for $ABI${NC}"
+        rm -f "$BUILD_DIR/host-toolchain.cmake"
+      fi
+      
+      if [ -f "$BUILD_DIR/android-custom.toolchain.cmake" ]; then
+        echo -e "${YELLOW}Removing existing android-custom.toolchain.cmake for $ABI${NC}"
+        rm -f "$BUILD_DIR/android-custom.toolchain.cmake"
+      fi
+      
+      # Remove any Vulkan flag files
+      if [ -f "$PREBUILT_GPU_DIR/$ABI/.vulkan_enabled" ]; then
+        echo -e "${YELLOW}Removing Vulkan enabled flag for $ABI${NC}"
+        rm -f "$PREBUILT_GPU_DIR/$ABI/.vulkan_enabled"
+      fi
+    done
   fi
 fi
 
