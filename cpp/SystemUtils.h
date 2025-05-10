@@ -24,7 +24,7 @@ public:
     * Normalizes a file path by removing file:// prefix if present.
     * This is useful for handling paths that might come from different sources.
     */
-  static std::string normalizeFilePath(const std::string& path);
+  static void normalizeFilePath(std::string& path);
 
   /**
     * Calculates the optimal number of GPU layers for model inference.
@@ -34,7 +34,7 @@ public:
     * - Model size and parameters
     * - Platform-specific optimizations
     * - Current quantization method
-    * 
+    *
     * @param model Pointer to an already loaded llama model
     * @return Optimal number of GPU layers (0 if GPU not supported)
     */
@@ -60,15 +60,15 @@ public:
     }
     return false;
   }
-  
+
   // Specialized version for std::string
   static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, std::string& outValue);
-  
+
   // Specialized version for bool
   static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, bool& outValue);
-  
+
   // Specialized version for vector
   static bool setIfExists(jsi::Runtime& rt, const jsi::Object& options, const std::string& key, std::vector<jsi::Value>& outValue);
 };
 
-} // namespace facebook::react 
+} // namespace facebook::react

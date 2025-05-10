@@ -58,12 +58,12 @@ struct ToolCall {
 
 /**
  * LlamaCppModel - A JSI wrapper class around llama.cpp functionality
- * 
+ *
  * This class manages an instance of a llama.cpp model and provides methods for:
  * - Text completion and chat completion
  * - Tokenization and detokenization
  * - Embedding generation
- * 
+ *
  * It leverages native llama.cpp functionality where possible rather than reimplementing it:
  * - Uses common_chat_parse for parsing structured responses (tool calls)
  * - Uses llama_get_embeddings for embedding extraction
@@ -97,11 +97,11 @@ public:
    */
   bool shouldStopCompletion() const;
   void setShouldStopCompletion(bool value);
-  
+
   /**
    * Core completion method that can be called internally
    * Uses run_completion and run_chat_completion from llama.cpp
-   * 
+   *
    * @param options CompletionOptions with all parameters
    * @param partialCallback Callback for streaming tokens
    * @param runtime Pointer to JSI runtime for callbacks
@@ -159,4 +159,4 @@ private:
   bool is_predicting_;
 };
 
-} // namespace facebook::react 
+} // namespace facebook::react

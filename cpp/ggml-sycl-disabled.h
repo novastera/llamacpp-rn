@@ -34,4 +34,4 @@ namespace sycl {
 }
 
 // This file is included instead of <sycl/sycl.hpp>
-// It serves as a stub to allow compilation without SYCL support 
+// It serves as a stub to allow compilation without SYCL support
