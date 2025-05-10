@@ -4,16 +4,26 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
 # Define the library name
 project(llamacpprn)
 
-# Enable optimizations for Release builds
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Ofast -ffast-math -DNDEBUG")
-set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Ofast -ffast-math -DNDEBUG")
+# Set package version for proper versioning
+set(PACKAGE_VERSION "1.0.0" CACHE STRING "Package version")
+
+# Print system info for debugging
+message(STATUS "Building for Android with ABI: ${ANDROID_ABI}")
+message(STATUS "Android SDK version: ${ANDROID_PLATFORM}")
+message(STATUS "Android NDK: ${ANDROID_NDK}")
+
+# Enable optimizations for Release builds - simplified for CI compatibility
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -DNDEBUG")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -DNDEBUG")
+endif()
 
 # Define the RCT_NEW_ARCH_ENABLED flag
 add_definitions(-DRCT_NEW_ARCH_ENABLED=1)
 
 # Get the path to the module root - two parent directories up from the jni directory
 get_filename_component(MODULE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
-# Use a more reliable way to get the cpp directory - it's directly in the module root
+# Get the cpp directory - it's directly in the module root
 get_filename_component(CPP_DIR "${MODULE_ROOT}/../../cpp" ABSOLUTE)
 
 # Double check if the CPP_DIR exists, if not try a direct path
@@ -28,19 +38,14 @@ endif()
 message(STATUS "Module root: ${MODULE_ROOT}")
 message(STATUS "CPP directory: ${CPP_DIR}")
 
-# Option to enable OpenCL support
-option(LLAMACPPRN_OPENCL "Enable OpenCL GPU acceleration for compatible devices" ON)
-
-# Option to enable Vulkan support
-option(LLAMACPPRN_VULKAN "Enable Vulkan GPU acceleration for compatible devices" ON)
-
-# We always build from source for Android now
-set(rnllamaBuildFromSource "true")
+# Options to enable GPU acceleration
+option(LLAMACPPRN_OPENCL "Enable OpenCL GPU acceleration" ON)
+option(LLAMACPPRN_VULKAN "Enable Vulkan GPU acceleration" ON)
 
 # Define the path to llama.cpp directory
 set(LLAMA_CPP_DIR "${CPP_DIR}/llama.cpp")
 
-# Define React Native paths - using multiple possible locations
+# Define React Native paths
 set(POSSIBLE_RN_DIRS
     "${MODULE_ROOT}/../../node_modules/react-native"
     "${MODULE_ROOT}/../node_modules/react-native"
@@ -72,15 +77,14 @@ set(FBJNI_HEADERS_DIRS
     "${REACT_ANDROID_DIR}/src/main/jni/react/jni"
 )
 
-# Get the ABI from the CMAKE_ANDROID_ARCH_ABI which is set by Android toolchain
+# Get the ABI from CMAKE_ANDROID_ARCH_ABI
 if(DEFINED CMAKE_ANDROID_ARCH_ABI)
     set(ANDROID_ABI ${CMAKE_ANDROID_ARCH_ABI})
-    message(STATUS "Using ABI from toolchain: ${ANDROID_ABI}")
 else()
     # Fallback to a default if not set
     set(ANDROID_ABI "arm64-v8a")
-    message(STATUS "ABI not defined in toolchain, using default: ${ANDROID_ABI}")
 endif()
+message(STATUS "Using ABI: ${ANDROID_ABI}")
 
 # Check for GPU support flags in jniLibs directory
 set(JNI_LIBS_DIR "${MODULE_ROOT}/src/main/jniLibs/${ANDROID_ABI}")
@@ -99,177 +103,48 @@ if(EXISTS "${JNI_LIBS_DIR}/.vulkan_enabled")
     message(STATUS "Vulkan support enabled via flag in jniLibs")
 endif()
 
-# Override OpenCL option based on flag
-if(OPENCL_ENABLED)
-    set(LLAMACPPRN_OPENCL ON)
-    message(STATUS "OpenCL enabled based on flag in jniLibs")
-endif()
-
-# Override Vulkan option based on flag
-if(VULKAN_ENABLED)
-    set(LLAMACPPRN_VULKAN ON)
-    message(STATUS "Vulkan enabled based on flag in jniLibs")
-endif()
-
-# Build llama.cpp from source
-message(STATUS "Building llama.cpp from source for Android")
-
-# Set LLAMA_CPP options
+# Set LLAMA_CPP options - simplified for CI compatibility
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "llama.cpp: build examples" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "llama.cpp: build server" FORCE)
 set(BUILD_SHARED_LIBS ON CACHE BOOL "llama.cpp: build shared libs" FORCE)
 set(LLAMA_NATIVE OFF CACHE BOOL "llama.cpp: optimize for native CPU" FORCE)
 
-# Try to find device OpenCL library first
-if(LLAMACPPRN_OPENCL AND ${ANDROID_ABI} STREQUAL "arm64-v8a")
-    # Check for OpenCL on the device first - most Android devices with Adreno, Mali, or PowerVR GPUs
-    # have their own vendor-specific OpenCL implementations
-    
-    message(STATUS "Looking for device OpenCL libraries...")
-    
-    # Common locations for vendor OpenCL libraries on Android devices
-    set(DEVICE_OPENCL_LIB_PATHS
-        "/system/lib64/libOpenCL.so",
-        "/system/vendor/lib64/libOpenCL.so",
-        "/system/vendor/lib64/egl/libGLES_mali.so",
-        "/system/vendor/lib64/libPVROCL.so",
-        "/data/data/org.pocl.libs/files/lib64/libpocl.so",
-        "/system/lib/libOpenCL.so",
-        "/system/vendor/lib/libOpenCL.so",
-        "/system/vendor/lib/egl/libGLES_mali.so",
-        "/system/vendor/lib/libPVROCL.so",
-        "/data/data/org.pocl.libs/files/lib/libpocl.so",
-        "/system/lib/egl/libq3dtools_adreno.so" # Qualcomm Adreno
-    )
-    
-    # Cache the preferred OpenCL library path (if found)
-    foreach(DEVICE_OPENCL_PATH ${DEVICE_OPENCL_LIB_PATHS})
-        if(EXISTS "${DEVICE_OPENCL_PATH}")
-            set(DEVICE_OPENCL_FOUND TRUE)
-            set(DEVICE_OPENCL_LIB_PATH "${DEVICE_OPENCL_PATH}")
-            message(STATUS "Found device OpenCL library: ${DEVICE_OPENCL_LIB_PATH}")
-            break()
-        endif()
-    endforeach()
-    
-    # We'll set up for an implementation that will dynamically load OpenCL
-    # This means we don't need to find the actual library at build time,
-    # but will load it at runtime based on what's available on the device
-    
-    # Set up OpenCL header paths - check both locations
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/opencl")
-        # CI/CD environment might have copied headers here
-        set(OPENCL_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/opencl")
-        message(STATUS "Using local OpenCL headers for CI/CD build")
-    else
-        # Development environment - use headers from llama.cpp
-        set(OPENCL_INCLUDE_DIRS "${LLAMA_CPP_DIR}/extra/OpenCL-Headers")
-        message(STATUS "Using llama.cpp OpenCL headers")
-    endif()
-    
-    # Enable CLBlast for llama.cpp
-    set(LLAMA_CLBLAST ON CACHE BOOL "llama.cpp: use CLBlast" FORCE)
-    
-    # Tell llama.cpp to dynamically load OpenCL libraries at runtime
-    set(LLAMA_CLBLAST_DLOAD ON CACHE BOOL "llama.cpp: dynamically load CLBlast" FORCE)
-    
-    message(STATUS "Configured for dynamic OpenCL loading - will detect at runtime")
-else()
-    message(STATUS "OpenCL disabled or unsupported architecture, using CPU-only")
-    set(LLAMA_CLBLAST OFF CACHE BOOL "llama.cpp: use CLBlast" FORCE)
-endif()
-
-# Try to find device Vulkan library
-if(LLAMACPPRN_VULKAN AND (${ANDROID_ABI} STREQUAL "arm64-v8a" OR ${ANDROID_ABI} STREQUAL "x86_64"))
-    message(STATUS "Looking for device Vulkan libraries...")
-    
-    # Common locations for Vulkan libraries on Android devices
-    set(DEVICE_VULKAN_LIB_PATHS
-        "/system/vendor/lib64/libvulkan.so"
-        "/system/lib64/libvulkan.so"
-        "/vendor/lib64/libvulkan.so"
-        "/vendor/lib64/hw/vulkan.*.so"  # Some devices use this format
-    )
-    
-    # Cache the preferred Vulkan library path (if found)
-    foreach(DEVICE_VULKAN_PATH ${DEVICE_VULKAN_LIB_PATHS})
-        if(EXISTS "${DEVICE_VULKAN_PATH}")
-            set(DEVICE_VULKAN_FOUND TRUE)
-            set(DEVICE_VULKAN_LIB_PATH "${DEVICE_VULKAN_PATH}")
-            message(STATUS "Found device Vulkan library: ${DEVICE_VULKAN_LIB_PATH}")
-            break()
-        endif()
-    endforeach()
-    
-    # Set up Vulkan header paths - check locations
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vulkan")
-        # CI/CD environment might have copied headers here
-        set(VULKAN_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/vulkan")
-        message(STATUS "Using local Vulkan headers for CI/CD build")
-    elseif(EXISTS "${LLAMA_CPP_DIR}/extra/Vulkan-Headers")
-        # Development environment - use headers from llama.cpp extras
-        set(VULKAN_INCLUDE_DIRS "${LLAMA_CPP_DIR}/extra/Vulkan-Headers/include")
-        message(STATUS "Using llama.cpp Vulkan headers")
-    else
-        # Try to use NDK Vulkan headers
-        set(VULKAN_INCLUDE_DIRS "${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include")
-        message(STATUS "Using NDK Vulkan headers")
-    endif()
-    
-    # Enable Vulkan for llama.cpp with Android platform flag
-    set(GGML_VULKAN ON CACHE BOOL "llama.cpp: use Vulkan" FORCE)
-    set(GGML_VULKAN_CHECK_RESULTS ON CACHE BOOL "llama.cpp: validate Vulkan results" FORCE)
-    set(VK_USE_PLATFORM_ANDROID_KHR ON CACHE BOOL "Use Android Vulkan platform" FORCE)
-    
-    message(STATUS "Configured Vulkan support - will detect at runtime")
-else()
-    message(STATUS "Vulkan disabled or unsupported architecture")
-    set(GGML_VULKAN OFF CACHE BOOL "llama.cpp: use Vulkan" FORCE)
-endif()
-
-# Optimizations for ARM64
+# Add basic optimizations for ARM64
 if(${ANDROID_ABI} STREQUAL "arm64-v8a")
-    # Enable ARM-specific optimizations
     set(LLAMA_BLAS ON CACHE BOOL "llama.cpp: use BLAS" FORCE)
     set(LLAMA_BLAS_VENDOR "OpenBLAS" CACHE STRING "llama.cpp: BLAS vendor" FORCE)
-    
-    # Enable ARM NEON intrinsics for better performance
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv8-a+simd")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8-a+simd")
+    add_definitions(-DGGML_USE_NEON=1)
 endif()
+
+# OpenCL support - simplified for CI compatibility
+if(LLAMACPPRN_OPENCL AND OPENCL_ENABLED)
+    # Set up for dynamic loading of OpenCL
+    set(GGML_CLBLAST ON CACHE BOOL "llama.cpp: use CLBlast" FORCE)
+    set(GGML_CLBLAST_DLOAD ON CACHE BOOL "llama.cpp: dynamically load CLBlast" FORCE)
+    message(STATUS "OpenCL support enabled")
+else()
+    set(GGML_CLBLAST OFF CACHE BOOL "llama.cpp: use CLBlast" FORCE)
+    message(STATUS "OpenCL support disabled")
+endif()
+
+# Vulkan support - simplified for CI compatibility
+if(LLAMACPPRN_VULKAN AND VULKAN_ENABLED)
+    set(GGML_VULKAN ON CACHE BOOL "llama.cpp: use Vulkan" FORCE)
+    set(GGML_VULKAN_DYNAMIC_LOADING ON CACHE BOOL "llama.cpp: dynamically load Vulkan" FORCE)
+    set(VK_USE_PLATFORM_ANDROID_KHR ON CACHE BOOL "Use Android Vulkan platform" FORCE)
+    message(STATUS "Vulkan support enabled")
+else()
+    set(GGML_VULKAN OFF CACHE BOOL "llama.cpp: use Vulkan" FORCE)
+    message(STATUS "Vulkan support disabled")
+endif()
+
+# Memory efficiency options
+set(GGML_USE_TINYBLAS ON CACHE BOOL "llama.cpp: use tiny BLAS" FORCE)
 
 # Include llama.cpp as a subdirectory
 add_subdirectory(${LLAMA_CPP_DIR} llama.cpp)
 
-# Define paths to search for the prebuilt llama.so library
-set(PREBUILT_LLAMA_PATHS
-    "${MODULE_ROOT}/jniLibs/${ANDROID_ABI}/libllama.so"
-    "${MODULE_ROOT}/src/main/jniLibs/${ANDROID_ABI}/libllama.so"
-    "${MODULE_ROOT}/../jniLibs/${ANDROID_ABI}/libllama.so"
-)
-
-# Find the prebuilt llama.so library
-set(PREBUILT_LLAMA_LIB "")
-foreach(path ${PREBUILT_LLAMA_PATHS})
-    if(EXISTS "${path}")
-        set(PREBUILT_LLAMA_LIB "${path}")
-        message(STATUS "Found prebuilt llama library at: ${PREBUILT_LLAMA_LIB}")
-        break()
-    endif()
-endforeach()
-
-# Get the correct path to the include directory - corrected path
-set(MAIN_INCLUDE_DIR "${MODULE_ROOT}/main/cpp/include")
-if(NOT EXISTS "${MAIN_INCLUDE_DIR}")
-    set(MAIN_INCLUDE_DIR "${MODULE_ROOT}/cpp/include")
-    if(NOT EXISTS "${MAIN_INCLUDE_DIR}")
-        set(MAIN_INCLUDE_DIR "${MODULE_ROOT}/src/main/cpp/include")
-    endif()
-endif()
-
-message(STATUS "Using include directory: ${MAIN_INCLUDE_DIR}")
-
-# Source files with explicit full paths to avoid resolution issues
+# Source files
 set(SOURCE_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/OnLoad.cpp
     ${CPP_DIR}/LlamaCppRnModule.cpp
@@ -278,7 +153,7 @@ set(SOURCE_FILES
     ${CPP_DIR}/rn-completion.cpp
 )
 
-# Additional llama.cpp common files needed for json-schema-to-grammar and chat functionality
+# Additional llama.cpp common files
 set(LLAMA_CPP_COMMON_SOURCES
     ${LLAMA_CPP_DIR}/common/build-info.cpp
     ${LLAMA_CPP_DIR}/common/json-schema-to-grammar.cpp
@@ -299,18 +174,10 @@ set(LLAMA_CPP_COMMON_SOURCES
     ${LLAMA_CPP_DIR}/common/speculative.h
 )
 
-# Verify each source file exists
-foreach(src_file ${SOURCE_FILES})
-    if(NOT EXISTS "${src_file}")
-        message(WARNING "Source file not found: ${src_file}")
-    endif()
-endforeach()
-
 # Create the include paths
 set(INCLUDE_DIRECTORIES
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CPP_DIR}
-    ${MAIN_INCLUDE_DIR}
     ${LLAMA_CPP_DIR}
     ${LLAMA_CPP_DIR}/src
     ${LLAMA_CPP_DIR}/common
@@ -329,27 +196,6 @@ set(INCLUDE_DIRECTORIES
     ${REACT_ANDROID_DIR}/src/main/java/com/facebook/react/turbomodule/core/jni
 )
 
-# Add OpenCL includes if enabled
-if(LLAMACPPRN_OPENCL AND ${ANDROID_ABI} STREQUAL "arm64-v8a")
-    list(APPEND INCLUDE_DIRECTORIES ${OPENCL_INCLUDE_DIRS})
-    
-    # Add definition to enable OpenCL-specific code
-    add_definitions(-DLLAMACPPRN_OPENCL_ENABLED=1)
-else()
-    add_definitions(-DLLAMACPPRN_OPENCL_ENABLED=0)
-endif()
-
-# Add Vulkan includes if enabled
-if(LLAMACPPRN_VULKAN AND (${ANDROID_ABI} STREQUAL "arm64-v8a" OR ${ANDROID_ABI} STREQUAL "x86_64"))
-    list(APPEND INCLUDE_DIRECTORIES ${VULKAN_INCLUDE_DIRS})
-    
-    # Add definition to enable Vulkan-specific code
-    add_definitions(-DLLAMACPPRN_VULKAN_ENABLED=1)
-    add_definitions(-DVK_USE_PLATFORM_ANDROID_KHR=1)
-else()
-    add_definitions(-DLLAMACPPRN_VULKAN_ENABLED=0)
-endif()
-
 # Add all possible FBJNI header directories
 foreach(fbjni_dir ${FBJNI_HEADERS_DIRS})
     if(EXISTS "${fbjni_dir}")
@@ -360,6 +206,20 @@ endforeach()
 
 # Include all the directories
 include_directories(${INCLUDE_DIRECTORIES})
+
+# Define preprocessor flags for GPU features
+if(OPENCL_ENABLED)
+    add_definitions(-DLLAMACPPRN_OPENCL_ENABLED=1)
+else()
+    add_definitions(-DLLAMACPPRN_OPENCL_ENABLED=0)
+endif()
+
+if(VULKAN_ENABLED)
+    add_definitions(-DLLAMACPPRN_VULKAN_ENABLED=1)
+    add_definitions(-DVK_USE_PLATFORM_ANDROID_KHR=1)
+else()
+    add_definitions(-DLLAMACPPRN_VULKAN_ENABLED=0)
+endif()
 
 # Create our module library
 add_library(${CMAKE_PROJECT_NAME} SHARED 
@@ -374,26 +234,11 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
 find_library(log-lib log)
 find_library(android-lib android)
 
-# Link against the prebuilt llama library if it exists
-if(PREBUILT_LLAMA_LIB)
-    message(STATUS "Found prebuilt llama library, linking against it: ${PREBUILT_LLAMA_LIB}")
-    
-    # Add the prebuilt library
-    add_library(llama SHARED IMPORTED)
-    set_target_properties(llama PROPERTIES IMPORTED_LOCATION "${PREBUILT_LLAMA_LIB}")
-    
-    # Define macros to ensure correct API usage
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE LLAMA_SHARED)
-    
-    # Link against the imported library
-    target_link_libraries(${CMAKE_PROJECT_NAME} llama)
-else()
-    # We're building from source, so we don't need to link against a prebuilt library
-    target_link_libraries(${CMAKE_PROJECT_NAME} llama)
-endif()
+# Link against llama library
+target_link_libraries(${CMAKE_PROJECT_NAME} llama)
 
 # Check for additional GPU-specific shared libraries in jniLibs
-if(LLAMACPPRN_OPENCL AND OPENCL_ENABLED)
+if(OPENCL_ENABLED)
     # Check for prebuilt OpenCL lib
     set(GGML_OPENCL_LIB "${JNI_LIBS_DIR}/libggml-opencl.so")
     if(EXISTS "${GGML_OPENCL_LIB}")
@@ -404,7 +249,7 @@ if(LLAMACPPRN_OPENCL AND OPENCL_ENABLED)
     endif()
 endif()
 
-if(LLAMACPPRN_VULKAN AND VULKAN_ENABLED)
+if(VULKAN_ENABLED)
     # Check for prebuilt Vulkan lib
     set(GGML_VULKAN_LIB "${JNI_LIBS_DIR}/libggml-vulkan.so")
     if(EXISTS "${GGML_VULKAN_LIB}")
@@ -421,13 +266,12 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     ${android-lib}
 )
 
-# Set compiler flags for maximum performance
+# Set compiler flags - simplified for CI compatibility
 target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
     -O3
     -fvisibility=hidden
     -ffunction-sections
     -fdata-sections
-    $<$<CONFIG:Release>:-Ofast -ffast-math>
 )
 
 # Set C++ standard
@@ -437,4 +281,15 @@ set_target_properties(
     CXX_STANDARD_REQUIRED ON
     POSITION_INDEPENDENT_CODE ON
 )
+
+# Write a report file
+set(REPORT_FILE "${CMAKE_BINARY_DIR}/build_report.txt")
+file(WRITE ${REPORT_FILE} "LlamaCppRn Build Report\n")
+file(APPEND ${REPORT_FILE} "====================\n\n")
+file(APPEND ${REPORT_FILE} "Android ABI: ${ANDROID_ABI}\n")
+file(APPEND ${REPORT_FILE} "OpenCL enabled: ${OPENCL_ENABLED}\n")
+file(APPEND ${REPORT_FILE} "Vulkan enabled: ${VULKAN_ENABLED}\n")
+file(APPEND ${REPORT_FILE} "BLAS enabled: ${LLAMA_BLAS}\n")
+file(APPEND ${REPORT_FILE} "Compiler flags:\n")
+file(APPEND ${REPORT_FILE} "  CXX flags: ${CMAKE_CXX_FLAGS}\n")
 
