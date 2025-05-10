@@ -50,7 +50,9 @@ Pod::Spec.new do |s|
     "SWIFT_OPTIMIZATION_LEVEL" => "-O",
     "ENABLE_BITCODE" => "NO",
     "DEFINES_MODULE" => "YES",
-    "OTHER_LDFLAGS" => "$(inherited)"
+    "OTHER_LDFLAGS" => "$(inherited)",
+    # These preprocessor macros ensure TurboModule registration works correctly
+    "GCC_PREPROCESSOR_DEFINITIONS" => ["$(inherited)", "RCT_NEW_ARCH_ENABLED=1"]
   }
 
   # Add user_target_xcconfig to propagate linker flags

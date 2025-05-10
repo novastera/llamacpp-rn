@@ -9,7 +9,8 @@
 
 @implementation LlamaCppRnModule
 
-RCT_EXPORT_MODULE()
+// Only use ONE of these registration macros - the NO_LOAD version is preferred for TurboModules
+RCT_EXPORT_MODULE_NO_LOAD(LlamaCppRn, LlamaCppRnModule)
 
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
     (const facebook::react::ObjCTurboModule::InitParams &)params
