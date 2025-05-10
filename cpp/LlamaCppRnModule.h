@@ -24,8 +24,7 @@ public:
   virtual ~LlamaCppRn() = default;
 
   // Required for TurboModule system
-  static std::shared_ptr<TurboModule> create(
-      std::shared_ptr<CallInvoker> jsInvoker);
+  static std::shared_ptr<TurboModule> create(std::shared_ptr<CallInvoker> jsInvoker);
 
   // JavaScript accessible methods
   jsi::Value initLlama(jsi::Runtime &runtime, jsi::Object options);
@@ -34,7 +33,6 @@ public:
 private:
   // Helper methods
   jsi::Object createModelObject(jsi::Runtime& runtime, rn_llama_context* rn_ctx);
-  std::string normalizeFilePath(const std::string& path);
 
 private:
   // Module state
@@ -42,4 +40,4 @@ private:
   std::unique_ptr<rn_llama_context> rn_ctx_;
 };
 
-} // namespace facebook::react 
+} // namespace facebook::react

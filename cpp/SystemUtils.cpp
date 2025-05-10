@@ -27,7 +27,7 @@ constexpr int64_t DEFAULT_FALLBACK_MEMORY = 2LL * 1024 * 1024 * 1024; // 2GB def
 
 int SystemUtils::getOptimalThreadCount() {
     int cpuCores = std::thread::hardware_concurrency();
-    
+
     if (cpuCores <= 1) {
         return 1;
     } else if (cpuCores < 4) {
@@ -37,18 +37,17 @@ int SystemUtils::getOptimalThreadCount() {
     }
 }
 
-std::string SystemUtils::normalizeFilePath(const std::string& path) {
+void SystemUtils::normalizeFilePath(std::string& path) {
     // Remove file:// prefix if present
     if (path.substr(0, 7) == "file://") {
-        return path.substr(7);
+        path = path.substr(7);
     }
-    return path;
 }
 
 // Get total physical memory of the device in bytes
 int64_t getTotalPhysicalMemory() {
     int64_t total_memory = 0;
-    
+
 #if defined(__APPLE__) && TARGET_OS_IPHONE
     // For iOS devices
     int mib[2] = {CTL_HW, HW_MEMSIZE};
@@ -63,8 +62,8 @@ int64_t getTotalPhysicalMemory() {
             static_cast<uint64_t>(memInfo.totalram) * memInfo.mem_unit < (1ULL << 63)) {
             total_memory = static_cast<int64_t>(memInfo.totalram) * memInfo.mem_unit;
         }
-    } 
-    
+    }
+
     // Fallback: Parse /proc/meminfo if sysinfo failed or returned invalid values
     if (total_memory <= 0) {
         std::ifstream meminfo("/proc/meminfo");
@@ -93,7 +92,7 @@ int64_t getTotalPhysicalMemory() {
         total_memory = DEFAULT_FALLBACK_MEMORY;
 #endif
     }
-    
+
     return total_memory;
 }
 
@@ -101,17 +100,17 @@ int SystemUtils::getOptimalGpuLayers(struct llama_model* model) {
     // Get model parameters
     const int n_layer = llama_model_n_layer(model);
     const int64_t n_params = llama_model_n_params(model);
-    
+
     // Estimate bytes per layer based on model parameters
     int64_t bytes_per_layer = (n_params * sizeof(float)) / n_layer;
-    
+
     // Get actual device memory
     int64_t total_memory = getTotalPhysicalMemory();
-    
+
     // On mobile devices, we don't have dedicated VRAM - it's shared with system RAM
     // Estimate available GPU memory as a percentage of total memory
     int64_t available_vram = 0;
-    
+
 #if defined(__APPLE__) && TARGET_OS_IPHONE
     // iOS devices - use 25% of total RAM
     available_vram = total_memory / 4;
@@ -124,10 +123,10 @@ int SystemUtils::getOptimalGpuLayers(struct llama_model* model) {
     // We use a higher percentage since we're already being conservative with the available_vram estimate
     int64_t target_vram = (available_vram * 80) / 100;
     int possible_layers = target_vram / bytes_per_layer;
-    
+
     // Clamp to total layers and ensure we don't go below 1
     int optimal_layers = std::max(1, std::min(possible_layers, n_layer));
-       
+
     return optimal_layers;
 }
 
@@ -178,4 +177,4 @@ bool SystemUtils::setIfExists(jsi::Runtime& rt, const jsi::Object& options, cons
   return false;
 }
 
-} // namespace facebook::react 
+} // namespace facebook::react
