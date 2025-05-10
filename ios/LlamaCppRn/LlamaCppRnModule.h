@@ -17,3 +17,6 @@ class TurboModule;
     jsInvoker:(std::shared_ptr<facebook::react::CallInvoker>)jsInvoker;
 
 @end
+
+// We're using RCT_EXPORT_MODULE_NO_LOAD in the .mm file, so we don't need this additional registration
+// LLAMACPPRN_REGISTER_TURBO_MODULE()
