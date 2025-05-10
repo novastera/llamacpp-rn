@@ -20,8 +20,6 @@ A React Native wrapper for [llama.cpp](https://github.com/ggml-org/llama.cpp) fo
 - Chat completion with templates (including Jinja template support)
 - Embeddings generation
 - Function/tool calling support
-- RoPE parameters customization
-- YaRN parameters for extended context lengths
 
 ## What Needs Help
 

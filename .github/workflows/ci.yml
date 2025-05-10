@@ -548,19 +548,6 @@ jobs:
             echo "✅ Version '$VERSION' follows semver format"
           fi
       
-      - name: Verify package scope
-        run: |
-          # Check package name in package.json
-          PACKAGE_NAME=$(node -p "require('./package.json').name")
-          if [[ "$PACKAGE_NAME" != "@novastera-oss/llamacpp-rn" ]]; then
-            echo "⚠️ Updating package name to @novastera-oss/llamacpp-rn"
-            # Use jq to update package.json
-            jq '.name = "@novastera-oss/llamacpp-rn"' package.json > package.json.tmp
-            mv package.json.tmp package.json
-          else
-            echo "✅ Package name is already correctly set to @novastera-oss/llamacpp-rn"
-          fi
-      
       - name: Verify package content
         run: |
           echo "Checking files to be included in the package..."
