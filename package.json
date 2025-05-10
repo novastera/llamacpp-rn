@@ -48,7 +48,7 @@
     "typescript:example": "cd example && tsc --noEmit",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
-    "prepare": "rimraf lib && tsc -p tsconfig.build.json",
+    "prepare": "npx rimraf lib && tsc -p tsconfig.build.json",
     "release": "release-it",
     "example": "npm --prefix example",
     "bootstrap": "npm --prefix example install && npm install && npm --prefix example run pods",
