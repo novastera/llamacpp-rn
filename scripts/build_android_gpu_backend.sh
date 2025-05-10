@@ -60,11 +60,11 @@ print_usage() {
   echo "Options:"
   echo "  --help                 Print this help message"
   echo "  --abi=[all|arm64-v8a|x86_64]  Specify which ABI to build for (default: all)"
-  echo "  --platform=[android|windows|macos|linux]  Specify target platform:" 
-  echo "                         - android: Build for Android target (default on all systems)"
-  echo "                         - linux: Build on Linux for Android (used in CI)"
-  echo "                         - macos: Build on macOS for Android (likely needs adjustments)"
-  echo "                         - windows: Build on Windows for Android (not fully tested)"
+  echo "  --platform=[android|windows|macos|linux]  Specify host OS platform:" 
+  echo "                         - android: Special Android-to-Android direct build (rare)"
+  echo "                         - linux: Build on Linux host for Android target (common in CI)"
+  echo "                         - macos: Build on macOS host for Android target"
+  echo "                         - windows: Build on Windows host for Android target"
   echo "  --no-opencl            Disable OpenCL GPU acceleration"
   echo "  --no-vulkan            Disable Vulkan GPU acceleration"
   echo "  --debug                Build in debug mode"
@@ -86,16 +86,17 @@ INSTALL_DEPS_ONLY=false  # Flag to only install dependencies
 CUSTOM_NDK_PATH=""
 CUSTOM_GLSLC_PATH=""
 
-# Auto-detect platform
+# Auto-detect host platform (the OS where we're building from)
 if [[ "$OSTYPE" == "darwin"* ]]; then
-  BUILD_PLATFORM="macos"
+  HOST_PLATFORM="macos"
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-  BUILD_PLATFORM="linux"
+  HOST_PLATFORM="linux"
 elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
-  BUILD_PLATFORM="windows"
+  HOST_PLATFORM="windows"
 else
-  BUILD_PLATFORM="android" # Default fallback
+  HOST_PLATFORM="linux" # Default fallback
 fi
+# Note: The target platform is always Android regardless of host platform
 
 # Parse arguments
 for arg in "$@"; do
@@ -108,7 +109,7 @@ for arg in "$@"; do
       BUILD_ABI="${arg#*=}"
       ;;
     --platform=*)
-      BUILD_PLATFORM="${arg#*=}"
+      HOST_PLATFORM="${arg#*=}"
       ;;
     --no-opencl)
       BUILD_OPENCL=false
@@ -149,7 +150,7 @@ if [ -n "$CUSTOM_NDK_PATH" ]; then
 fi
 
 echo -e "${YELLOW}Setting up external dependencies for Android GPU backends...${NC}"
-echo -e "${YELLOW}Target platform: $BUILD_PLATFORM${NC}"
+echo -e "${YELLOW}Host OS platform: $HOST_PLATFORM${NC}"
 echo -e "${YELLOW}Target ABI: $BUILD_ABI${NC}"
 
 # Create necessary directories
@@ -525,7 +526,7 @@ build_gpu_libs_for_abi() {
   fi
   
   # Add Android-specific flags
-  if [ "$BUILD_PLATFORM" = "android" ]; then
+  if [ "$HOST_PLATFORM" = "android" ]; then
     # Find Android NDK
     if [ -z "$ANDROID_NDK_HOME" ]; then
       if [ -n "$ANDROID_NDK_ROOT" ]; then
@@ -554,14 +555,14 @@ build_gpu_libs_for_abi() {
     if [ "$BUILD_VULKAN" = true ]; then
       CMAKE_FLAGS+=("-DVK_USE_PLATFORM_ANDROID_KHR=ON")
     fi
-  elif [ "$BUILD_PLATFORM" = "macos" ]; then
-    echo -e "${YELLOW}Building for macOS platform${NC}"
+  elif [ "$HOST_PLATFORM" = "macos" ]; then
+    echo -e "${YELLOW}Building on macOS host for Android target${NC}"
     # Add macOS-specific flags here if needed
-  elif [ "$BUILD_PLATFORM" = "windows" ]; then
-    echo -e "${YELLOW}Building for Windows platform${NC}"
+  elif [ "$HOST_PLATFORM" = "windows" ]; then
+    echo -e "${YELLOW}Building on Windows host for Android target${NC}"
     # Add Windows-specific flags here if needed
-  elif [ "$BUILD_PLATFORM" = "linux" ]; then
-    echo -e "${YELLOW}Building for Linux platform${NC}"
+  elif [ "$HOST_PLATFORM" = "linux" ]; then
+    echo -e "${YELLOW}Building on Linux host for Android target${NC}"
     # Add Linux-specific flags here if needed
   fi
   
@@ -671,7 +672,7 @@ fix_vulkan_build_issues() {
   echo -e "${YELLOW}Attempting to fix Vulkan build issues...${NC}"
   
   # Install Vulkan SDK if on Linux CI
-  if [[ "$BUILD_PLATFORM" == "linux" ]]; then
+  if [[ "$HOST_PLATFORM" == "linux" ]]; then
     echo -e "${YELLOW}Installing Vulkan SDK on Linux...${NC}"
     
     # Add LunarG repository
@@ -700,7 +701,7 @@ fix_vulkan_build_issues() {
     fi
     
     return 0
-  elif [[ "$BUILD_PLATFORM" == "macos" ]]; then
+  elif [[ "$HOST_PLATFORM" == "macos" ]]; then
     echo -e "${YELLOW}Installing Vulkan SDK on macOS using Homebrew...${NC}"
     brew install molten-vk vulkan-headers shaderc
     
@@ -713,7 +714,7 @@ fix_vulkan_build_issues() {
     
     return 0
   else
-    echo -e "${YELLOW}Platform $BUILD_PLATFORM not supported for automatic Vulkan SDK installation${NC}"
+    echo -e "${YELLOW}Platform $HOST_PLATFORM not supported for automatic Vulkan SDK installation${NC}"
     return 1
   fi
 }
@@ -721,7 +722,8 @@ fix_vulkan_build_issues() {
 # Create a manifest file to indicate build details
 MANIFEST_FILE="$PREBUILT_GPU_DIR/build-manifest.txt"
 echo "Build timestamp: $(date)" > "$MANIFEST_FILE"
-echo "Platform: $BUILD_PLATFORM" >> "$MANIFEST_FILE"
+echo "Host platform: $HOST_PLATFORM" >> "$MANIFEST_FILE"
+echo "Target platform: Android" >> "$MANIFEST_FILE"
 echo "OpenCL: $([ "$BUILD_OPENCL" = true ] && echo "enabled" || echo "disabled")" >> "$MANIFEST_FILE"
 echo "Vulkan: $([ "$BUILD_VULKAN" = true ] && echo "enabled" || echo "disabled")" >> "$MANIFEST_FILE"
 echo "Build type: $BUILD_TYPE" >> "$MANIFEST_FILE"
