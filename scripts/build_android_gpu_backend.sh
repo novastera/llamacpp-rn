@@ -246,82 +246,194 @@ setup_dependencies() {
   # Setup OpenCL dependencies
   echo -e "${YELLOW}Setting up OpenCL dependencies...${NC}"
 
-  # Verify OpenCL dependencies have been properly setup
-  if [ ! -d "$OPENCL_HEADERS_DIR" ]; then
-    echo -e "${YELLOW}OpenCL Headers not installed correctly. Installing manually...${NC}"
-    mkdir -p "$OPENCL_HEADERS_DIR"
-    # Use specific OpenCL 3.0 release tag to match build_android.sh
-    git clone --depth 1 --branch "$OPENCL_HEADERS_TAG" https://github.com/KhronosGroup/OpenCL-Headers.git "$OPENCL_HEADERS_DIR"
-  fi
-
-  if [ ! -d "$OPENCL_INCLUDE_DIR/CL" ]; then
-    echo -e "${YELLOW}OpenCL include directory not set up correctly. Creating manually...${NC}"
+  # Create OpenCL stub library with proper implementation instead of empty files
+  if [[ "$HOST_PLATFORM" == "linux" ]]; then
+    echo -e "${YELLOW}Setting up OpenCL on Linux host for Android target...${NC}"
+    
+    # Install needed packages for the host
+    sudo apt update -y || true
+    sudo apt install -y ocl-icd-libopencl1 ocl-icd-opencl-dev opencl-headers || true
+    
+    # First check if we already have the headers
+    if [ ! -d "$OPENCL_HEADERS_DIR" ]; then
+      echo -e "${YELLOW}Downloading OpenCL Headers...${NC}"
+      mkdir -p "$OPENCL_HEADERS_DIR"
+      # Use specific OpenCL 3.0 release tag to match build_android.sh
+      git clone --depth 1 --branch "$OPENCL_HEADERS_TAG" https://github.com/KhronosGroup/OpenCL-Headers.git "$OPENCL_HEADERS_DIR"
+    fi
+    
+    # Setup include directory
     mkdir -p "$OPENCL_INCLUDE_DIR"
     cp -r "$OPENCL_HEADERS_DIR/CL" "$OPENCL_INCLUDE_DIR/"
-  fi
-
-  # Instead of empty stub libraries, use the OpenCL ICD loader
-  # Check if we can install OpenCL ICD loader
-  if [[ "$HOST_PLATFORM" == "linux" ]]; then
-    sudo apt install -y ocl-icd-libopencl1 ocl-icd-opencl-dev opencl-headers
-    if [ -f "/usr/lib/x86_64-linux-gnu/libOpenCL.so" ]; then
-      # Ensure directories exist
-      mkdir -p "$OPENCL_LIB_DIR/arm64-v8a"
-      mkdir -p "$OPENCL_LIB_DIR/x86_64"
-      
-      # Copy the actual OpenCL library instead of an empty stub
-      cp "/usr/lib/x86_64-linux-gnu/libOpenCL.so" "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so"
-      cp "/usr/lib/x86_64-linux-gnu/libOpenCL.so" "$OPENCL_LIB_DIR/x86_64/libOpenCL.so"
-      echo -e "${GREEN}✅ Copied actual OpenCL libraries${NC}"
-    else
-      # Fall back to stub libraries if needed
-      mkdir -p "$OPENCL_LIB_DIR/arm64-v8a"
-      mkdir -p "$OPENCL_LIB_DIR/x86_64"
-      
-      if [ ! -f "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so" ]; then
-        echo -e "${YELLOW}Creating OpenCL shared library for arm64-v8a...${NC}"
-        # Create a minimal implementation instead of an empty file
-        cat > "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.c" << 'EOL'
-#include <CL/cl.h>
-cl_int clGetPlatformIDs(cl_uint num_entries, cl_platform_id *platforms, cl_uint *num_platforms) { return CL_DEVICE_NOT_FOUND; }
-cl_int clGetPlatformInfo(cl_platform_id platform, cl_platform_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret) { return CL_DEVICE_NOT_FOUND; }
-cl_int clGetDeviceIDs(cl_platform_id platform, cl_device_type device_type, cl_uint num_entries, cl_device_id *devices, cl_uint *num_devices) { return CL_DEVICE_NOT_FOUND; }
-cl_int clGetDeviceInfo(cl_device_id device, cl_device_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret) { return CL_DEVICE_NOT_FOUND; }
-cl_context clCreateContext(const cl_context_properties *properties, cl_uint num_devices, const cl_device_id *devices, void (CL_CALLBACK *pfn_notify)(const char *errinfo, const void *private_info, size_t cb, void *user_data), void *user_data, cl_int *errcode_ret) { if(errcode_ret) *errcode_ret = CL_DEVICE_NOT_FOUND; return NULL; }
-EOL
-        # Compile a simple shared library with the necessary symbols
-        ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang -shared -o "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so" "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.c" -I"$OPENCL_INCLUDE_DIR"
-      fi
-      
-      if [ ! -f "$OPENCL_LIB_DIR/x86_64/libOpenCL.so" ]; then
-        echo -e "${YELLOW}Creating OpenCL shared library for x86_64...${NC}"
-        # Create a minimal implementation instead of an empty file
-        cat > "$OPENCL_LIB_DIR/x86_64/libOpenCL.c" << 'EOL'
-#include <CL/cl.h>
-cl_int clGetPlatformIDs(cl_uint num_entries, cl_platform_id *platforms, cl_uint *num_platforms) { return CL_DEVICE_NOT_FOUND; }
-cl_int clGetPlatformInfo(cl_platform_id platform, cl_platform_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret) { return CL_DEVICE_NOT_FOUND; }
-cl_int clGetDeviceIDs(cl_platform_id platform, cl_device_type device_type, cl_uint num_entries, cl_device_id *devices, cl_uint *num_devices) { return CL_DEVICE_NOT_FOUND; }
-cl_int clGetDeviceInfo(cl_device_id device, cl_device_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret) { return CL_DEVICE_NOT_FOUND; }
-cl_context clCreateContext(const cl_context_properties *properties, cl_uint num_devices, const cl_device_id *devices, void (CL_CALLBACK *pfn_notify)(const char *errinfo, const void *private_info, size_t cb, void *user_data), void *user_data, cl_int *errcode_ret) { if(errcode_ret) *errcode_ret = CL_DEVICE_NOT_FOUND; return NULL; }
-EOL
-        # Compile a simple shared library with the necessary symbols
-        ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang -shared -o "$OPENCL_LIB_DIR/x86_64/libOpenCL.so" "$OPENCL_LIB_DIR/x86_64/libOpenCL.c" -I"$OPENCL_INCLUDE_DIR"
-      fi
-    fi
-  else
-    # On other platforms, at least create stub libraries with dummy implementations
+    
+    # Build minimal CL stub library with necessary symbols
+    echo -e "${YELLOW}Creating minimal OpenCL stub implementation...${NC}"
     mkdir -p "$OPENCL_LIB_DIR/arm64-v8a"
     mkdir -p "$OPENCL_LIB_DIR/x86_64"
     
-    if [ ! -f "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so" ]; then
-      echo -e "${YELLOW}Creating stub libOpenCL.so for arm64-v8a...${NC}"
-      touch "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so"
-    fi
+    # Create the stub implementation file
+    cat > "$PREBUILT_DIR/cl_stub.c" << 'EOL'
+    // Minimal OpenCL stub library for Android
+    #include <CL/cl.h>
+    #include <CL/cl_ext.h>
+    #include <dlfcn.h>
+    #include <stdlib.h>
+    #include <stdio.h>
+    #include <string.h>
 
-    if [ ! -f "$OPENCL_LIB_DIR/x86_64/libOpenCL.so" ]; then
-      echo -e "${YELLOW}Creating stub libOpenCL.so for x86_64...${NC}"
-      touch "$OPENCL_LIB_DIR/x86_64/libOpenCL.so"
+    // List of common paths where OpenCL drivers might be found on Android devices
+    static const char* const VENDOR_DRIVER_PATHS[] = {
+        "/vendor/lib64/libOpenCL.so",
+        "/vendor/lib64/egl/libGLES_mali.so",
+        "/system/vendor/lib64/libOpenCL.so", 
+        "/system/vendor/lib64/egl/libGLES_mali.so",
+        "/system/lib64/libOpenCL.so",
+        NULL
+    };
+
+    static void* opencl_handle = NULL;
+
+    static void load_opencl() {
+        if (opencl_handle) return;
+        
+        // Try environment variable first
+        const char* path = getenv("OPENCL_LIBRARY_PATH");
+        if (path) {
+            opencl_handle = dlopen(path, RTLD_LAZY | RTLD_GLOBAL);
+            if (opencl_handle) {
+                printf("Loaded OpenCL from environment variable: %s\n", path);
+                return;
+            }
+        }
+        
+        // Try known paths
+        for (const char* const* driver = VENDOR_DRIVER_PATHS; *driver != NULL; driver++) {
+            opencl_handle = dlopen(*driver, RTLD_LAZY | RTLD_GLOBAL);
+            if (opencl_handle) {
+                printf("Loaded OpenCL driver from: %s\n", *driver);
+                return;
+            }
+        }
+        
+        // Fallback to default paths
+        opencl_handle = dlopen("libOpenCL.so", RTLD_LAZY | RTLD_GLOBAL);
+        if (opencl_handle) {
+            printf("Loaded OpenCL from default system path\n");
+            return;
+        }
+        
+        printf("Failed to load any OpenCL library\n");
+    }
+
+    // Define stub functions for OpenCL API
+    #define CL_STUB_FUNC(name, ret_type, args) \
+        ret_type name args { \
+            load_opencl(); \
+            static ret_type (*func)args = NULL; \
+            if (!func) { \
+                if (!opencl_handle) return CL_DEVICE_NOT_FOUND; \
+                func = (ret_type (*) args) dlsym(opencl_handle, #name); \
+                if (!func) return CL_DEVICE_NOT_FOUND; \
+            } \
+            return func args; \
+        }
+
+    // Platform API stubs
+    CL_STUB_FUNC(clGetPlatformIDs, cl_int, (cl_uint num_entries, cl_platform_id *platforms, cl_uint *num_platforms))
+    CL_STUB_FUNC(clGetPlatformInfo, cl_int, (cl_platform_id platform, cl_platform_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret))
+
+    // Device API stubs
+    CL_STUB_FUNC(clGetDeviceIDs, cl_int, (cl_platform_id platform, cl_device_type device_type, cl_uint num_entries, cl_device_id *devices, cl_uint *num_devices))
+    CL_STUB_FUNC(clGetDeviceInfo, cl_int, (cl_device_id device, cl_device_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret))
+
+    // Context API stubs
+    CL_STUB_FUNC(clCreateContext, cl_context, (const cl_context_properties *properties, cl_uint num_devices, const cl_device_id *devices, void (CL_CALLBACK *pfn_notify)(const char *errinfo, const void *private_info, size_t cb, void *user_data), void *user_data, cl_int *errcode_ret))
+    CL_STUB_FUNC(clCreateContextFromType, cl_context, (const cl_context_properties *properties, cl_device_type device_type, void (CL_CALLBACK *pfn_notify)(const char *errinfo, const void *private_info, size_t cb, void *user_data), void *user_data, cl_int *errcode_ret))
+    CL_STUB_FUNC(clRetainContext, cl_int, (cl_context context))
+    CL_STUB_FUNC(clReleaseContext, cl_int, (cl_context context))
+    CL_STUB_FUNC(clGetContextInfo, cl_int, (cl_context context, cl_context_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret))
+
+    // Command Queue API stubs
+    CL_STUB_FUNC(clCreateCommandQueue, cl_command_queue, (cl_context context, cl_device_id device, cl_command_queue_properties properties, cl_int *errcode_ret))
+    CL_STUB_FUNC(clRetainCommandQueue, cl_int, (cl_command_queue command_queue))
+    CL_STUB_FUNC(clReleaseCommandQueue, cl_int, (cl_command_queue command_queue))
+
+    // Memory Object API stubs
+    CL_STUB_FUNC(clCreateBuffer, cl_mem, (cl_context context, cl_mem_flags flags, size_t size, void *host_ptr, cl_int *errcode_ret))
+    CL_STUB_FUNC(clRetainMemObject, cl_int, (cl_mem memobj))
+    CL_STUB_FUNC(clReleaseMemObject, cl_int, (cl_mem memobj))
+    CL_STUB_FUNC(clEnqueueReadBuffer, cl_int, (cl_command_queue command_queue, cl_mem buffer, cl_bool blocking_read, size_t offset, size_t size, void *ptr, cl_uint num_events_in_wait_list, const cl_event *event_wait_list, cl_event *event))
+    CL_STUB_FUNC(clEnqueueWriteBuffer, cl_int, (cl_command_queue command_queue, cl_mem buffer, cl_bool blocking_write, size_t offset, size_t size, const void *ptr, cl_uint num_events_in_wait_list, const cl_event *event_wait_list, cl_event *event))
+
+    // Program Object API stubs
+    CL_STUB_FUNC(clCreateProgramWithSource, cl_program, (cl_context context, cl_uint count, const char **strings, const size_t *lengths, cl_int *errcode_ret))
+    CL_STUB_FUNC(clCreateProgramWithBinary, cl_program, (cl_context context, cl_uint num_devices, const cl_device_id *device_list, const size_t *lengths, const unsigned char **binaries, cl_int *binary_status, cl_int *errcode_ret))
+    CL_STUB_FUNC(clRetainProgram, cl_int, (cl_program program))
+    CL_STUB_FUNC(clReleaseProgram, cl_int, (cl_program program))
+    CL_STUB_FUNC(clBuildProgram, cl_int, (cl_program program, cl_uint num_devices, const cl_device_id *device_list, const char *options, void (CL_CALLBACK *pfn_notify)(cl_program program, void *user_data), void *user_data))
+    CL_STUB_FUNC(clGetProgramBuildInfo, cl_int, (cl_program program, cl_device_id device, cl_program_build_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret))
+
+    // Kernel Object API stubs
+    CL_STUB_FUNC(clCreateKernel, cl_kernel, (cl_program program, const char *kernel_name, cl_int *errcode_ret))
+    CL_STUB_FUNC(clRetainKernel, cl_int, (cl_kernel kernel))
+    CL_STUB_FUNC(clReleaseKernel, cl_int, (cl_kernel kernel))
+    CL_STUB_FUNC(clSetKernelArg, cl_int, (cl_kernel kernel, cl_uint arg_index, size_t arg_size, const void *arg_value))
+
+    // Enqueued Commands API stubs
+    CL_STUB_FUNC(clEnqueueNDRangeKernel, cl_int, (cl_command_queue command_queue, cl_kernel kernel, cl_uint work_dim, const size_t *global_work_offset, const size_t *global_work_size, const size_t *local_work_size, cl_uint num_events_in_wait_list, const cl_event *event_wait_list, cl_event *event))
+
+    // Event Object API stubs
+    CL_STUB_FUNC(clWaitForEvents, cl_int, (cl_uint num_events, const cl_event *event_list))
+    CL_STUB_FUNC(clRetainEvent, cl_int, (cl_event event))
+    CL_STUB_FUNC(clReleaseEvent, cl_int, (cl_event event))
+
+    // Flush and Finish API stubs
+    CL_STUB_FUNC(clFlush, cl_int, (cl_command_queue command_queue))
+    CL_STUB_FUNC(clFinish, cl_int, (cl_command_queue command_queue))
+    EOL
+
+    # Compile the stub library for each architecture
+    if [ -n "$ANDROID_NDK_HOME" ]; then
+      echo -e "${YELLOW}Compiling OpenCL stub library for arm64-v8a...${NC}"
+      $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang \
+        -shared -fPIC -o "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so" "$PREBUILT_DIR/cl_stub.c" \
+        -I"$OPENCL_INCLUDE_DIR" -ldl
+      
+      echo -e "${YELLOW}Compiling OpenCL stub library for x86_64...${NC}"
+      $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang \
+        -shared -fPIC -o "$OPENCL_LIB_DIR/x86_64/libOpenCL.so" "$PREBUILT_DIR/cl_stub.c" \
+        -I"$OPENCL_INCLUDE_DIR" -ldl
+      
+      echo -e "${GREEN}✅ Built OpenCL stub libraries with proper dynamic loading support${NC}"
+    else
+      echo -e "${RED}Android NDK not found, cannot compile OpenCL stub libraries${NC}"
+      return 1
     fi
+  else
+    # Setup for non-Linux hosts
+    echo -e "${YELLOW}Setting up OpenCL on $HOST_PLATFORM host for Android target...${NC}"
+    
+    # Download headers
+    if [ ! -d "$OPENCL_HEADERS_DIR" ]; then
+      echo -e "${YELLOW}Downloading OpenCL Headers...${NC}"
+      mkdir -p "$OPENCL_HEADERS_DIR"
+      git clone --depth 1 --branch "$OPENCL_HEADERS_TAG" https://github.com/KhronosGroup/OpenCL-Headers.git "$OPENCL_HEADERS_DIR"
+    fi
+    
+    # Setup include directory
+    mkdir -p "$OPENCL_INCLUDE_DIR"
+    cp -r "$OPENCL_HEADERS_DIR/CL" "$OPENCL_INCLUDE_DIR/"
+    
+    # Create directories for stub libraries
+    mkdir -p "$OPENCL_LIB_DIR/arm64-v8a"
+    mkdir -p "$OPENCL_LIB_DIR/x86_64"
+    
+    # Create empty stub libraries if we can't compile real ones
+    touch "$OPENCL_LIB_DIR/arm64-v8a/libOpenCL.so"
+    touch "$OPENCL_LIB_DIR/x86_64/libOpenCL.so"
+    
+    echo -e "${YELLOW}⚠️ Created empty OpenCL stub libraries. Build may fail at linking stage.${NC}"
+    echo -e "${YELLOW}Consider building on a Linux host or manually creating proper OpenCL stub libraries.${NC}"
   fi
 
   echo -e "${GREEN}✅ OpenCL dependencies setup complete${NC}"
@@ -764,3 +876,8 @@ echo -e "${GREEN}Manifest created at $MANIFEST_FILE${NC}"
 
 echo -e "${GREEN}✅ All GPU backend libraries built successfully!${NC}"
 echo -e "${GREEN}GPU libraries are available in: $PREBUILT_GPU_DIR${NC}"
+
+# Add an instruction to the user about runtime setup
+echo -e "${YELLOW}NOTE: When running the application on an Android device, you may need to set:${NC}"
+echo -e "${YELLOW}export LD_LIBRARY_PATH=/vendor/lib64:/vendor/lib64/egl:\$LD_LIBRARY_PATH${NC}"
+echo -e "${YELLOW}to ensure proper loading of the vendor OpenCL libraries.${NC}"
