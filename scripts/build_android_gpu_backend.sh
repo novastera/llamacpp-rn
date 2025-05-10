@@ -60,8 +60,7 @@ print_usage() {
   echo "Options:"
   echo "  --help                 Print this help message"
   echo "  --abi=[all|arm64-v8a|x86_64]  Specify which ABI to build for (default: all)"
-  echo "  --platform=[android|windows|macos|linux]  Specify host OS platform:" 
-  echo "                         - android: Special Android-to-Android direct build (rare)"
+  echo "  --platform=[linux|macos|windows]  Specify host OS platform:" 
   echo "                         - linux: Build on Linux host for Android target (common in CI)"
   echo "                         - macos: Build on macOS host for Android target"
   echo "                         - windows: Build on Windows host for Android target"
@@ -525,37 +524,8 @@ build_gpu_libs_for_abi() {
     CMAKE_FLAGS+=("-DLLAMA_VULKAN=OFF")
   fi
   
-  # Add Android-specific flags
-  if [ "$HOST_PLATFORM" = "android" ]; then
-    # Find Android NDK
-    if [ -z "$ANDROID_NDK_HOME" ]; then
-      if [ -n "$ANDROID_NDK_ROOT" ]; then
-        ANDROID_NDK_HOME="$ANDROID_NDK_ROOT"
-      elif [ -d "$ANDROID_HOME/ndk" ]; then
-        # Find the latest NDK version
-        NEWEST_NDK_VERSION=$(ls -1 "$ANDROID_HOME/ndk" | sort -rV | head -n 1)
-        ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NEWEST_NDK_VERSION"
-      elif [ -d "$ANDROID_HOME/ndk-bundle" ]; then
-        ANDROID_NDK_HOME="$ANDROID_HOME/ndk-bundle"
-      else
-        echo -e "${RED}Android NDK not found. Please set ANDROID_NDK_HOME.${NC}"
-        exit 1
-      fi
-    fi
-    
-    echo -e "${GREEN}Using Android NDK at: $ANDROID_NDK_HOME${NC}"
-    
-    # Add Android-specific flags
-    CMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
-    CMAKE_FLAGS+=("-DCMAKE_TOOLCHAIN_FILE=$CMAKE_TOOLCHAIN_FILE")
-    CMAKE_FLAGS+=("-DANDROID_ABI=$ABI")
-    CMAKE_FLAGS+=("-DANDROID_PLATFORM=android-24") # Minimum Android 7.0
-    CMAKE_FLAGS+=("-DANDROID_STL=c++_shared")
-    
-    if [ "$BUILD_VULKAN" = true ]; then
-      CMAKE_FLAGS+=("-DVK_USE_PLATFORM_ANDROID_KHR=ON")
-    fi
-  elif [ "$HOST_PLATFORM" = "macos" ]; then
+  # Set host-specific configurations based on the platform we're building FROM
+  if [ "$HOST_PLATFORM" = "macos" ]; then
     echo -e "${YELLOW}Building on macOS host for Android target${NC}"
     # Add macOS-specific flags here if needed
   elif [ "$HOST_PLATFORM" = "windows" ]; then
@@ -564,6 +534,37 @@ build_gpu_libs_for_abi() {
   elif [ "$HOST_PLATFORM" = "linux" ]; then
     echo -e "${YELLOW}Building on Linux host for Android target${NC}"
     # Add Linux-specific flags here if needed
+  else
+    echo -e "${YELLOW}Building on unknown host platform for Android target${NC}"
+  fi
+  
+  # Configure Android NDK (required regardless of host platform)
+  if [ -z "$ANDROID_NDK_HOME" ]; then
+    if [ -n "$ANDROID_NDK_ROOT" ]; then
+      ANDROID_NDK_HOME="$ANDROID_NDK_ROOT"
+    elif [ -d "$ANDROID_HOME/ndk" ]; then
+      # Find the latest NDK version
+      NEWEST_NDK_VERSION=$(ls -1 "$ANDROID_HOME/ndk" | sort -rV | head -n 1)
+      ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NEWEST_NDK_VERSION"
+    elif [ -d "$ANDROID_HOME/ndk-bundle" ]; then
+      ANDROID_NDK_HOME="$ANDROID_HOME/ndk-bundle"
+    else
+      echo -e "${RED}Android NDK not found. Please set ANDROID_NDK_HOME.${NC}"
+      exit 1
+    fi
+  fi
+  
+  echo -e "${GREEN}Using Android NDK at: $ANDROID_NDK_HOME${NC}"
+  
+  # Add Android-specific flags (required for all builds since we're always building for Android)
+  CMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+  CMAKE_FLAGS+=("-DCMAKE_TOOLCHAIN_FILE=$CMAKE_TOOLCHAIN_FILE")
+  CMAKE_FLAGS+=("-DANDROID_ABI=$ABI")
+  CMAKE_FLAGS+=("-DANDROID_PLATFORM=android-24") # Minimum Android 7.0
+  CMAKE_FLAGS+=("-DANDROID_STL=c++_shared")
+  
+  if [ "$BUILD_VULKAN" = true ]; then
+    CMAKE_FLAGS+=("-DVK_USE_PLATFORM_ANDROID_KHR=ON")
   fi
   
   # Run CMake configuration
