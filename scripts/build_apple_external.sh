@@ -169,12 +169,6 @@ download_ios_framework() {
   # Clean up temporary files
   rm -f "$temp_zip"
   
-  rm -rf "$PREBUILT_DIR/llama.xcframework/tvos-arm64"
-  rm -rf "$PREBUILT_DIR/llama.xcframework/tvos-arm64_x86_64-simulator"
-  rm -rf "$PREBUILT_DIR/llama.xcframework/macos-arm64_x86_64"
-  rm -rf "$PREBUILT_DIR/llama.xcframework/xros-arm64"
-  rm -rf "$PREBUILT_DIR/llama.xcframework/xros-arm64_x86_64-simulator"
-
   echo -e "${GREEN}iOS framework downloaded and installed successfully to:${NC}"
   echo -e "${GREEN}$PREBUILT_DIR/llama.xcframework${NC}"
   
