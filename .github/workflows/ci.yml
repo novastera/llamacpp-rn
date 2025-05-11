@@ -2,7 +2,8 @@ name: CI and Native Build
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ develop ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
   release:
