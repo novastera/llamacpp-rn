@@ -183,6 +183,13 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
     ${LLAMA_CPP_DIR}/common/minja/minja.hpp
 )
 
+# Set the library properties
+set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    POSITION_INDEPENDENT_CODE ON
+)
+
 # Required libraries for Android
 find_library(log-lib log)
 find_library(android-lib android)
@@ -225,12 +232,4 @@ target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
     -fvisibility=hidden
     -ffunction-sections
     -fdata-sections
-)
-
-# Set C++ standard
-set_target_properties(
-    ${CMAKE_PROJECT_NAME} PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED ON
-    POSITION_INDEPENDENT_CODE ON
 )
