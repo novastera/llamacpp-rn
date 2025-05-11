@@ -2,10 +2,10 @@
   "name": "@novastera-oss/llamacpp-rn",
   "version": "0.1.0",
   "description": "React Native Turbo Module for llama.cpp integration, optimized for the New Architecture",
-  "main": "lib/index.js",
-  "module": "lib/index.js",
-  "types": "lib/index.d.ts",
-  "source": "src/index.tsx",
+  "main": "lib/NativeLlamaCppRn.js",
+  "module": "lib/NativeLlamaCppRn.js",
+  "types": "lib/NativeLlamaCppRn.d.ts",
+  "source": "specs/NativeLlamaCppRn.ts",
   "files": [
     "src",
     "lib",
@@ -45,8 +45,8 @@
     "test": "jest --passWithNoTests",
     "typescript": "tsc --noEmit",
     "typescript:example": "cd example && tsc --noEmit",
-    "lint": "eslint \"src/**/*.{ts,tsx}\"",
-    "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
+    "lint": "eslint \"specs/**/*.{ts,tsx}\"",
+    "lint:fix": "eslint \"specs/**/*.{ts,tsx}\" --fix",
     "codegen": "react-native codegen",
     "prepare": "tsc -p tsconfig.build.json",
     "release": "release-it",
@@ -94,7 +94,7 @@
   "codegenConfig": {
     "name": "LlamaCppRnSpecs",
     "type": "modules",
-    "jsSrcsDir": "src/specs",
+    "jsSrcsDir": "specs",
     "android": {
       "javaPackageName": "com.llamacpprn"
     }
@@ -158,7 +158,7 @@
     }
   },
   "react-native-builder-bob": {
-    "source": "src",
+    "source": "specs",
     "output": "lib",
     "targets": [
       "commonjs",

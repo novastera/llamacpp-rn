@@ -35,6 +35,7 @@ Pod::Spec.new do |s|
   # Include all necessary headers for compilation
   s.preserve_paths = "ios/include/**/*.h",
                      "ios/libs/**/*", 
+                     "specs/**/*",
                      "cpp/llama.cpp/**/*.h", 
                      "cpp/llama.cpp/**/*.hpp"
   
