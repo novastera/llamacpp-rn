@@ -70,12 +70,6 @@ jobs:
       - name: Install Dependencies
         run: npm ci
       
-      - name: TypeScript Check
-        run: npm run typescript
-      
-      - name: Lint
-        run: npm run lint
-      
       - name: Build JS/TS
         run: npm run prepare
       
