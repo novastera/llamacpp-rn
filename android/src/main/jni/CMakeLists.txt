@@ -35,8 +35,14 @@ if(NOT EXISTS "${CPP_DIR}/LlamaCppRnModule.cpp")
     endif()
 endif()
 
+# Print the paths for debugging
 message(STATUS "Module root: ${MODULE_ROOT}")
 message(STATUS "CPP directory: ${CPP_DIR}")
+
+# IMPORTANT: Verify LlamaCppRnModule exists in the CPP_DIR
+if(NOT EXISTS "${CPP_DIR}/LlamaCppRnModule.cpp")
+    message(FATAL_ERROR "Could not find LlamaCppRnModule.cpp in ${CPP_DIR}")
+endif()
 
 # Options to enable GPU acceleration
 option(LLAMACPPRN_OPENCL "Enable OpenCL GPU acceleration" ON)
@@ -44,13 +50,6 @@ option(LLAMACPPRN_VULKAN "Enable Vulkan GPU acceleration" ON)
 
 # Define the path to llama.cpp directory
 set(LLAMA_CPP_DIR "${CPP_DIR}/llama.cpp")
-
-# Define React Native paths
-set(POSSIBLE_RN_DIRS
-    "${MODULE_ROOT}/../../node_modules/react-native"
-    "${MODULE_ROOT}/../node_modules/react-native"
-    "${MODULE_ROOT}/node_modules/react-native"
-)
 
 # Try to find React Native directory
 set(RN_DIR "")
@@ -61,26 +60,6 @@ foreach(dir ${POSSIBLE_RN_DIRS})
         break()
     endif()
 endforeach()
-
-if("${RN_DIR}" STREQUAL "")
-    message(FATAL_ERROR "Could not find React Native directory in any of the search paths")
-endif()
-
-set(REACT_ANDROID_DIR "${RN_DIR}/ReactAndroid")
-
-# Various places React Native might place FBJNI headers
-set(FBJNI_HEADERS_DIRS
-    "${REACT_ANDROID_DIR}/src/main/jni/first-party/fbjni/headers"
-    "${REACT_ANDROID_DIR}/src/main/java/com/facebook/react/turbomodule/core/jni"
-    "${REACT_ANDROID_DIR}/../ReactCommon/jsi"
-    "${REACT_ANDROID_DIR}/src/main/jni/react/turbomodule"
-    "${REACT_ANDROID_DIR}/src/main/jni/react/jni"
-    "${RN_DIR}/ReactAndroid/src/main/jni/first-party/fbjni/headers"
-    "${RN_DIR}/node_modules/react-native/ReactAndroid/src/main/jni/first-party/fbjni/headers"
-    "${RN_DIR}/../node_modules/react-native/ReactAndroid/src/main/jni/first-party/fbjni/headers"
-    "${MODULE_ROOT}/../../node_modules/react-native/ReactAndroid/src/main/jni/first-party/fbjni/headers"
-    "${MODULE_ROOT}/../node_modules/react-native/ReactAndroid/src/main/jni/first-party/fbjni/headers"
-)
 
 # Get the ABI from CMAKE_ANDROID_ARCH_ABI
 if(DEFINED CMAKE_ANDROID_ARCH_ABI)
@@ -189,25 +168,7 @@ set(INCLUDE_DIRECTORIES
     ${LLAMA_CPP_DIR}/common/minja
     ${LLAMA_CPP_DIR}/ggml/include
     ${LLAMA_CPP_DIR}/ggml/src
-    ${RN_DIR}/ReactCommon
-    ${RN_DIR}/ReactCommon/callinvoker
-    ${RN_DIR}/ReactCommon/jsi
-    ${RN_DIR}/ReactCommon/react/nativemodule/core
-    ${RN_DIR}/ReactCommon/react/bridging
-    ${REACT_ANDROID_DIR}/src/main/jni/react/turbomodule
-    ${REACT_ANDROID_DIR}/src/main/jni/first-party/fbjni/headers
-    ${REACT_ANDROID_DIR}/src/main/jni/react/jni
-    ${REACT_ANDROID_DIR}/src/main/cpp/jni
-    ${REACT_ANDROID_DIR}/src/main/java/com/facebook/react/turbomodule/core/jni
 )
-
-# Add all possible FBJNI header directories
-foreach(fbjni_dir ${FBJNI_HEADERS_DIRS})
-    if(EXISTS "${fbjni_dir}")
-        list(APPEND INCLUDE_DIRECTORIES "${fbjni_dir}")
-        message(STATUS "Adding FBJNI headers from: ${fbjni_dir}")
-    endif()
-endforeach()
 
 # Include all the directories
 include_directories(${INCLUDE_DIRECTORIES})

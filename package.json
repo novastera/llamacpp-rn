@@ -93,7 +93,7 @@
     "access": "public"
   },
   "codegenConfig": {
-    "name": "RNLlamaCppRnSpec",
+    "name": "AppSpecs",
     "type": "modules",
     "jsSrcsDir": "src/specs",
     "android": {

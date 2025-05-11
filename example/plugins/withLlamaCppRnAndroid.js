@@ -196,8 +196,8 @@ android {
       // --- jniLibs directory setup (optional, for prebuilt .so files) ---
       const appJniLibsPath = path.join(config.modRequest.platformProjectRoot, 'app/src/main/jniLibs');
       if (!fs.existsSync(appJniLibsPath)) {
-        fs.mkdirSync(appJniLibsPath, { recursive: true });
-        console.log('Created jniLibs directory in app');
+          fs.mkdirSync(appJniLibsPath, { recursive: true });
+          console.log('Created jniLibs directory in app');
       }
       
       // --- local.properties for Android SDK (optional) ---

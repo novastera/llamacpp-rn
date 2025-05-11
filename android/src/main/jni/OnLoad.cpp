@@ -3,38 +3,35 @@
 #include <ReactCommon/TurboModuleUtils.h>
 #include <react/bridging/CallbackWrapper.h>
 
-// Include the C++ module header
+// Include the C++ module header - make sure path is correct
 #include "../../../../../../cpp/LlamaCppRnModule.h"
 
 using namespace facebook;
 
-// Function to provide C++ modules
-std::shared_ptr<react::TurboModule> cxxModuleProvider(
+// Single provider function to avoid duplication
+std::shared_ptr<react::TurboModule> turboModuleProvider(
     const std::string& name,
     const std::shared_ptr<react::CallInvoker>& jsInvoker) {
-  if (name == react::LlamaCppRn::kModuleName) {
+  // Make sure the name matches EXACTLY what's in your TypeScript spec
+  if (name == "LlamaCppRn") {
     return react::LlamaCppRn::create(jsInvoker);
   }
   return nullptr;
 }
 
-// The Android TurboModule system initialization
+// JNI_OnLoad is the entry point
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
   return facebook::jni::initialize(vm, [] {
-    // Register the C++ module provider with React Native
-    facebook::react::TurboModuleManagerDelegate::cxxModuleProvider = &cxxModuleProvider;
+    facebook::react::TurboModuleManagerDelegate::cxxModuleProvider = &turboModuleProvider;
   });
 }
 
-// This hooks the module into the React Native TurboModule system
+// This is needed for the TurboModule system
 std::shared_ptr<facebook::react::TurboModule> 
 facebook::react::TurboModuleProviderFunctionHolder::cxxModuleProvider(
     const std::string& name, 
     const std::shared_ptr<facebook::react::CallInvoker>& jsInvoker) {
-  if (name == react::LlamaCppRn::kModuleName) {
-    return react::LlamaCppRn::create(jsInvoker);
-  }
-  return nullptr;
+  return turboModuleProvider(name, jsInvoker);
 }
 
 std::shared_ptr<react::TurboModule> jniModuleProvider(
@@ -42,7 +39,7 @@ std::shared_ptr<react::TurboModule> jniModuleProvider(
     const jni::global_ref<jobject>& javaPart,
     const std::shared_ptr<react::CallInvoker>& jsInvoker) {
   // First try to find a C++ module
-  auto cxxModule = cxxModuleProvider(name, jsInvoker);
+  auto cxxModule = turboModuleProvider(name, jsInvoker);
   if (cxxModule != nullptr) {
     return cxxModule;
   }
