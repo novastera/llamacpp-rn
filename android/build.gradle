@@ -14,6 +14,8 @@ android {
     
     externalNativeBuild {
       cmake {
+        path "src/main/jni/CMakeLists.txt"
+        
         arguments "-DANDROID_STL=c++_shared",
                   "-DCMAKE_BUILD_TYPE=Release",
                   "-DANDROID_PLATFORM=android-${safeExtGet('minSdkVersion', 26)}",
@@ -46,12 +48,6 @@ android {
   prefab {
     llamacpprn {
       headers "src/main/cpp/include"
-    }
-  }
-
-  externalNativeBuild {
-    cmake {
-      path "src/main/jni/CMakeLists.txt"
     }
   }
 

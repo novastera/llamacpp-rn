@@ -4,8 +4,14 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
 # Define the library name
 project(llamacpprn)
 
-# Set package version for proper versioning
-set(PACKAGE_VERSION "1.0.0" CACHE STRING "Package version")
+# This file includes all the necessary to let you build your React Native application
+include(${REACT_ANDROID_DIR}/cmake-utils/ReactNative-application.cmake)
+
+# Define where the additional source code lives. We need to crawl back the jni, main, src, app, android folders
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE ../../../../cpp/LlamaCppRnModule.cpp)
+
+# Define where CMake can find the additional header files. We need to crawl back the jni, main, src, app, android folders
+target_include_directories(${CMAKE_PROJECT_NAME} PUBLIC ../../../../cpp)
 
 # Print system info for debugging
 message(STATUS "Building for Android with ABI: ${ANDROID_ABI}")
@@ -50,16 +56,6 @@ option(LLAMACPPRN_VULKAN "Enable Vulkan GPU acceleration" ON)
 
 # Define the path to llama.cpp directory
 set(LLAMA_CPP_DIR "${CPP_DIR}/llama.cpp")
-
-# Try to find React Native directory
-set(RN_DIR "")
-foreach(dir ${POSSIBLE_RN_DIRS})
-    if(EXISTS "${dir}")
-        set(RN_DIR "${dir}")
-        message(STATUS "Found React Native at: ${RN_DIR}")
-        break()
-    endif()
-endforeach()
 
 # Get the ABI from CMAKE_ANDROID_ARCH_ABI
 if(DEFINED CMAKE_ANDROID_ARCH_ABI)
@@ -248,14 +244,4 @@ set_target_properties(
     POSITION_INDEPENDENT_CODE ON
 )
 
-# Write a report file
-set(REPORT_FILE "${CMAKE_BINARY_DIR}/build_report.txt")
-file(WRITE ${REPORT_FILE} "LlamaCppRn Build Report\n")
-file(APPEND ${REPORT_FILE} "====================\n\n")
-file(APPEND ${REPORT_FILE} "Android ABI: ${ANDROID_ABI}\n")
-file(APPEND ${REPORT_FILE} "OpenCL enabled: ${OPENCL_ENABLED}\n")
-file(APPEND ${REPORT_FILE} "Vulkan enabled: ${VULKAN_ENABLED}\n")
-file(APPEND ${REPORT_FILE} "BLAS enabled: ${LLAMA_BLAS}\n")
-file(APPEND ${REPORT_FILE} "Compiler flags:\n")
-file(APPEND ${REPORT_FILE} "  CXX flags: ${CMAKE_CXX_FLAGS}\n")
 

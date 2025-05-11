@@ -47,6 +47,7 @@
     "typescript:example": "cd example && tsc --noEmit",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
+    "codegen": "react-native codegen",
     "prepare": "tsc -p tsconfig.build.json",
     "release": "release-it",
     "example": "npm --prefix example",
@@ -64,9 +65,7 @@
     "build-android-gpu": "bash scripts/build_android_gpu_backend.sh",
     "build-android-external": "bash scripts/build_android_external.sh",
     "build-android-clean": "bash scripts/build_android_external.sh --clean-prebuilt",
-    "build-android-macos": "npm run clean-android && npm run clean-prebuilt && bash scripts/build_android_gpu_backend.sh --no-vulkan --no-opencl --clean && bash scripts/build_android_external.sh --no-vulkan --no-opencl --clean",
-    "codegen": "cd example && node node_modules/react-native/scripts/generate-codegen-artifacts.js --path .. --targetPlatform android --outputPath ./node_modules/@novastera-oss/llamacpp-rn/",
-    "codegen:all": "cd example && node node_modules/react-native/scripts/generate-codegen-artifacts.js --path .. --targetPlatform all --outputPath ./node_modules/@novastera-oss/llamacpp-rn/"
+    "build-android-macos": "npm run clean-android && npm run clean-prebuilt && bash scripts/build_android_gpu_backend.sh --no-vulkan --no-opencl --clean && bash scripts/build_android_external.sh --no-vulkan --no-opencl --clean"
   },
   "keywords": [
     "react-native",
@@ -93,7 +92,7 @@
     "access": "public"
   },
   "codegenConfig": {
-    "name": "AppSpecs",
+    "name": "LlamaCppRnSpecs",
     "type": "modules",
     "jsSrcsDir": "src/specs",
     "android": {
@@ -104,18 +103,18 @@
     "@babel/core": "^7.20.0",
     "@babel/preset-env": "^7.20.0",
     "@babel/runtime": "^7.20.0",
-    "@react-native/eslint-config": "^0.76.9",
-    "@react-native/metro-config": "^0.76.9",
+    "@react-native/eslint-config": "^0.79.2",
+    "@react-native/metro-config": "^0.79.2",
+    "@react-native-community/cli": "^18.0.0",
     "@types/jest": "^29.5.0",
-    "@types/react": "^18.2.0",
+    "@types/react": "^19.1.0",
     "eslint": "^8.0.0",
     "jest": "^29.5.0",
     "pod-install": "^0.1.0",
-    "react": "18.3.1",
-    "react-native": "0.76.9",
+    "react": "19.1.0",
+    "react-native": "0.79.2",
     "react-native-builder-bob": "^0.40.0",
     "release-it": "^19.0.0",
-    "rimraf": "^6.0.1",
     "typescript": "^5.8.3"
   },
   "peerDependencies": {
