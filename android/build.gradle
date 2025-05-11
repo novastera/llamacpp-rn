@@ -14,8 +14,6 @@ android {
     
     externalNativeBuild {
       cmake {
-        path "src/main/jni/CMakeLists.txt"
-        
         arguments "-DANDROID_STL=c++_shared",
                   "-DCMAKE_BUILD_TYPE=Release",
                   "-DANDROID_PLATFORM=android-${safeExtGet('minSdkVersion', 26)}",
@@ -70,6 +68,12 @@ android {
         'META-INF/NOTICE.txt',
         'META-INF/*.kotlin_module'
       ]
+    }
+  }
+
+  externalNativeBuild {
+    cmake {
+      path "src/main/jni/CMakeLists.txt"
     }
   }
 }
