@@ -2,7 +2,7 @@
   "compilerOptions": {
     "baseUrl": "./",
     "paths": {
-      "@novastera-oss/llamacpp-rn": ["./specs/NativeLlamaCppRn"]
+      "@novastera-oss/llamacpp-rn": ["./tm/NativeLlamaCppRn"]
     },
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,
@@ -26,13 +26,14 @@
     "verbatimModuleSyntax": true
   },
   "include": [
-    "specs/**/*.ts"
+    "tm/**/*.ts",
+    "tm/NativeLlamaCppRn.ts"
   ],
   "exclude": [
     "node_modules",
-    "cpp/llama.cpp/examples/**/*",
-    "cpp/llama.cpp/tests/**/*",
-    "cpp/llama.cpp/website/**/*",
+    "tm/llama.cpp/examples/**/*",
+    "tm/llama.cpp/tests/**/*",
+    "tm/llama.cpp/website/**/*",
     "ios",
     "android",
     "build",

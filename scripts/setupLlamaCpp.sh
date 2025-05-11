@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 # Get script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PACKAGE_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
-LLAMA_CPP_DIR="$PACKAGE_DIR/cpp/llama.cpp"
+LLAMA_CPP_DIR="$PACKAGE_DIR/tm/llama.cpp"
 
 # Import version settings
 . "$SCRIPT_DIR/used_version.sh"
@@ -45,7 +45,7 @@ configure_build_info() {
   BUILD_TARGET="unknown"
   
   # Create build-info.cpp in the cpp directory
-  cat > "$PACKAGE_DIR/cpp/build-info.cpp" << EOF
+  cat > "$PACKAGE_DIR/tm/build-info.cpp" << EOF
 int LLAMA_BUILD_NUMBER = ${BUILD_NUMBER};
 char const *LLAMA_COMMIT = "${BUILD_COMMIT}";
 char const *LLAMA_COMPILER = "${BUILD_COMPILER}";

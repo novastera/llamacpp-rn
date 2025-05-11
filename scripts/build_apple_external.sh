@@ -18,7 +18,7 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 # the setupLlamaCpp.sh script first.
 
 # Define paths
-CPP_DIR="$PROJECT_ROOT/cpp"
+CPP_DIR="$PROJECT_ROOT/tm"
 PREBUILT_DIR="$PROJECT_ROOT/ios/libs"
 INCLUDE_DIR="$PROJECT_ROOT/ios/include"
 TEMP_DIR="$PROJECT_ROOT/.llamacpp-temp"
