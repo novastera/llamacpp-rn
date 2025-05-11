@@ -4,6 +4,11 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
 # Define the library name - needs to match what's used in the module
 project(llamacpprn)
 
+# This file includes all the necessary to let you build your application with the New Architecture.
+include(${REACT_ANDROID_DIR}/cmake-utils/ReactNative-application.cmake)
+
+add_subdirectory(${REACT_ANDROID_DIR}/../../../tm/ tm_build)
+
 # Print system info for debugging
 message(STATUS "Building for Android with ABI: ${ANDROID_ABI}")
 message(STATUS "Android SDK version: ${ANDROID_PLATFORM}")
@@ -118,7 +123,7 @@ add_subdirectory(${LLAMA_CPP_DIR} llama.cpp)
 # Source files
 set(SOURCE_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/OnLoad.cpp
-    ${CPP_DIR}/LlamaCppRnModule.cpp
+    ${CPP_DIR}/NativeLlamaCppRn.cpp
     ${CPP_DIR}/LlamaCppModel.cpp
     ${CPP_DIR}/SystemUtils.cpp
     ${CPP_DIR}/rn-completion.cpp
@@ -195,7 +200,7 @@ find_library(log-lib log)
 find_library(android-lib android)
 
 # Link against llama library
-target_link_libraries(${CMAKE_PROJECT_NAME} llama)
+target_link_libraries(${CMAKE_PROJECT_NAME} tm)
 
 # Check for additional GPU-specific shared libraries in jniLibs
 if(OPENCL_ENABLED)

@@ -64,7 +64,7 @@ const withLlamaCppRn = (config) => {
                 "          # Add explicit header search paths for llama.cpp - using the actual path\n" +
                 "          config.build_settings[\"HEADER_SEARCH_PATHS\"] = [\n" +
                 "            \"$(inherited)\",\n" +
-                "            \"${PODS_ROOT}/../../ios/include\",\n" +
+                "            \"${PODS_ROOT}/../../tm/include\",\n" +
                 "            \"${PODS_ROOT}/Headers/Public\"\n" +
                 "          ]\n" +
                 "        end\n" +

@@ -26,11 +26,12 @@
     "verbatimModuleSyntax": true
   },
   "include": [
-    "tm/**/*.ts",
+    "tm/*.ts",
     "tm/NativeLlamaCppRn.ts"
   ],
   "exclude": [
     "node_modules",
+    "tm/llama.cpp/**/*",
     "tm/llama.cpp/examples/**/*",
     "tm/llama.cpp/tests/**/*",
     "tm/llama.cpp/website/**/*",

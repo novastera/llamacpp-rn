@@ -189,7 +189,7 @@ android {
       
       // --- llama.cpp path file ---
       const llamaCppPathFile = path.join(jniDir, 'llama_cpp_path.txt');
-      const originalLlamacppDir = path.join(config.modRequest.platformProjectRoot, '../../cpp/llama.cpp');
+      const originalLlamacppDir = path.join(config.modRequest.platformProjectRoot, '../../tm/llama.cpp');
       fs.writeFileSync(llamaCppPathFile, originalLlamacppDir);
       console.log(`Created llama.cpp path file pointing to ${originalLlamacppDir}`);
       

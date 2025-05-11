@@ -42,9 +42,9 @@ jobs:
         id: check-submodule
         run: |
           # Check if llama.cpp directory already exists and is at the right version
-          if [ -d "cpp/llama.cpp" ] && [ -f "cpp/llama.cpp/include/llama.h" ]; then
+          if [ -d "tm/llama.cpp" ] && [ -f "tm/llama.cpp/include/llama.h" ]; then
             echo "Submodule exists, checking status..."
-            cd cpp/llama.cpp
+            cd tm/llama.cpp
             git fetch
             LOCAL_COMMIT=$(git rev-parse HEAD)
             SOURCE_REPO_LLAMA="https://github.com/ggerganov/llama.cpp.git"
@@ -88,7 +88,7 @@ jobs:
           echo "Files included in package: $FILES"
           
           # Check for required files/directories
-          for REQUIRED in "android" "ios" "lib" "cpp" "LICENSE" "README.md" "LlamaCppRn.podspec"; do
+          for REQUIRED in "android" "ios" "lib" "tm" "LICENSE" "README.md" "LlamaCppRn.podspec"; do
             if ! echo "$FILES" | grep -q "$REQUIRED"; then
               echo "⚠️ Warning: '$REQUIRED' might be missing from package.json 'files' field"
             fi
@@ -556,7 +556,7 @@ jobs:
           echo "Files specified in package.json: $FILES"
           
           # Verify core directories and files are included
-          for REQUIRED in "android" "ios" "lib" "cpp" "LICENSE" "README.md" "LlamaCppRn.podspec"; do
+          for REQUIRED in "android" "ios" "lib" "tm" "LICENSE" "README.md" "LlamaCppRn.podspec"; do
             if ! echo "$FILES" | grep -q "$REQUIRED"; then
               echo "⚠️ Warning: '$REQUIRED' might be missing from package.json 'files' field"
             fi

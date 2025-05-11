@@ -9,6 +9,6 @@
     "skipLibCheck": true,
     "types": ["react-native"]
   },
-  "include": ["tm/**/*"],
-  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "example/**/*"]
+  "include": ["tm/*"],
+  "exclude": ["tm/llama.cpp/**/*", "**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "example/**/*"]
 } 

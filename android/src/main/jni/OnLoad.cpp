@@ -55,7 +55,10 @@ std::shared_ptr<TurboModule> cxxModuleProvider(
     const std::string& name,
     const std::shared_ptr<CallInvoker>& jsInvoker) {
   // Auto-linking CXX module provider
-  return autolinking_cxxModuleProvider(name, jsInvoker);
+  if (name == "LlamaCppRn") {
+   return std::make_shared<facebook::react::NativeSampleModule>(jsInvoker);
+  }
+  return nullptr;
 }
 
 std::shared_ptr<TurboModule> javaModuleProvider(

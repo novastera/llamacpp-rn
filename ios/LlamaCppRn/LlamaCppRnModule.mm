@@ -5,7 +5,7 @@
 #import <ReactCommon/RCTTurboModule.h>
 #import <jsi/jsi.h>
 
-#include "../../cpp/LlamaCppRnModule.h"
+#include "../../tm/NativeLlamaCppRn.h"
 
 @implementation LlamaCppRnModule
 

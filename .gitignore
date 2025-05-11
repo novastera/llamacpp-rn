@@ -109,6 +109,7 @@ ios/libs/build-apple/
 # Allow prebuilt binaries in prebuilt/ directory for npm packaging
 /prebuilt/
 /gpu-prebuild/
+/third-party/
 
 # Build artifacts
 build.ninja
