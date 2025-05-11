@@ -3,12 +3,12 @@
   "compilerOptions": {
     "declaration": true,
     "outDir": "lib",
-    "rootDir": "src",
+    "rootDir": "specs",
     "noEmit": false,
     "jsx": "react-native",
     "skipLibCheck": true,
     "types": ["react-native"]
   },
-  "include": ["src/**/*"],
+  "include": ["specs/**/*"],
   "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "example/**/*"]
 } 

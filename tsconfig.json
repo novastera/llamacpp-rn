@@ -2,7 +2,7 @@
   "compilerOptions": {
     "baseUrl": "./",
     "paths": {
-      "@novastera-oss/llamacpp-rn": ["./src/index"]
+      "@novastera-oss/llamacpp-rn": ["./specs/NativeLlamaCppRn"]
     },
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,
@@ -26,7 +26,7 @@
     "verbatimModuleSyntax": true
   },
   "include": [
-    "src/**/*.ts"
+    "specs/**/*.ts"
   ],
   "exclude": [
     "node_modules",

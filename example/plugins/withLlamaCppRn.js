@@ -149,10 +149,10 @@ const withLlamaCppRn = (config) => {
               '{\n' +
               '  // Forward to the native module\'s getTurboModule function\n' +
               '  if (name == "LlamaCppRn") {\n' +
+              '    // Explicitly use the static method to get the TurboModule\n' + 
               '    Class moduleClass = NSClassFromString(@"LlamaCppRnModule");\n' +
               '    if (moduleClass) {\n' +
-              '      return (std::shared_ptr<facebook::react::TurboModule>)[\n' +
-              '        moduleClass getTurboModule:name jsInvoker:jsInvoker];\n' +
+              '      return [moduleClass getTurboModule:name jsInvoker:jsInvoker];\n' +
               '    }\n' +
               '  }\n' +
               '  \n' +
@@ -166,6 +166,7 @@ const withLlamaCppRn = (config) => {
               '}\n\n' +
               '- (id<RCTTurboModule>)getModuleInstanceFromClass:(Class)moduleClass\n' +
               '{\n' +
+              '  // Return a properly initialized instance for the TurboModule\n' +
               '  if ([NSStringFromClass(moduleClass) isEqual:@"LlamaCppRnModule"]) {\n' +
               '    return [[moduleClass alloc] init];\n' +
               '  }\n' +
