@@ -34,7 +34,7 @@
 #include <rncore.h>
 #include <autolinking.h>
 
-#include "../../../../cpp/LlamaCppRnModule.h"
+#include "../../../../tm/LlamaCppRnModule.h"
 
 #ifdef REACT_NATIVE_APP_CODEGEN_HEADER
 #include REACT_NATIVE_APP_CODEGEN_HEADER
@@ -56,7 +56,7 @@ std::shared_ptr<TurboModule> cxxModuleProvider(
     const std::shared_ptr<CallInvoker>& jsInvoker) {
   // Auto-linking CXX module provider
   if (name == "LlamaCppRn") {
-   return std::make_shared<facebook::react::NativeSampleModule>(jsInvoker);
+   return std::make_shared<facebook::react::LlamaCppRn>(jsInvoker);
   }
   return nullptr;
 }

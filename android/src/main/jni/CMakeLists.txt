@@ -5,9 +5,18 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
 project(llamacpprn)
 
 # This file includes all the necessary to let you build your application with the New Architecture.
-include(${REACT_ANDROID_DIR}/cmake-utils/ReactNative-application.cmake)
+# Use the official React Native application CMake
+if(DEFINED REACT_ANDROID_DIR)
+  # Include React Native's application CMake for proper setup
+  include(${REACT_ANDROID_DIR}/cmake-utils/ReactNative-application.cmake)
+endif()
 
-add_subdirectory(${REACT_ANDROID_DIR}/../../../tm/ tm_build)
+# For JSI includes, make sure we have the right paths
+include_directories(
+  ${REACT_ANDROID_DIR}/ReactCommon
+  ${REACT_ANDROID_DIR}/ReactCommon/callinvoker
+  ${REACT_ANDROID_DIR}/ReactCommon/jsi
+)
 
 # Print system info for debugging
 message(STATUS "Building for Android with ABI: ${ANDROID_ABI}")
@@ -25,13 +34,13 @@ add_definitions(-DRCT_NEW_ARCH_ENABLED=1)
 
 # Get the path to the module root - two parent directories up from the jni directory
 get_filename_component(MODULE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
-# Get the cpp directory - it's directly in the module root
-get_filename_component(CPP_DIR "${MODULE_ROOT}/../../cpp" ABSOLUTE)
+# Get the tm directory - it's directly in the module root
+get_filename_component(CPP_DIR "${MODULE_ROOT}/../../tm" ABSOLUTE)
 
 # Double check if the CPP_DIR exists, if not try a direct path
 if(NOT EXISTS "${CPP_DIR}/LlamaCppRnModule.cpp")
     # Try alternate path - assuming we're building from the main project directory
-    get_filename_component(ALT_CPP_DIR "${MODULE_ROOT}/../cpp" ABSOLUTE)
+    get_filename_component(ALT_CPP_DIR "${MODULE_ROOT}/../tm" ABSOLUTE)
     if(EXISTS "${ALT_CPP_DIR}/LlamaCppRnModule.cpp")
         set(CPP_DIR "${ALT_CPP_DIR}")
     endif()
@@ -52,6 +61,19 @@ option(LLAMACPPRN_VULKAN "Enable Vulkan GPU acceleration" ON)
 
 # Define the path to llama.cpp directory
 set(LLAMA_CPP_DIR "${CPP_DIR}/llama.cpp")
+
+# Make sure the llama.cpp submodule exists
+if(NOT EXISTS "${LLAMA_CPP_DIR}/CMakeLists.txt")
+    message(STATUS "llama.cpp submodule not found at ${LLAMA_CPP_DIR}")
+    
+    # Try alternate paths
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../../../tm/llama.cpp/CMakeLists.txt")
+        set(LLAMA_CPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../tm/llama.cpp")
+        message(STATUS "Found llama.cpp at ${LLAMA_CPP_DIR}")
+    else()
+        message(FATAL_ERROR "Could not find llama.cpp submodule. Please run 'git submodule update --init --recursive'")
+    endif()
+endif()
 
 # Get the ABI from CMAKE_ANDROID_ARCH_ABI
 if(DEFINED CMAKE_ANDROID_ARCH_ABI)

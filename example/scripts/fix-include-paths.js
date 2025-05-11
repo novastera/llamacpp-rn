@@ -3,9 +3,9 @@ const path = require('path');
 
 // Paths
 const rootDir = path.resolve(__dirname, '../..');
-const sourceDir = path.join(rootDir, 'cpp');
+const sourceDir = path.join(rootDir, 'tm');
 const targetBaseDir = path.join(__dirname, '../node_modules/@novastera-oss/llamacpp-rn');
-const targetDir = path.join(targetBaseDir, 'cpp');
+const targetDir = path.join(targetBaseDir, 'tm');
 
 // Pattern to look for and replace
 const includePattern = /#include\s+["<](.*?)[">]/g;

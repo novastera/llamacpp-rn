@@ -4,8 +4,8 @@ const path = require('path');
 // Paths
 const rootDir = path.resolve(__dirname, '../..');
 const targetBaseDir = path.join(__dirname, '../node_modules/@novastera-oss/llamacpp-rn');
-const targetDir = path.join(targetBaseDir, 'cpp');
-const llamaCppDir = path.join(rootDir, 'cpp', 'llama.cpp');
+const targetDir = path.join(targetBaseDir, 'tm');
+const llamaCppDir = path.join(rootDir, 'tm', 'llama.cpp');
 
 // Create temporary headers in the node_modules directory
 console.log('Creating temporary header files in node_modules directory...');

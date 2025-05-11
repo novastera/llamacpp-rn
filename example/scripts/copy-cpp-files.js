@@ -3,10 +3,10 @@ const path = require('path');
 
 // Paths
 const rootDir = path.resolve(__dirname, '../..');
-const sourceDir = path.join(rootDir, 'cpp');
-const llamaCppDir = path.join(rootDir, 'cpp', 'llama.cpp');
+const sourceDir = path.join(rootDir, 'tm');
+const llamaCppDir = path.join(rootDir, 'tm', 'llama.cpp');
 const targetBaseDir = path.join(__dirname, '../node_modules/@novastera-oss/llamacpp-rn');
-const targetDir = path.join(targetBaseDir, 'cpp');
+const targetDir = path.join(targetBaseDir, 'tm');
 const targetIncludeDir = path.join(targetBaseDir, 'android/src/main/cpp/include');
 const targetCommonDir = path.join(targetIncludeDir, 'common');
 const targetMinjaDir = path.join(targetCommonDir, 'minja');

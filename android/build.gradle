@@ -21,6 +21,7 @@ android {
                   "-DLLAMA_BUILD_EXAMPLES=OFF",
                   "-DLLAMA_BUILD_SERVER=OFF",
                   "-DBUILD_SHARED_LIBS=ON",
+                  "-DTARGET_DIR=${rootDir}",
                   "-DRCT_NEW_ARCH_ENABLED=${safeExtGet('newArchEnabled', '1')}"
 
         cppFlags "-std=c++17 -frtti -fexceptions -DRCT_NEW_ARCH_ENABLED=1 -DLLAMA_SHARED"

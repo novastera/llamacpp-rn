@@ -147,6 +147,26 @@ include_directories("${jniDir.replace(/\\/g, '/')}")
 # Include the FBJNI paths file
 include("${fbjniPathsCMakePath.replace(/\\/g, '/')}")
 
+# Set the path to the tm directory
+set(TM_DIR "${mainCMakeListsPath.replace(/\/src\/main\/jni\/CMakeLists.txt/, "").replace(/\\/g, '/')}/../../tm")
+message(STATUS "TM directory: \${TM_DIR}")
+
+# Define React Native directories (for ReactNative-application.cmake)
+set(REACT_ANDROID_DIR "${path.join(config.modRequest.platformProjectRoot, 'node_modules/react-native/ReactAndroid').replace(/\\/g, '/')}")
+message(STATUS "React Android directory: \${REACT_ANDROID_DIR}")
+
+# Additional include paths for JSI and other React Native headers
+include_directories(
+  \${REACT_ANDROID_DIR}/src/main/jni/react/turbomodule
+  \${REACT_ANDROID_DIR}/src/main/java/com/facebook/react/turbomodule/core/jni
+  \${REACT_ANDROID_DIR}/../ReactCommon
+  \${REACT_ANDROID_DIR}/../ReactCommon/callinvoker
+  \${REACT_ANDROID_DIR}/../ReactCommon/jsi
+  \${REACT_ANDROID_DIR}/../ReactCommon/hermes
+  \${REACT_ANDROID_DIR}/../ReactCommon/react/nativemodule/core
+  \${REACT_ANDROID_DIR}/src/main/jni/first-party/fbjni/headers
+)
+
 # Include the main CMakeLists.txt
 include("${mainCMakeListsPath.replace(/\\/g, '/')}")
 `;
@@ -169,8 +189,10 @@ android {
     externalNativeBuild {
       cmake {
         arguments "-DANDROID_STL=c++_shared",
-                 "-DCMAKE_BUILD_TYPE=Release"
-        cppFlags "-std=c++17 -frtti -fexceptions -I${escapedJniDir} -I${escapedFbjniDir}${gradleFbjniIncludePaths ? ' -I' + gradleFbjniIncludePaths : ''}"
+                 "-DCMAKE_BUILD_TYPE=Release",
+                 "-DREACT_ANDROID_DIR=${path.join(config.modRequest.platformProjectRoot, 'node_modules/react-native/ReactAndroid').replace(/\\/g, '/')}",
+                 "-DRELY_ON_REACTNATIVE_APPLICATION_CMAKE=YES"
+        cppFlags "-std=c++17 -frtti -fexceptions -DRCT_NEW_ARCH_ENABLED=1 -DFOLLY_NO_CONFIG -DFOLLY_MOBILE=1 -DFOLLY_USE_LIBCPP=1 -I${escapedJniDir} -I${escapedFbjniDir}${gradleFbjniIncludePaths ? ' -I' + gradleFbjniIncludePaths : ''}"
       }
     }
     ndk {
