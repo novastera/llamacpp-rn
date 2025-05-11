@@ -13,11 +13,11 @@ Pod::Spec.new do |s|
   s.platforms    = { :ios => "13.0" }
   s.source       = { :git => "https://github.com/novastera/llamacpp-rn.git", :tag => "#{s.version}" }
 
-  # Core React Native module files
-  s.source_files = "ios/**/*.{h,m,mm}",
-                   # Core module implementation
+  # Core React Native module files - keep iOS-specific files separate
+  s.source_files = "ios/**/*.{h,m,mm}",  # iOS-specific Obj-C++ files
+                   # Core C++ module implementation (keep as .cpp)
                    "tm/build-info.cpp",
-                   "tm/NativeLlamaCppRn.{h,cpp}",
+                   "tm/LlamaCppRnModule.{h,cpp}",
                    "tm/LlamaCppModel.{h,cpp}",
                    "tm/SystemUtils.{h,cpp}",
                    "tm/rn-*.{hpp,cpp}",
@@ -51,7 +51,9 @@ Pod::Spec.new do |s|
     "DEFINES_MODULE" => "YES",
     "OTHER_LDFLAGS" => "$(inherited)",
     # These preprocessor macros ensure TurboModule registration works correctly
-    "GCC_PREPROCESSOR_DEFINITIONS" => ["$(inherited)", "RCT_NEW_ARCH_ENABLED=1"]
+    "GCC_PREPROCESSOR_DEFINITIONS" => ["$(inherited)", "RCT_NEW_ARCH_ENABLED=1", 
+                                       "__STDC_FORMAT_MACROS=1", # For format macros in C++
+                                       "LLAMA_SHARED=1"]         # For llama shared symbols
   }
 
   # Add user_target_xcconfig to propagate linker flags

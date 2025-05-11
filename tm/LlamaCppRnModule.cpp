@@ -8,8 +8,9 @@
 #include <utility>
 #include <thread>
 #include "SystemUtils.h"
-#include "NativeLlamaCppRn.h"
-
+// Include our custom headers - this was missing!
+#include "rn-llama.hpp"
+#include "LlamaCppModel.h"
 // Include the llama.cpp common headers
 #include "chat.h"
 
@@ -46,7 +47,9 @@ LlamaCppRn::LlamaCppRn(std::shared_ptr<CallInvoker> jsInvoker)
 }
 
 std::shared_ptr<TurboModule> LlamaCppRn::create(std::shared_ptr<CallInvoker> jsInvoker) {
-  return std::make_shared<LlamaCppRn>(std::move(jsInvoker));
+  // Create a new instance and return it as a TurboModule
+  auto module = std::make_shared<LlamaCppRn>(std::move(jsInvoker));
+  return module; // No need for cast since LlamaCppRn inherits from TurboModule
 }
 
 jsi::Value LlamaCppRn::loadLlamaModelInfo(jsi::Runtime &runtime, jsi::String modelPath) {
@@ -250,7 +253,7 @@ jsi::Value LlamaCppRn::initLlama(jsi::Runtime &runtime, jsi::Object options) {
     }
 
     // Create and initialize rn_llama_context
-    rn_ctx_ = std::make_unique<rn_llama_context>();
+    rn_ctx_ = std::make_unique<facebook::react::rn_llama_context>();
     rn_ctx_->model = result.model.release();
     rn_ctx_->ctx = result.context.release();
     rn_ctx_->model_loaded = true;

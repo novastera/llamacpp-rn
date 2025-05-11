@@ -5,16 +5,25 @@
 #include <memory>
 #include <string>
 #include <mutex>
-//#include "LlamaCppModel.h"
+
+// Include the header with the full definition of rn_llama_context
+#include "rn-llama.hpp"
 
 // Forward declarations for C++ only
 struct llama_model;
 struct llama_context;
 
-// Forward declaration for the rn_llama_context type
-struct rn_llama_context;
+// Forward declaration for namespace-qualified types
+namespace facebook {
+namespace react {
+class CallInvoker;
+struct rn_llama_context; // Properly scope the forward declaration
+class LlamaCppModel;     // Forward declare LlamaCppModel
+} // namespace react
+} // namespace facebook
 
-using namespace facebook;
+// Remove the "using namespace facebook" to avoid confusion
+// using namespace facebook;
 
 namespace facebook::react {
 
@@ -37,7 +46,7 @@ public:
   jsi::Value loadLlamaModelInfo(jsi::Runtime& runtime, jsi::String modelPath);
   
 private:
-  // Helper method to create model objects
+  // Helper method to create model objects - fix the signature to match implementation
   jsi::Object createModelObject(jsi::Runtime& runtime, rn_llama_context* rn_ctx);
 
   // Context for the currently loaded model, if any

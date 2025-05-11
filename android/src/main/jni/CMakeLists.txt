@@ -123,7 +123,7 @@ add_subdirectory(${LLAMA_CPP_DIR} llama.cpp)
 # Source files
 set(SOURCE_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/OnLoad.cpp
-    ${CPP_DIR}/NativeLlamaCppRn.cpp
+    ${CPP_DIR}/LlamaCppRnModule.cpp
     ${CPP_DIR}/LlamaCppModel.cpp
     ${CPP_DIR}/SystemUtils.cpp
     ${CPP_DIR}/rn-completion.cpp
@@ -200,7 +200,7 @@ find_library(log-lib log)
 find_library(android-lib android)
 
 # Link against llama library
-target_link_libraries(${CMAKE_PROJECT_NAME} tm)
+target_link_libraries(${CMAKE_PROJECT_NAME} llama)
 
 # Check for additional GPU-specific shared libraries in jniLibs
 if(OPENCL_ENABLED)
