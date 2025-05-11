@@ -2,13 +2,13 @@
   "extends": "./tsconfig",
   "compilerOptions": {
     "declaration": true,
-    "outDir": "lib",
-    "rootDir": "specs",
+    "outDir": "tm",
+    "rootDir": "tm",
     "noEmit": false,
     "jsx": "react-native",
     "skipLibCheck": true,
     "types": ["react-native"]
   },
-  "include": ["specs/**/*"],
+  "include": ["tm/**/*"],
   "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "example/**/*"]
 } 

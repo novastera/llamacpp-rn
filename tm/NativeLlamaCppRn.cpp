@@ -8,7 +8,7 @@
 #include <utility>
 #include <thread>
 #include "SystemUtils.h"
-#include "LlamaCppModel.h"
+#include "NativeLlamaCppRn.h"
 
 // Include the llama.cpp common headers
 #include "chat.h"

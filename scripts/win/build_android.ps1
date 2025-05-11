@@ -111,7 +111,7 @@ $PREBUILT_EXTERNAL_DIR = Join-Path $PREBUILT_LIBS_DIR "external"
 $ANDROID_DIR = Join-Path $PROJECT_ROOT "android"
 $ANDROID_JNI_DIR = Join-Path $ANDROID_DIR "src\main\jniLibs"
 $ANDROID_CPP_DIR = Join-Path $ANDROID_DIR "src\main\cpp"
-$CPP_DIR = Join-Path $PROJECT_ROOT "cpp"
+$CPP_DIR = Join-Path $PROJECT_ROOT "tm"
 $LLAMA_CPP_DIR = Join-Path $CPP_DIR "llama.cpp"
 
 # Third-party directories

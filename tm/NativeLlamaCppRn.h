@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 #include <mutex>
-#include "LlamaCppModel.h"
+//#include "LlamaCppModel.h"
 
 // Forward declarations for C++ only
 struct llama_model;

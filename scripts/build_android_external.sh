@@ -122,7 +122,7 @@ PREBUILT_GPU_DIR="$PREBUILT_DIR/gpu"
 ANDROID_DIR="$PROJECT_ROOT/android"
 ANDROID_JNI_DIR="$ANDROID_DIR/src/main/jniLibs"
 ANDROID_CPP_DIR="$ANDROID_DIR/src/main/cpp"
-CPP_DIR="$PROJECT_ROOT/cpp"
+CPP_DIR="$PROJECT_ROOT/tm"
 LLAMA_CPP_DIR="$CPP_DIR/llama.cpp"
 
 # Third-party directories in prebuilt directory

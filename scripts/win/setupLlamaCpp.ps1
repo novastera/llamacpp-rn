@@ -13,7 +13,7 @@ $YELLOW = [System.ConsoleColor]::Yellow
 # Get script directory
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PACKAGE_DIR = Split-Path -Parent (Split-Path -Parent $SCRIPT_DIR)
-$LLAMA_CPP_DIR = Join-Path $PACKAGE_DIR "cpp\llama.cpp"
+$LLAMA_CPP_DIR = Join-Path $PACKAGE_DIR "tm\llama.cpp"
 
 # Get version information from environment variables
 $LLAMA_CPP_COMMIT = $env:LLAMA_CPP_COMMIT
