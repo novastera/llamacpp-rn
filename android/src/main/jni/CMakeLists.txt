@@ -1,17 +1,8 @@
 cmake_minimum_required(VERSION 3.13)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
-# Define the library name
+# Define the library name - needs to match what's used in the module
 project(llamacpprn)
-
-# This file includes all the necessary to let you build your React Native application
-include(${REACT_ANDROID_DIR}/cmake-utils/ReactNative-application.cmake)
-
-# Define where the additional source code lives. We need to crawl back the jni, main, src, app, android folders
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE ../../../../cpp/LlamaCppRnModule.cpp)
-
-# Define where CMake can find the additional header files. We need to crawl back the jni, main, src, app, android folders
-target_include_directories(${CMAKE_PROJECT_NAME} PUBLIC ../../../../cpp)
 
 # Print system info for debugging
 message(STATUS "Building for Android with ABI: ${ANDROID_ABI}")
@@ -243,5 +234,3 @@ set_target_properties(
     CXX_STANDARD_REQUIRED ON
     POSITION_INDEPENDENT_CODE ON
 )
-
-
