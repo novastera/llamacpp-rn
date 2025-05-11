@@ -92,7 +92,7 @@
     "access": "public"
   },
   "codegenConfig": {
-    "name": "LlamaCppRnSpecs",
+    "name": "LlamaCppRn",
     "type": "modules",
     "jsSrcsDir": "src/specs",
     "android": {
