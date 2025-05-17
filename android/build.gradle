@@ -1,90 +1,207 @@
-apply plugin: 'com.android.library'
+// First define buildscript block that should come before plugin applications
+buildscript {
+    ext {
+        minSdkVersion = 30
+    }
+    // Add any repositories if needed
+    repositories {
+        google()
+        mavenCentral()
+    }
+    // Add any dependencies if needed
+}
 
-def safeExtGet(prop, fallback) {
-  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+apply plugin: "com.android.library"
+apply plugin: "com.facebook.react"
+
+import com.android.build.OutputFile
+
+/**
+ * This is the configuration block to customize your React Native Android app.
+ * By default you don't need to apply any configuration, just uncomment the lines you need.
+ */
+react {
+    /* Folders */
+    //   The root of your project, i.e. where "package.json" lives. Default is '..'
+    // root = file("../")
+    //   The folder where the react-native NPM package is. Default is ../node_modules/react-native
+    // reactNativeDir = file("../node-modules/react-native")
+    //   The folder where the react-native Codegen package is. Default is ../node_modules/react-native-codegen
+    // codegenDir = file("../node-modules/react-native-codegen")
+    //   The cli.js file which is the React Native CLI entrypoint. Default is ../node_modules/react-native/cli.js
+    // cliFile = file("../node_modules/react-native/cli.js")
+
+    /* Variants */
+    //   The list of variants to that are debuggable. For those we're going to
+    //   skip the bundling of the JS bundle and the assets. By default is just 'debug'.
+    //   If you add flavors like lite, prod, etc. you'll have to list your debuggableVariants.
+    // debuggableVariants = ["liteDebug", "prodDebug"]
+
+    /* Bundling */
+    //   A list containing the node command and its flags. Default is just 'node'.
+    // nodeExecutableAndArgs = ["node"]
+    //
+    //   The command to run when bundling. By default is 'bundle'
+    // bundleCommand = "ram-bundle"
+    //
+    //   The path to the CLI configuration file. Default is empty.
+    // bundleConfig = file(../rn-cli.config.js)
+    //
+    //   The name of the generated asset file containing your JS bundle
+    // bundleAssetName = "MyApplication.android.bundle"
+    //
+    //   The entry file for bundle generation. Default is 'index.android.js' or 'index.js'
+    // entryFile = file("../js/MyApplication.android.js")
+    //
+    //   A list of extra flags to pass to the 'bundle' commands.
+    //   See https://github.com/react-native-community/cli/blob/main/docs/commands.md#bundle
+    // extraPackagerArgs = []
+
+    /* Hermes Commands */
+    //   The hermes compiler command to run. By default it is 'hermesc'
+    // hermesCommand = "$rootDir/my-custom-hermesc/bin/hermesc"
+    //
+    //   The list of flags to pass to the Hermes compiler. By default is "-O", "-output-source-map"
+    // hermesFlags = ["-O", "-output-source-map"]
+}
+
+/**
+ * Set this to true to create four separate APKs instead of one,
+ * one for each native architecture. This is useful if you don't
+ * use App Bundles (https://developer.android.com/guide/app-bundle/)
+ * and want to have separate APKs to upload to the Play Store.
+ */
+def enableSeparateBuildPerCPUArchitecture = false
+
+/**
+ * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
+ */
+def enableProguardInReleaseBuilds = false
+
+/**
+ * The preferred build flavor of JavaScriptCore (JSC)
+ *
+ * For example, to use the international variant, you can use:
+ * `def jscFlavor = 'org.webkit:android-jsc-intl:+'`
+ *
+ * The international variant includes ICU i18n library and necessary data
+ * allowing to use e.g. `Date.toLocaleString` and `String.localeCompare` that
+ * give correct results when using with locales other than en-US. Note that
+ * this variant is about 6MiB larger per architecture than default.
+ */
+def jscFlavor = 'org.webkit:android-jsc:+'
+
+/**
+ * Private function to get the list of Native Architectures you want to build.
+ * This reads the value from reactNativeArchitectures in your gradle.properties
+ * file and works together with the --active-arch-only flag of react-native run-android.
+ */
+def reactNativeArchitectures() {
+    def value = project.getProperties().get("reactNativeArchitectures")
+    return value ? value.split(",") : ["armeabi-v7a", "x86", "x86_64", "arm64-v8a"]
+}
+
+// Use rootProject SDK versions if available, otherwise use sensible defaults
+def getMinSdkVersion() {
+    return rootProject.hasProperty('minSdkVersion') ? rootProject.minSdkVersion : 24
+}
+
+def getCompileSdkVersion() {
+    return rootProject.hasProperty('compileSdkVersion') ? rootProject.compileSdkVersion : 34
+}
+
+def getTargetSdkVersion() {
+    return rootProject.hasProperty('targetSdkVersion') ? rootProject.targetSdkVersion : 34
+}
+
+def getNdkVersion() {
+    return rootProject.hasProperty('ndkVersion') ? rootProject.ndkVersion : null
 }
 
 android {
-  namespace "com.llamacpprn"
-  compileSdkVersion safeExtGet('compileSdkVersion', 33)
-  
-  defaultConfig {
-    minSdkVersion safeExtGet('minSdkVersion', 26)
-    targetSdkVersion safeExtGet('targetSdkVersion', 33)
-    
+    // Only set NDK version if rootProject defines it
+    if (getNdkVersion() != null) {
+        ndkVersion getNdkVersion()
+    }
+
+    compileSdkVersion 34
+
+    namespace "com.llamacpprn"
+    defaultConfig {
+        minSdkVersion 24
+        targetSdkVersion 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    splits {
+        abi {
+            reset()
+            enable enableSeparateBuildPerCPUArchitecture
+            universalApk false  // If true, also generate a universal APK
+            include (*reactNativeArchitectures())
+        }
+    }
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+        release {
+            // Caution! In production, you need to generate your own keystore file.
+            // see https://reactnative.dev/docs/signed-apk-android.
+            signingConfig signingConfigs.debug
+            minifyEnabled enableProguardInReleaseBuilds
+            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+        }
+    }
+
+    // applicationVariants are e.g. debug, release
+    libraryVariants.all { variant ->
+        variant.outputs.each { output ->
+            // For each separate APK per architecture, set a unique version code as described here:
+            // https://developer.android.com/studio/build/configure-apk-splits.html
+            // Example: versionCode 1 will generate 1001 for armeabi-v7a, 1002 for x86, etc.
+            def versionCodes = ["armeabi-v7a": 1, "x86": 2, "arm64-v8a": 3, "x86_64": 4]
+            def abi = output.getFilter(OutputFile.ABI)
+            if (abi != null) {  // null for the universal-debug, universal-release variants
+                output.versionCodeOverride =
+                        defaultConfig.versionCode * 1000 + versionCodes.get(abi)
+            }
+        }
+    }
+
     externalNativeBuild {
-      cmake {
-        arguments "-DANDROID_STL=c++_shared",
-                  "-DCMAKE_BUILD_TYPE=Release",
-                  "-DANDROID_PLATFORM=android-${safeExtGet('minSdkVersion', 26)}",
-                  "-DANDROID_CPP_FEATURES=rtti exceptions",
-                  "-DLLAMA_BUILD_EXAMPLES=OFF",
-                  "-DLLAMA_BUILD_SERVER=OFF",
-                  "-DBUILD_SHARED_LIBS=ON",
-                  "-DTARGET_DIR=${rootDir}",
-                  "-DRCT_NEW_ARCH_ENABLED=${safeExtGet('newArchEnabled', '1')}"
-
-        cppFlags "-std=c++17 -frtti -fexceptions -DRCT_NEW_ARCH_ENABLED=1 -DLLAMA_SHARED"
-      }
+        cmake {
+            path "src/main/jni/CMakeLists.txt"
+        }
     }
-
-    ndk {
-      abiFilters 'arm64-v8a', 'x86_64'
-    }
-  }
-
-  buildTypes {
-    release {
-      minifyEnabled false
-    }
-  }
-
-  // This is necessary for pure C++ modules
-  buildFeatures {
-    prefabPublishing true
-  }
-
-  prefab {
-    llamacpprn {
-      headers "src/main/cpp/include"
-    }
-  }
-
-  sourceSets {
-    main {
-      jniLibs.srcDirs = ['src/main/jniLibs']
-    }
-  }
-
-  packagingOptions {
-    jniLibs {
-      pickFirsts += ['**/*.so']
-    }
-    resources {
-      pickFirsts += [
-        'META-INF/DEPENDENCIES',
-        'META-INF/LICENSE',
-        'META-INF/LICENSE.txt',
-        'META-INF/NOTICE',
-        'META-INF/NOTICE.txt',
-        'META-INF/*.kotlin_module'
-      ]
-    }
-  }
-
-  externalNativeBuild {
-    cmake {
-      path "src/main/jni/CMakeLists.txt"
-    }
-  }
-}
-
-repositories {
-  mavenCentral()
-  google()
 }
 
 dependencies {
-  implementation 'com.facebook.react:react-native:+'
-  implementation 'com.facebook.fbjni:fbjni:0.7.0'
+    // The version of react-native is set by the React Native Gradle Plugin
+    implementation("com.facebook.react:react-android")
+
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.0.0")
+
+    // Use Hermes if enabled, otherwise use JSC
+    def useHermes = project.getProperties().get("hermesEnabled") ?: "true"
+    if (useHermes.toBoolean()) {
+        implementation("com.facebook.react:hermes-android")
+    } else {
+        implementation jscFlavor
+    }
+    
+    // Add explicit React Native TurboModule dependency
+    implementation 'com.facebook.react:react-native-turbomodule-core:+'
+    implementation 'com.facebook.fbjni:fbjni:0.7.0'
 }
+
+apply from: file("$projectDir/../node_modules/@react-native/gradle-plugin/react-native-gradle-plugin"); applyNativeModulesAppBuildGradle(project)

@@ -34,7 +34,8 @@
 #include <rncore.h>
 #include <autolinking.h>
 
-#include "../../../../tm/LlamaCppRnModule.h"
+// Include the module headers from tm directory
+#include "../../../tm/LlamaCppRnModule.h"
 
 #ifdef REACT_NATIVE_APP_CODEGEN_HEADER
 #include REACT_NATIVE_APP_CODEGEN_HEADER
@@ -54,11 +55,13 @@ void registerComponents(
 std::shared_ptr<TurboModule> cxxModuleProvider(
     const std::string& name,
     const std::shared_ptr<CallInvoker>& jsInvoker) {
-  // Auto-linking CXX module provider
+  // Register the C++ Turbo Module - match the name with the one in the JS spec
   if (name == "LlamaCppRn") {
-   return std::make_shared<facebook::react::LlamaCppRn>(jsInvoker);
+    return std::make_shared<facebook::react::LlamaCppRn>(jsInvoker);
   }
-  return nullptr;
+  
+  // Auto-linking CXX module provider for other modules
+  return autolinking_cxxModuleProvider(name, jsInvoker);
 }
 
 std::shared_ptr<TurboModule> javaModuleProvider(

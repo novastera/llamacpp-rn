@@ -91,6 +91,41 @@ const withLlamaCppRnAndroid = (config) => {
       console.log(`Found ${existingFbjniPaths.length} existing FBJNI header paths:`);
       existingFbjniPaths.forEach(p => console.log(`  - ${p}`));
       
+      // --- REACT NATIVE PATHS ---
+      // Find React Native path
+      const possibleReactNativePaths = [
+        path.join(config.modRequest.platformProjectRoot, 'node_modules/react-native'),
+        path.join(config.modRequest.platformProjectRoot, '../node_modules/react-native'),
+        path.join(config.modRequest.platformProjectRoot, '../../node_modules/react-native'),
+        path.join(config.modRequest.platformProjectRoot, '../../../node_modules/react-native'),
+      ];
+      
+      let reactNativePath = null;
+      for (const rnPath of possibleReactNativePaths) {
+        if (fs.existsSync(path.join(rnPath, 'package.json'))) {
+          reactNativePath = rnPath;
+          break;
+        }
+      }
+      
+      if (!reactNativePath) {
+        console.log('Could not find React Native path. Using default path.');
+        reactNativePath = path.join(config.modRequest.platformProjectRoot, 'node_modules/react-native');
+      }
+      
+      console.log(`Using React Native path: ${reactNativePath}`);
+      
+      // --- JSI HEADERS ---
+      // Ensure JSI headers are available
+      const jsiHeaders = path.join(reactNativePath, 'ReactCommon/jsi');
+      console.log(`Checking JSI headers at: ${jsiHeaders}`);
+      
+      if (fs.existsSync(path.join(jsiHeaders, 'jsi.h'))) {
+        console.log('Found JSI headers.');
+      } else {
+        console.log('Could not find JSI headers. You may encounter build issues.');
+      }
+      
       // --- JNI DIR SETUP ---
       const jniDir = path.join(config.modRequest.platformProjectRoot, 'app/src/main/jni');
       if (!fs.existsSync(jniDir)) {
@@ -147,27 +182,27 @@ include_directories("${jniDir.replace(/\\/g, '/')}")
 # Include the FBJNI paths file
 include("${fbjniPathsCMakePath.replace(/\\/g, '/')}")
 
-# Set the path to the tm directory
+# Set up important paths
 set(TM_DIR "${mainCMakeListsPath.replace(/\/src\/main\/jni\/CMakeLists.txt/, "").replace(/\\/g, '/')}/../../tm")
 message(STATUS "TM directory: \${TM_DIR}")
 
-# Define React Native directories (for ReactNative-application.cmake)
-set(REACT_ANDROID_DIR "${path.join(config.modRequest.platformProjectRoot, 'node_modules/react-native/ReactAndroid').replace(/\\/g, '/')}")
-message(STATUS "React Android directory: \${REACT_ANDROID_DIR}")
+# Define React Android directory for ReactNative-application.cmake
+set(REACT_ANDROID_DIR "${reactNativePath.replace(/\\/g, '/')}/ReactAndroid")
+message(STATUS "Using React Android directory: \${REACT_ANDROID_DIR}")
 
-# Additional include paths for JSI and other React Native headers
+# Ensure we have proper JSI and TurboModule includes before including the main CMakeLists
 include_directories(
-  \${REACT_ANDROID_DIR}/src/main/jni/react/turbomodule
-  \${REACT_ANDROID_DIR}/src/main/java/com/facebook/react/turbomodule/core/jni
-  \${REACT_ANDROID_DIR}/../ReactCommon
-  \${REACT_ANDROID_DIR}/../ReactCommon/callinvoker
-  \${REACT_ANDROID_DIR}/../ReactCommon/jsi
-  \${REACT_ANDROID_DIR}/../ReactCommon/hermes
-  \${REACT_ANDROID_DIR}/../ReactCommon/react/nativemodule/core
-  \${REACT_ANDROID_DIR}/src/main/jni/first-party/fbjni/headers
+  "\${REACT_ANDROID_DIR}/src/main/jni/react/turbomodule"
+  "\${REACT_ANDROID_DIR}/src/main/java/com/facebook/react/turbomodule/core/jni"
+  "${reactNativePath.replace(/\\/g, '/')}/ReactCommon"
+  "${reactNativePath.replace(/\\/g, '/')}/ReactCommon/callinvoker"
+  "${reactNativePath.replace(/\\/g, '/')}/ReactCommon/jsi"
+  "${reactNativePath.replace(/\\/g, '/')}/ReactCommon/hermes"
+  "${reactNativePath.replace(/\\/g, '/')}/ReactCommon/react/nativemodule/core"
+  "\${REACT_ANDROID_DIR}/src/main/jni/first-party/fbjni/headers"
 )
 
-# Include the main CMakeLists.txt
+# Now include the main CMakeLists.txt
 include("${mainCMakeListsPath.replace(/\\/g, '/')}")
 `;
       fs.writeFileSync(wrapperCMakeListsPath, wrapperCMakeContent);
@@ -190,7 +225,7 @@ android {
       cmake {
         arguments "-DANDROID_STL=c++_shared",
                  "-DCMAKE_BUILD_TYPE=Release",
-                 "-DREACT_ANDROID_DIR=${path.join(config.modRequest.platformProjectRoot, 'node_modules/react-native/ReactAndroid').replace(/\\/g, '/')}",
+                 "-DREACT_ANDROID_DIR=${reactNativePath.replace(/\\/g, '/')}/ReactAndroid",
                  "-DRELY_ON_REACTNATIVE_APPLICATION_CMAKE=YES"
         cppFlags "-std=c++17 -frtti -fexceptions -DRCT_NEW_ARCH_ENABLED=1 -DFOLLY_NO_CONFIG -DFOLLY_MOBILE=1 -DFOLLY_USE_LIBCPP=1 -I${escapedJniDir} -I${escapedFbjniDir}${gradleFbjniIncludePaths ? ' -I' + gradleFbjniIncludePaths : ''}"
       }
